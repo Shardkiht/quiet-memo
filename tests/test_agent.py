@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from quiet_memo.agent.runtime import AgentRuntime
+from quiet_memo.agent.session import SessionStore
+from quiet_memo.infra.config import ChatConfig, Config, LLMConfig
+from quiet_memo.llm import AssistantTurn, ToolCall
+from quiet_memo.memory.extractor import StaticExtractor
+from quiet_memo.memory.models import Candidate, ExtractionResult
+from quiet_memo.memory.service import MemoryService
+
+
+class FakeChatModel:
+    def __init__(self, turns):
+        self.turns = list(turns)
+        self.calls = []
+
+    def chat(self, messages, tools):
+        self.calls.append((messages, tools))
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        return turn
+
+
+class FakeSummarizer:
+    def summarize(self, previous, transcript, max_chars=1200):
+        return "会话摘要"
+
+
+def build_runtime(tmp_path, model, candidates=None, *, extract_on_exit=False, max_steps=4):
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(
+            context_window=32000,
+            max_tool_steps=max_steps,
+            auto_recall=3,
+            extract_on_exit=extract_on_exit,
+        ),
+    )
+    service = MemoryService(
+        config,
+        extractor=StaticExtractor(ExtractionResult(memories=candidates or [])),
+    )
+    service.init_vault()
+    runtime = AgentRuntime(
+        service,
+        model,
+        SessionStore(config.vault),
+        summarizer=FakeSummarizer(),
+        config=config.chat,
+    )
+    runtime.start()
+    return runtime, service
+
+
+def test_memorize_tool_writes_with_session_provenance(tmp_path):
+    model = FakeChatModel(
+        [
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(
+                        id="c1",
+                        name="memorize",
+                        arguments={"text": "我住在市区"},
+                    )
+                ]
+            ),
+            AssistantTurn(content="记下了。"),
+        ]
+    )
+    candidate = Candidate(text="住在市区", topic="housing", confidence=0.95)
+    runtime, service = build_runtime(tmp_path, model, [candidate])
+
+    reply = runtime.ask("我住在市区")
+
+    assert reply.content == "记下了。"
+    assert reply.steps == 2
+    assert any("写入 1 条" in event for event in reply.events)
+    entries = service.store.entries()
+    assert entries[0].text == "住在市区"
+    assert entries[0].metadata["source"] == f"session:{runtime.current.id}"
+    assert entries[0].metadata["session"] == runtime.current.id
+    tool_records = [record for record in runtime.current.records if record.get("type") == "tool"]
+    assert tool_records[0]["name"] == "memorize"
+
+
+def test_recall_tool_result_reaches_model(tmp_path):
+    model = FakeChatModel(
+        [
+            AssistantTurn(
+                tool_calls=[ToolCall(id="c1", name="recall", arguments={"query": "清淡"})]
+            ),
+            AssistantTurn(content="你喜欢清淡风味。"),
+        ]
+    )
+    runtime, service = build_runtime(tmp_path, model)
+    service.note("喜欢清淡风味", topic="preferences")
+
+    reply = runtime.ask("我喜欢什么风味？")
+
+    assert reply.content == "你喜欢清淡风味。"
+    second_call_messages = model.calls[1][0]
+    tool_messages = [message for message in second_call_messages if message["role"] == "tool"]
+    assert tool_messages and "清淡" in tool_messages[0]["content"]
+    assert any("检索" in event for event in reply.events)
+
+
+def test_auto_recall_injects_long_term_memory(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="记得。")])
+    runtime, service = build_runtime(tmp_path, model)
+    service.note("喜欢清淡风味", topic="preferences")
+
+    runtime.ask("清淡")
+
+    system_message = model.calls[0][0][0]
+    assert "<long_term_memory>" in system_message["content"]
+    assert "清淡" in system_message["content"]
+
+
+def test_force_conclude_after_max_steps(tmp_path):
+    class LoopModel:
+        def __init__(self):
+            self.tool_rounds = []
+
+        def chat(self, messages, tools):
+            self.tool_rounds.append(bool(tools))
+            if tools:
+                return AssistantTurn(
+                    tool_calls=[
+                        ToolCall(id="c1", name="memorize", arguments={"text": "不断调用"})
+                    ]
+                )
+            return AssistantTurn(content="收敛回答")
+
+    model = LoopModel()
+    runtime, _ = build_runtime(tmp_path, model, max_steps=1)
+
+    reply = runtime.ask("开始")
+
+    assert reply.content == "收敛回答"
+    assert model.tool_rounds == [True, False]
+    assert any("强制收敛" in event for event in reply.events)
+
+
+def test_retries_transient_model_failure(tmp_path):
+    class FlakyModel:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary")
+            return AssistantTurn(content="恢复了")
+
+    model = FlakyModel()
+    runtime, _ = build_runtime(tmp_path, model)
+
+    reply = runtime.ask("你好")
+
+    assert reply.content == "恢复了"
+    assert model.calls == 2
+
+
+def test_close_extracts_memories_once(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="好的。")])
+    candidate = Candidate(text="退出时沉淀的事实", topic="misc", confidence=0.95)
+    runtime, service = build_runtime(
+        tmp_path, model, [candidate], extract_on_exit=True
+    )
+
+    runtime.ask("这是一条值得记住的事实")
+    stats = runtime.close()
+    again = runtime.close()
+
+    assert stats["admitted"] == 1
+    assert again["admitted"] == 0
+    entries = service.store.entries()
+    assert len(entries) == 1
+    assert entries[0].metadata["source"] == f"session:{runtime.current.id}:exit"

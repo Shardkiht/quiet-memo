@@ -1,0 +1,301 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from ..infra.config import Config, load_config
+from ..infra.gitops import GitRepo
+from ..llm.commit_summary import summarize_diff
+from ..retrieval import KeywordRetriever, Retriever, SearchHit
+from .audit import AuditLog
+from .detect import contains_secret, find_conflicts
+from .extractor import LLMExtractor
+from .models import Candidate, Entry, PendingItem
+from .policy import decide
+from .queue import PendingQueue
+from .store import STATUS_ACTIVE, STATUS_DELETED, STATUS_SUPERSEDED, MemoryStore
+
+
+VAULT_README = """# quiet-memo vault
+
+这个目录由 [quiet-memo](https://github.com/Shardkiht/quiet-memo) 管理。
+
+- `memories/`：按主题拆分的 Markdown 记忆，是唯一事实来源。
+- `sessions/`：会话 JSONL，保留原始对话与工具轨迹。
+- `.quiet-memo/pending.jsonl`：低置信、冲突或敏感候选，等待人工确认。
+- `.quiet-memo/resolved.jsonl`：已确认/已拒绝记录。
+- `.quiet-memo/audit.jsonl`：更正、删除等审计记录。
+- 全部变更由 Git 跟踪，可回滚、可审计。
+"""
+
+VAULT_GITIGNORE = """__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
+"""
+
+
+@dataclass(slots=True)
+class MemorizeResult:
+    admitted: list[Entry]
+    queued: list[PendingItem]
+    duplicates: list[str]
+    blocked: list[str]
+
+    def to_dict(self) -> dict:
+        return {
+            "admitted": [
+                {"id": entry.id, "topic": entry.topic, "text": entry.text, "timestamp": entry.timestamp}
+                for entry in self.admitted
+            ],
+            "queued": [item.model_dump() for item in self.queued],
+            "duplicates": self.duplicates,
+            "blocked": self.blocked,
+        }
+
+
+class MemoryService:
+    def __init__(self, config: Config, extractor=None, retriever: Retriever | None = None):
+        self.config = config
+        self.store = MemoryStore(config.vault)
+        self.queue = PendingQueue(config.vault)
+        self.repo = GitRepo(config.vault)
+        self.audit = AuditLog(config.vault)
+        self.extractor = extractor or LLMExtractor(config.llm)
+        self.retriever: Retriever = retriever or KeywordRetriever(self.store)
+
+    def init_vault(self) -> dict:
+        self.store.ensure()
+        self.queue.dir.mkdir(parents=True, exist_ok=True)
+        (self.config.vault / "sessions").mkdir(parents=True, exist_ok=True)
+        readme = self.config.vault / "README.md"
+        if not readme.exists():
+            readme.write_text(VAULT_README, encoding="utf-8")
+        gitignore = self.config.vault / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text(VAULT_GITIGNORE, encoding="utf-8")
+        created = self.repo.ensure_init()
+        self.repo.stage_all()
+        commit_hash = self.repo.commit("memory: 初始化记忆库")
+        return {"vault": str(self.config.vault), "git_created": created, "commit": commit_hash}
+
+    def memorize(
+        self,
+        text: str,
+        source: str = "chat",
+        session_id: str | None = None,
+        message_id: str | None = None,
+    ) -> MemorizeResult:
+        text = text.strip()
+        if not text:
+            raise ValueError("对话内容为空。")
+        extraction = self.extractor.extract(text, self.store.recent_context())
+        admitted: list[Entry] = []
+        queued: list[PendingItem] = []
+        duplicates: list[str] = []
+        blocked: list[str] = []
+        for candidate in extraction.memories:
+            if contains_secret(candidate.text):
+                blocked.append(candidate.text)
+                continue
+            if self.store.has_text(candidate.text):
+                duplicates.append(candidate.text)
+                continue
+            conflicts = find_conflicts(candidate, self.store.entries())
+            if conflicts:
+                item = self._queue_candidate(
+                    candidate,
+                    source,
+                    f"possible conflict with {', '.join(entry.id for entry in conflicts)}",
+                    session_id,
+                    message_id,
+                    conflict_with=conflicts[0].id,
+                )
+                queued.append(item)
+                continue
+            decision = decide(candidate, self.config.confidence_threshold)
+            if decision.admit:
+                admitted.append(self._append_candidate(candidate, source, session_id, message_id))
+            else:
+                queued.append(
+                    self._queue_candidate(
+                        candidate, source, decision.reason, session_id, message_id
+                    )
+                )
+        return MemorizeResult(
+            admitted=admitted, queued=queued, duplicates=duplicates, blocked=blocked
+        )
+
+    def _append_candidate(
+        self,
+        candidate: Candidate,
+        source: str,
+        session_id: str | None = None,
+        message_id: str | None = None,
+        supersedes: str | None = None,
+    ) -> Entry:
+        extra = {"session": session_id or "", "message": message_id or ""}
+        return self.store.append(
+            candidate.topic,
+            candidate.text,
+            source=source,
+            confidence=candidate.confidence,
+            title=candidate.title,
+            extra=extra,
+            supersedes=supersedes,
+        )
+
+    def _queue_candidate(
+        self,
+        candidate: Candidate,
+        source: str,
+        reason: str,
+        session_id: str | None = None,
+        message_id: str | None = None,
+        conflict_with: str | None = None,
+    ) -> PendingItem:
+        item = PendingItem.from_candidate(
+            candidate,
+            source,
+            reason,
+            session_id=session_id,
+            message_id=message_id,
+            conflict_with=conflict_with,
+        )
+        self.queue.add(item)
+        return item
+
+    def note(self, text: str, topic: str = "uncategorized", title: str | None = None) -> Entry:
+        text = text.strip()
+        if not text:
+            raise ValueError("内容为空。")
+        if self.store.has_text(text):
+            raise ValueError("相同内容已存在。")
+        return self.store.append(topic, text, source="user-note", confidence=1.0, title=title)
+
+    def correct(self, entry_id: str, text: str, reason: str = "") -> Entry:
+        old = self.store.find(entry_id)
+        if old is None:
+            raise KeyError(f"记忆不存在：{entry_id}")
+        if old.status != STATUS_ACTIVE:
+            raise ValueError(f"记忆当前状态为 {old.status}，不能更正。")
+        entry = self.store.append(
+            old.topic,
+            text.strip(),
+            source="correction",
+            confidence=1.0,
+            supersedes=entry_id,
+        )
+        self.store.set_status(entry_id, STATUS_SUPERSEDED)
+        self.audit.write(
+            "correct",
+            old_entry=entry_id,
+            new_entry=entry.id,
+            reason=reason,
+            old_text=old.text,
+            new_text=entry.text,
+        )
+        return entry
+
+    def forget(self, entry_id: str, reason: str = "") -> Entry:
+        old = self.store.find(entry_id)
+        if old is None:
+            raise KeyError(f"记忆不存在：{entry_id}")
+        if old.status != STATUS_ACTIVE:
+            raise ValueError(f"记忆当前状态为 {old.status}，无需删除。")
+        self.store.set_status(entry_id, STATUS_DELETED)
+        self.audit.write("forget", entry=entry_id, reason=reason, text=old.text)
+        return old.model_copy(update={"status": STATUS_DELETED})
+
+    def recall(self, query: str, limit: int = 10) -> list[SearchHit]:
+        return self.retriever.search(query, limit)
+
+    def pending(self) -> list[PendingItem]:
+        return self.queue.all()
+
+    def approve(self, item_id: str) -> Entry:
+        item = self.queue.get(item_id)
+        if item is None:
+            raise KeyError(f"待确认项不存在：{item_id}")
+        supersedes = item.conflict_with
+        if supersedes:
+            old = self.store.find(supersedes)
+            if old is not None and old.status == STATUS_ACTIVE:
+                self.store.set_status(supersedes, STATUS_SUPERSEDED)
+        entry = self.store.append(
+            item.topic,
+            item.text,
+            source=f"{item.source}+approved",
+            confidence=item.confidence,
+            note="人工确认",
+            title=item.title,
+            extra={"session": item.session_id or "", "message": item.message_id or ""},
+            supersedes=supersedes,
+        )
+        self.queue.resolve(item_id, "approved")
+        self.audit.write("approve", item=item_id, entry=entry.id, supersedes=supersedes or "")
+        return entry
+
+    def reject(self, item_id: str) -> PendingItem:
+        item = self.queue.resolve(item_id, "rejected")
+        if item is None:
+            raise KeyError(f"待确认项不存在：{item_id}")
+        self.audit.write("reject", item=item_id, text=item.text)
+        return item
+
+    def topics(self) -> list[dict]:
+        return [topic.model_dump() for topic in self.store.topics()]
+
+    def history(self, limit: int = 10) -> list[dict]:
+        return self.repo.history(limit)
+
+    def status(self) -> dict:
+        return {
+            "vault": str(self.config.vault),
+            "topics": len(self.store.topics()),
+            "entries": len(self.store.entries()),
+            "pending": len(self.pending()),
+            "dirty": self.repo.has_changes() if self.repo.is_repo else False,
+        }
+
+    def commit(self, push: bool | None = None) -> dict:
+        self.repo.ensure_init()
+        self.repo.stage_all()
+        if not self.repo.has_staged():
+            return {"committed": False, "summary": "没有需要提交的变更。", "hash": None, "pushed": False}
+        stat = self.repo.staged_stat()
+        summary = summarize_diff(self.repo.staged_diff(), self.config.llm, stat)
+        lines = summary.splitlines()
+        subject = lines[0] if lines else "memory: 更新记忆库"
+        if not subject.startswith("memory:"):
+            subject = f"memory: {subject}"
+        message = subject[:120]
+        body = "\n".join(lines[1:]).strip()
+        if body:
+            message += f"\n\n{body}"
+        commit_hash = self.repo.commit(message)
+        should_push = self.config.auto_push if push is None else push
+        pushed = False
+        push_output = ""
+        if should_push and commit_hash:
+            push_output = self.repo.push()
+            pushed = True
+        return {
+            "committed": commit_hash is not None,
+            "summary": summary,
+            "hash": commit_hash,
+            "pushed": pushed,
+            "push_output": push_output,
+        }
+
+
+def get_service(
+    config_path: Path | None = None,
+    vault: Path | None = None,
+    extractor=None,
+    retriever: Retriever | None = None,
+) -> MemoryService:
+    config = load_config(config_path)
+    if vault is not None:
+        config.vault = Path(vault).expanduser().resolve()
+    return MemoryService(config, extractor=extractor, retriever=retriever)

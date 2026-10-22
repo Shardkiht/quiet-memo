@@ -1,0 +1,53 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from pathlib import Path
+
+from .models import PendingItem
+
+
+class PendingQueue:
+    def __init__(self, vault: Path):
+        self.vault = Path(vault)
+        self.dir = self.vault / ".quiet-memo"
+        self.pending_path = self.dir / "pending.jsonl"
+        self.resolved_path = self.dir / "resolved.jsonl"
+
+    def _load(self) -> list[PendingItem]:
+        if not self.pending_path.exists():
+            return []
+        items: list[PendingItem] = []
+        for line in self.pending_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                items.append(PendingItem.model_validate_json(line))
+        return items
+
+    def _save(self, items: list[PendingItem]) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        content = "\n".join(item.model_dump_json() for item in items)
+        self.pending_path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+
+    def all(self) -> list[PendingItem]:
+        return self._load()
+
+    def get(self, item_id: str) -> PendingItem | None:
+        return next((item for item in self._load() if item.id == item_id), None)
+
+    def add(self, item: PendingItem) -> None:
+        items = self._load()
+        items.append(item)
+        self._save(items)
+
+    def resolve(self, item_id: str, status: str) -> PendingItem | None:
+        items = self._load()
+        target = next((item for item in items if item.id == item_id), None)
+        if target is None:
+            return None
+        self._save([item for item in items if item.id != item_id])
+        self.dir.mkdir(parents=True, exist_ok=True)
+        record = target.model_dump()
+        record.update(status=status, resolved_at=datetime.now().isoformat(timespec="seconds"))
+        with self.resolved_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return target

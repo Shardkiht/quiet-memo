@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.idea/
+.demo/
+dist/
+build/
+*.egg-info/
+quiet-memo.toml
+demo_vault/
+.env
+.env.*
+*.pem
+*.key
+sessions/
+vault/
