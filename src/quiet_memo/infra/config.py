@@ -61,6 +61,8 @@ class ChatConfig:
     max_tool_steps: int = 8
     tool_timeout: float = 60.0
     auto_recall: int = 3
+    recall_rewrite: bool = True
+    recall_context_turns: int = 2
     extract_on_exit: bool = True
 
 
@@ -137,6 +139,8 @@ def load_config(path: Path | str | None = None) -> Config:
         max_tool_steps=int(chat_raw.get("max_tool_steps", 8)),
         tool_timeout=float(chat_raw.get("tool_timeout", 60.0)),
         auto_recall=int(chat_raw.get("auto_recall", 3)),
+        recall_rewrite=bool(chat_raw.get("recall_rewrite", True)),
+        recall_context_turns=int(chat_raw.get("recall_context_turns", 2)),
         extract_on_exit=bool(chat_raw.get("extract_on_exit", True)),
     )
     return Config(
@@ -174,6 +178,8 @@ compact_threshold = 0.8
 max_tool_steps = 8
 tool_timeout = 60.0
 auto_recall = 3
+recall_rewrite = true
+recall_context_turns = 2
 extract_on_exit = true
 '''
     path.parent.mkdir(parents=True, exist_ok=True)

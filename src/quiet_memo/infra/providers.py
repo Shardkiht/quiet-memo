@@ -295,6 +295,8 @@ compact_threshold = {config.chat.compact_threshold}
 max_tool_steps = {config.chat.max_tool_steps}
 tool_timeout = {config.chat.tool_timeout}
 auto_recall = {config.chat.auto_recall}
+recall_rewrite = {str(config.chat.recall_rewrite).lower()}
+recall_context_turns = {config.chat.recall_context_turns}
 extract_on_exit = {str(config.chat.extract_on_exit).lower()}
 '''
     path.write_text(content, encoding="utf-8")

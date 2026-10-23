@@ -15,6 +15,7 @@ from ..llm import (
 )
 from ..memory.service import MemoryService
 from .context import ContextManager
+from .recall import RecallQueryBuilder
 from .session import Session, SessionStore, new_message_id
 from .tools import build_tools, compact_tool_outputs
 
@@ -61,6 +62,11 @@ class AgentRuntime:
         self.model = model
         self.sessions = sessions
         self.config = config or service.config.chat
+        self.recall_queries = RecallQueryBuilder(
+            service.config.llm,
+            rewrite=self.config.recall_rewrite,
+            context_turns=self.config.recall_context_turns,
+        )
         self.summarizer = summarizer or OpenAISummarizer(service.config.llm)
         self.context = ContextManager(
             self.config,
@@ -105,6 +111,11 @@ class AgentRuntime:
         self.model = LiteLLMChatModel(config.llm)
         self.summarizer = LLMSummarizer(config.llm)
         self.config = config.chat
+        self.recall_queries = RecallQueryBuilder(
+            config.llm,
+            rewrite=config.chat.recall_rewrite,
+            context_turns=config.chat.recall_context_turns,
+        )
         self.context.config = config.chat
         self.context.summarizer = self.summarizer
 
@@ -284,7 +295,11 @@ class AgentRuntime:
     def _auto_recall(self, text: str) -> str:
         if self.config.auto_recall <= 0:
             return ""
-        hits = self.service.recall(text, self.config.auto_recall)
+        recall = self.recall_queries.build(text, self.current.user_texts()[:-1])
+        limit = self.config.auto_recall
+        if recall.cue:
+            limit = max(limit, 8)
+        hits = self.service.recall(recall.text, limit)
         return "\n".join(f"- [{hit.topic}] ({hit.timestamp}) {hit.text}" for hit in hits)
 
     def _flush_memories(self, texts: list[str]) -> dict:

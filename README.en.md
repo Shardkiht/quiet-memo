@@ -56,6 +56,8 @@ compact_threshold = 0.8
 max_tool_steps = 8
 tool_timeout = 60.0
 auto_recall = 3
+recall_rewrite = true         # Rewrite follow-up queries with the LLM; falls back without a key
+recall_context_turns = 2      # Recent user turns used for follow-up queries
 extract_on_exit = true
 ```
 
@@ -65,7 +67,7 @@ If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Int
 
 Run `qm` or `quietmemo` to enter the chat UI; a session is created when you send the first message. `qm chat` is equivalent. Type `/` to open the command menu with descriptions. Selection, input, and confirmation screens can all be cancelled with `ESC`. Chat content is centered and occupies about 36% of the window; the bottom status bar shows the current model and context usage.
 
-- Automatically retrieves relevant long-term memories every turn and injects them into context.
+- Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`.

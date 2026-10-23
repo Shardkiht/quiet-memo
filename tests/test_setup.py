@@ -35,7 +35,12 @@ def test_write_config_roundtrip(tmp_path):
             fallbacks=["openai/gpt-4o-mini"],
             num_retries=1,
         ),
-        chat=ChatConfig(context_window=16000, keep_recent_tokens=3000),
+        chat=ChatConfig(
+            context_window=16000,
+            keep_recent_tokens=3000,
+            recall_rewrite=False,
+            recall_context_turns=4,
+        ),
     )
 
     write_config(path, config)
@@ -46,6 +51,8 @@ def test_write_config_roundtrip(tmp_path):
     assert loaded.llm.fallbacks == ["openai/gpt-4o-mini"]
     assert loaded.llm.num_retries == 1
     assert loaded.chat.context_window == 16000
+    assert loaded.chat.recall_rewrite is False
+    assert loaded.chat.recall_context_turns == 4
     assert loaded.vault == config.vault
 
 

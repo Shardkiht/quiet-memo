@@ -20,3 +20,9 @@ api_key_env = "DEEPSEEK_API_KEY"
 reasoning_effort = ""
 temperature = 0.1
 timeout = 60.0
+
+[chat]
+# 自动召回时参考最近几轮用户消息
+recall_context_turns = 2
+# 允许用 LLM 把追问改写成检索 query（需要 API Key）
+recall_rewrite = true

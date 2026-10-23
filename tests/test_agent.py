@@ -164,6 +164,40 @@ def test_auto_recall_injects_long_term_memory(tmp_path):
     assert "清淡" in system_message["content"]
 
 
+def test_auto_recall_uses_recent_context_for_followup(tmp_path, monkeypatch):
+    model = FakeChatModel([AssistantTurn(content="第一次"), AssistantTurn(content="第二次")])
+    runtime, service = build_runtime(tmp_path, model)
+    queries = []
+    recall = service.recall
+
+    def capture(query, limit=10):
+        queries.append(query)
+        return recall(query, limit)
+
+    monkeypatch.setattr(service, "recall", capture)
+
+    runtime.ask("我在看滨江的房子")
+    runtime.ask("那附近便宜吗")
+
+    assert "滨江" in queries[1]
+
+
+def test_memory_cue_increases_auto_recall_limit(tmp_path, monkeypatch):
+    model = FakeChatModel([AssistantTurn(content="记得。")])
+    runtime, service = build_runtime(tmp_path, model)
+    limits = []
+
+    def capture(query, limit=10):
+        limits.append(limit)
+        return []
+
+    monkeypatch.setattr(service, "recall", capture)
+
+    runtime.ask("你还记得我的咖啡偏好吗")
+
+    assert limits == [8]
+
+
 def test_force_conclude_after_max_steps(tmp_path):
     class LoopModel:
         def __init__(self):

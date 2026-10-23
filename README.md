@@ -56,6 +56,8 @@ compact_threshold = 0.8
 max_tool_steps = 8
 tool_timeout = 60.0
 auto_recall = 3
+recall_rewrite = true         # 用 LLM 改写追问；无 Key 自动回退到拼接
+recall_context_turns = 2      # 追问时参考最近几轮用户消息
 extract_on_exit = true
 ```
 
@@ -65,7 +67,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 直接运行 `qm` 或 `quietmemo` 进入对话界面；会话在发送第一条消息时创建。`qm chat` 等价。输入 `/` 会弹出命令菜单和说明。选择、输入和确认界面都可以按 `ESC` 取消。对话内容居中显示，约占窗口 36%；底部状态栏显示当前模型和已用上下文。
 
-- 每轮自动检索相关长期记忆，注入上下文。
+- 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
 - 模型可调用 `recall / memorize / correct / forget / review_pending`。
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
 - 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。

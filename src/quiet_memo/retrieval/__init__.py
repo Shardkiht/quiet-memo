@@ -1,4 +1,11 @@
-from .base import Retriever, SearchHit
+from .base import Embedder, Retriever, SearchHit, VectorRetriever
 from .keyword import KeywordRetriever, tokenize
 
-__all__ = ["KeywordRetriever", "Retriever", "SearchHit", "tokenize"]
+__all__ = [
+    "Embedder",
+    "KeywordRetriever",
+    "Retriever",
+    "SearchHit",
+    "VectorRetriever",
+    "tokenize",
+]

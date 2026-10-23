@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from quiet_memo.memory.store import MemoryStore
-from quiet_memo.retrieval import KeywordRetriever
+from quiet_memo.retrieval import KeywordRetriever, tokenize
 
 
 def seed(tmp_path):
@@ -38,3 +38,24 @@ def test_search_ignores_inactive_entries(tmp_path):
 def test_empty_query_returns_nothing(tmp_path):
     store = seed(tmp_path)
     assert KeywordRetriever(store).search("  ") == []
+
+
+def test_search_sees_new_entries_without_recreating_retriever(tmp_path):
+    store = MemoryStore(tmp_path)
+    store.append("preferences", "喜欢浓咖啡")
+    retriever = KeywordRetriever(store)
+    assert retriever.search("浓咖啡")
+
+    store.append("preferences", "喜欢清淡风味")
+    hits = retriever.search("清淡")
+
+    assert hits and "清淡" in hits[0].text
+
+
+def test_tokenize_drops_punctuation():
+    tokens = tokenize("apartment, budget.")
+
+    assert "apartment" in tokens
+    assert "budget" in tokens
+    assert "," not in tokens
+    assert "." not in tokens
