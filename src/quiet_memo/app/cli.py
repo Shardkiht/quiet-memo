@@ -240,7 +240,7 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
             history=FileHistory(str(history_path)),
             completer=_make_slash_completer(),
             complete_while_typing=True,
-            complete_style=CompleteStyle.READLINE_LIKE,
+            complete_style=CompleteStyle.COLUMN,
             reserve_space_for_menu=10,
         )
     except Exception as exc:
