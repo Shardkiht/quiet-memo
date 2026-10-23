@@ -216,7 +216,7 @@ def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(
         cli.questionary,
         "select",
-        lambda *args, **kwargs: Answer(("deepseek", "deepseek-reasoner")),
+        lambda *args, **kwargs: Answer(("deepseek", "deepseek-v4-pro")),
     )
     monkeypatch.setattr(
         "quiet_memo.infra.providers.resolve_config_path",
@@ -229,7 +229,7 @@ def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
 
     cli._switch_model(runtime, service)
 
-    assert service.config.llm.model == "deepseek-reasoner"
-    assert runtime.model_label == "deepseek/deepseek-reasoner"
+    assert service.config.llm.model == "deepseek-v4-pro"
+    assert runtime.model_label == "deepseek/deepseek-v4-pro"
     assert config_path.exists()
-    assert "deepseek-reasoner" in config_path.read_text(encoding="utf-8")
+    assert "deepseek-v4-pro" in config_path.read_text(encoding="utf-8")

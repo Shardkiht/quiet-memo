@@ -6,6 +6,7 @@ from .client import (
     ToolCall,
     Usage,
     complete,
+    fetch_provider_models,
     model_metadata,
     supported_params,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "Usage",
     "complete",
     "fallback_summary",
+    "fetch_provider_models",
     "model_metadata",
     "supported_params",
 ]

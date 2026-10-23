@@ -38,7 +38,7 @@ auto_push = false
 [llm]
 provider = "deepseek"          # litellm provider：deepseek/siliconflow/dashscope/openrouter/openai/custom
 base_url = "https://api.deepseek.com/v1"
-model = "deepseek-chat"
+model = "deepseek-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 reasoning_effort = ""         # low / medium / high；仅模型支持时生效
 fallbacks = []                 # 例如 ["openai/gpt-4o-mini"]

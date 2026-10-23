@@ -8,6 +8,7 @@ from quiet_memo.infra.providers import PRESETS, write_config
 
 
 def test_litellm_model_names():
+    assert LLMConfig(provider="deepseek", model="deepseek-flash").litellm_model() == "deepseek/deepseek-flash"
     assert LLMConfig(provider="deepseek", model="deepseek-chat").litellm_model() == "deepseek/deepseek-chat"
     assert (
         LLMConfig(provider="siliconflow", model="deepseek-ai/DeepSeek-V3").litellm_model()
@@ -68,6 +69,6 @@ def test_provider_presets_cover_domestic_providers():
 def test_litellm_metadata_exposes_context_and_reasoning():
     from quiet_memo.llm import model_metadata, supported_params
 
-    info = model_metadata("deepseek/deepseek-chat")
+    info = model_metadata("openai/gpt-4o-mini")
     assert info.get("max_input_tokens", 0) > 0
-    assert "reasoning_effort" in supported_params("deepseek/deepseek-chat")
+    assert "reasoning_effort" in supported_params("openai/gpt-4o-mini")

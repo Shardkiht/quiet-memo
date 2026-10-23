@@ -110,6 +110,20 @@ def supported_params(model: str) -> tuple[str, ...]:
         return ()
 
 
+def fetch_provider_models(config: LLMConfig, timeout: float = 5.0) -> list[str]:
+    """向 OpenAI 兼容端点请求真实模型列表；失败返回空列表。"""
+    api_key = config.api_key()
+    if not api_key or not config.base_url:
+        return []
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(api_key=api_key, base_url=config.base_url, timeout=timeout)
+        return [model.id for model in client.models.list().data]
+    except Exception:
+        return []
+
+
 def _usage(response, litellm) -> Usage:
     usage = _field(response, "usage")
     if usage is None:

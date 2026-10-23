@@ -35,9 +35,9 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "deepseek",
         "DeepSeek（国内，便宜）",
         "https://api.deepseek.com/v1",
-        "deepseek-chat",
+        "deepseek-flash",
         "DEEPSEEK_API_KEY",
-        ("deepseek-chat", "deepseek-reasoner"),
+        ("deepseek-flash", "deepseek-v4-pro"),
     ),
     ProviderPreset(
         "siliconflow",
@@ -76,8 +76,10 @@ PRESETS: tuple[ProviderPreset, ...] = (
 
 
 MODEL_LABELS = {
-    "deepseek-chat": "DeepSeek V3",
-    "deepseek-reasoner": "DeepSeek R1",
+    "deepseek-flash": "DeepSeek Flash",
+    "deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek-chat": "DeepSeek Chat",
+    "deepseek-reasoner": "DeepSeek Reasoner",
     "deepseek-ai/DeepSeek-V3": "DeepSeek V3",
     "Qwen/Qwen2.5-72B-Instruct": "Qwen 2.5 72B",
     "Qwen/Qwen3-32B": "Qwen3 32B",

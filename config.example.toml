@@ -13,7 +13,7 @@ auto_push = false
 [llm]
 # 任意 OpenAI 兼容接口。DeepSeek 示例：
 base_url = "https://api.deepseek.com/v1"
-model = "deepseek-chat"
+model = "deepseek-flash"
 # 只写环境变量名，不写 Key 本身。
 api_key_env = "DEEPSEEK_API_KEY"
 # 支持该参数的模型可选 low / medium / high；留空表示默认

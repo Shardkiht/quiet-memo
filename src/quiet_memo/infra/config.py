@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
-DEFAULT_MODEL = "deepseek-chat"
+DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
 CONFIG_FILENAME = "quiet-memo.toml"
 

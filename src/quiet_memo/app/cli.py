@@ -289,9 +289,10 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
         resolve_config_path,
         write_config,
     )
-    from ..llm import model_metadata, supported_params
+    from ..llm import fetch_provider_models, model_metadata, supported_params
 
     current = service.config.llm
+    fetched_models = fetch_provider_models(current)
     entries: list[tuple[str, str, object | None]] = []
     seen: set[tuple[str, str]] = set()
     for preset in PRESETS:
@@ -300,9 +301,14 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
         # 只展示当前供应商和已配置 API Key 的其他供应商
         if preset.key != current.provider and not has_api_key(preset):
             continue
-        for model in preset.models:
+        models = fetched_models if preset.key == current.provider and fetched_models else list(preset.models)
+        for model in models:
             entries.append((preset.key, model, preset))
             seen.add((preset.key, model))
+    if current.provider not in {preset.key for preset in PRESETS} or current.provider == "custom":
+        for model in (fetched_models or [current.model]):
+            entries.insert(0, (current.provider, model, None))
+            seen.add((current.provider, model))
     if (current.provider, current.model) not in seen:
         entries.insert(0, (current.provider, current.model, None))
 
