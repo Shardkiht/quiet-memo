@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import types
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,43 @@ from quiet_memo.infra.config import Config, LLMConfig
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import Candidate, ExtractionResult
 from quiet_memo.memory.service import MemoryService
+
+
+class _FakeControl:
+    def get_pointed_at(self):
+        return SimpleNamespace(value=None)
+
+
+class _FakeLayout:
+    def find_all_controls(self):
+        return [_FakeControl()]
+
+
+class _FakeApplication:
+    def __init__(self):
+        self.key_bindings = None
+        self.layout = _FakeLayout()
+
+
+class FakeQuestion:
+    """替代 questionary 控件，避免测试环境尝试创建终端。"""
+
+    def __init__(self):
+        self.application = _FakeApplication()
+
+    def ask(self, kbi_msg=""):
+        return None
+
+
+@pytest.fixture
+def patch_questionary(monkeypatch):
+    def _patch(module):
+        for name in ("select", "text", "password", "confirm"):
+            monkeypatch.setattr(
+                module.questionary, name, lambda *args, **kwargs: FakeQuestion()
+            )
+
+    return _patch
 
 
 @pytest.fixture(autouse=True)

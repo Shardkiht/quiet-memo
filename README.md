@@ -61,7 +61,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 ## 对话 Agent
 
-直接运行 `qm` 或 `quietmemo` 进入对话界面；会话在发送第一条消息时创建。`qm chat` 等价。输入 `/` 会弹出命令菜单和说明。
+直接运行 `qm` 或 `quietmemo` 进入对话界面；会话在发送第一条消息时创建。`qm chat` 等价。输入 `/` 会弹出命令菜单和说明。选择、输入和确认界面都可以按 `ESC` 取消。
 
 - 每轮自动检索相关长期记忆，注入上下文。
 - 模型可调用 `recall / memorize / correct / forget / review_pending`。
@@ -75,7 +75,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | 命令 | 作用 |
 | --- | --- |
 | `/new` | 结束当前会话，进入新会话（发送首条消息后创建） |
-| `/sessions` | 会话管理：搜索、选择恢复、删除 |
+| `/sessions` | 会话管理：Enter 恢复、Delete 删除（弹确认）、ESC 返回、支持搜索 |
 | `/resume [id|query]` | 恢复会话；无参数打开排序后的会话选择器，带关键词则先过滤 |
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |

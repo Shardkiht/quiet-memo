@@ -17,6 +17,7 @@ from .config import (
     load_config,
     write_example_config,
 )
+from .prompts import ask
 
 console = Console()
 
@@ -151,31 +152,33 @@ def _choose_model(preset: ProviderPreset, current: str) -> str:
     if current and current not in options:
         options.insert(0, current)
     if not options:
-        value = questionary.text("模型名称", default=current).ask()
+        value = ask(questionary.text("模型名称", default=current))
         if value is None or not value.strip():
             raise KeyboardInterrupt
         return value.strip()
     preferred = current if current in options else preset.model
     ordered = [preferred] + [model for model in options if model != preferred]
     ordered.append("自定义模型")
-    selected = questionary.select(
-        "选择模型",
-        choices=[
-            questionary.Choice(
-                (display_model(model) + ("  ← 当前" if model == current else "")),
-                value=model,
-            )
-            for model in ordered
-        ],
-        style=_MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    selected = ask(
+        questionary.select(
+            "选择模型",
+            choices=[
+                questionary.Choice(
+                    (display_model(model) + ("  ← 当前" if model == current else "")),
+                    value=model,
+                )
+                for model in ordered
+            ],
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
     if selected is None:
         raise KeyboardInterrupt
     if selected == "自定义模型":
-        value = questionary.text("模型名称", default=current).ask()
+        value = ask(questionary.text("模型名称", default=current))
         if value is None or not value.strip():
             raise KeyboardInterrupt
         return value.strip()
@@ -189,14 +192,16 @@ def _choose_reasoning(params: tuple[str, ...], current: str | None) -> str | Non
     efforts = list(EFFORT_CHOICES)
     if current:
         efforts.sort(key=lambda item: 0 if item[1] == current else 1)
-    selected = questionary.select(
-        "思考强度",
-        choices=[questionary.Choice(label, value=value) for label, value in efforts],
-        style=_MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    selected = ask(
+        questionary.select(
+            "思考强度",
+            choices=[questionary.Choice(label, value=value) for label, value in efforts],
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
     if selected is None:
         raise KeyboardInterrupt
     return None if selected == "default" else selected
@@ -211,14 +216,16 @@ def _choose_context(max_input: int | None, current: int) -> int:
         options = [16000, 32000, 64000]
     default = min(options, key=lambda value: abs(value - current))
     options = [default] + [value for value in options if value != default]
-    selected = questionary.select(
-        "上下文长度",
-        choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
-        style=_MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    selected = ask(
+        questionary.select(
+            "上下文长度",
+            choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
     if selected is None:
         raise KeyboardInterrupt
     return int(selected)
@@ -308,21 +315,23 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
     if vault is not None:
         config.vault = vault.expanduser().resolve()
 
-    choice = questionary.select(
-        "选择模型供应商",
-        choices=[questionary.Choice(title=preset.label, value=preset) for preset in PRESETS],
-        style=_MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    choice = ask(
+        questionary.select(
+            "选择模型供应商",
+            choices=[questionary.Choice(title=preset.label, value=preset) for preset in PRESETS],
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
     if choice is None:
         raise KeyboardInterrupt
     preset: ProviderPreset = choice
 
     if preset.key == "custom":
-        base_url = questionary.text("Base URL", default=config.llm.base_url or "https://").ask()
-        env_name = questionary.text("API Key 环境变量名", default=config.llm.api_key_env).ask()
+        base_url = ask(questionary.text("Base URL", default=config.llm.base_url or "https://"))
+        env_name = ask(questionary.text("API Key 环境变量名", default=config.llm.api_key_env))
         if base_url is None or env_name is None:
             raise KeyboardInterrupt
         model = _choose_model(preset, config.llm.model)
@@ -350,9 +359,11 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
         f"思考强度 {effort or '默认'}"
     )
 
-    api_key = questionary.password(
-        "API Key（不会写入配置文件；留空则跳过）"
-    ).ask()
+    api_key = ask(
+        questionary.password(
+            "API Key（不会写入配置文件；留空则跳过）"
+        )
+    )
     key_saved = False
     keyring_error = ""
     if api_key:
@@ -377,12 +388,12 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
     check = False
     detail = "已跳过连接测试"
     if api_key and key_saved:
-        if questionary.confirm("现在测试连接？", default=True).ask():
+        if ask(questionary.confirm("现在测试连接？", default=True)):
             check, detail = test_connection(config.llm)
 
     initialized = False
     if not (config.vault / ".git").exists():
-        if questionary.confirm(f"初始化记忆库 {config.vault}？", default=True).ask():
+        if ask(questionary.confirm(f"初始化记忆库 {config.vault}？", default=True)):
             from ..memory.service import MemoryService
 
             MemoryService(config).init_vault()

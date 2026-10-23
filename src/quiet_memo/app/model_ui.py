@@ -5,6 +5,7 @@ from dataclasses import replace
 import questionary
 
 from ..agent.runtime import AgentRuntime
+from ..infra.prompts import ask
 from ..llm import fetch_provider_models, model_metadata, supported_params
 from ..memory.service import MemoryService
 from .ui import MENU_STYLE, console
@@ -75,14 +76,16 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     choices.append(questionary.Choice("↻ 刷新模型列表", value=("__refresh__", "")))
     choices.append(questionary.Choice("自定义模型…", value=("__custom__", "")))
 
-    selected = questionary.select(
-        f"当前模型：{runtime.model_label}",
-        choices=choices,
-        style=MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    selected = ask(
+        questionary.select(
+            f"当前模型：{runtime.model_label}",
+            choices=choices,
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
     if selected is None:
         return
     if selected[0] == "__refresh__":
@@ -91,7 +94,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
         return
 
     if selected[0] == "__custom__":
-        value = questionary.text("模型名称", default=current.model).ask()
+        value = ask(questionary.text("模型名称", default=current.model))
         if value is None or not value.strip():
             return
         new_llm = replace(current, model=value.strip())

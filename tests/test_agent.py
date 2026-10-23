@@ -246,23 +246,19 @@ def test_reload_llm_updates_model_and_extractor(tmp_path, monkeypatch):
     assert runtime.context.config is service.config.chat
 
 
-def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
+def test_switch_model_updates_config_and_runtime(
+    tmp_path, monkeypatch, patch_questionary
+):
     from quiet_memo.app import model_ui
 
+    patch_questionary(model_ui)
     runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
     config_path = tmp_path / "quiet-memo.toml"
 
-    class Answer:
-        def __init__(self, value):
-            self.value = value
-
-        def ask(self):
-            return self.value
-
     monkeypatch.setattr(
-        model_ui.questionary,
-        "select",
-        lambda *args, **kwargs: Answer(("deepseek", "deepseek-v4-pro")),
+        model_ui,
+        "ask",
+        lambda question: ("deepseek", "deepseek-v4-pro"),
     )
     monkeypatch.setattr(
         "quiet_memo.infra.providers.resolve_config_path",

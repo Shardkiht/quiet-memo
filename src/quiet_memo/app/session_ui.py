@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import questionary
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 
 from ..agent.session import SessionStore
+from ..infra.prompts import ask, pointer_control
 from .ui import MENU_STYLE, SUCCESS, console, styled_table
+
+DELETE = "__delete__"
 
 
 def visible_sessions(rows: list[dict]) -> list[dict]:
@@ -52,49 +57,60 @@ def session_manager(sessions: SessionStore, current_id: str | None = None) -> st
         choices.extend(session_choices(rows, current_id))
         choices.append(questionary.Choice("返回", value="__back__"))
 
-        selected = questionary.select(
-            "会话管理",
-            choices=choices,
-            style=MENU_STYLE,
-            qmark="›",
-            pointer="❯",
-            instruction="↑↓ 选择 · Enter 确认",
-        ).ask()
+        selected = _session_select(
+            questionary.select(
+                "会话管理",
+                choices=choices,
+                style=MENU_STYLE,
+                qmark="›",
+                pointer="❯",
+                instruction="↑↓ 选择 · Enter 恢复 · Delete 删除",
+            )
+        )
         if selected is None or selected == "__back__":
             return None
         if selected == "__search__":
-            value = questionary.text("搜索标题或 ID（留空显示全部）", default=query).ask()
+            value = ask(
+                questionary.text("搜索标题或 ID（留空显示全部）", default=query)
+            )
             if value is not None:
                 query = value.strip()
+            continue
+        if isinstance(selected, tuple):
+            target = selected[1]
+            if target in ("__search__", "__back__"):
+                continue
+            if target == current_id:
+                console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
+                continue
+            title = sessions.load(target).title()
+            confirmed = ask(
+                questionary.confirm(
+                    f"删除会话「{title}」？不可恢复",
+                    default=False,
+                )
+            )
+            if confirmed:
+                sessions.delete(target)
+                console.print(f"[{SUCCESS}]已删除会话 {target}[/]")
             continue
 
         target = selected
         if target == current_id:
-            console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
+            console.print("[dim]已经是当前会话。[/dim]")
             continue
-        title = sessions.load(target).title()
-        action = questionary.select(
-            f"会话：{title}",
-            choices=[
-                questionary.Choice("恢复会话", value="resume"),
-                questionary.Choice("删除会话", value="delete"),
-                questionary.Choice("返回", value="back"),
-            ],
-            style=MENU_STYLE,
-            qmark="›",
-            pointer="❯",
-            instruction="↑↓ 选择 · Enter 确认",
-        ).ask()
-        if action == "resume":
-            return target
-        if action == "delete":
-            confirmed = questionary.confirm(
-                f"删除会话「{title}」？不可恢复",
-                default=False,
-            ).ask()
-            if confirmed:
-                sessions.delete(target)
-                console.print(f"[{SUCCESS}]已删除会话 {target}[/]")
+        return target
+
+
+def _session_select(question):
+    control = pointer_control(question)
+    bindings = KeyBindings()
+
+    @bindings.add(Keys.Delete, eager=True)
+    def _delete(event):
+        event.app.exit(result=(DELETE, control.get_pointed_at().value))
+
+    return ask(question, extra=bindings)
 
 
 def pick_session(
@@ -119,14 +135,16 @@ def pick_session(
         console.print("[dim]没有可选择的会话。[/dim]")
         return None
     choices = session_choices(rows, current_id)
-    return questionary.select(
-        "选择会话（↑↓ 选择，Enter 确认）",
-        choices=choices,
-        style=MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
+    return ask(
+        questionary.select(
+            "选择会话（↑↓ 选择，Enter 确认）",
+            choices=choices,
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
 
 
 def print_sessions(rows: list[dict]) -> None:

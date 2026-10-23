@@ -34,6 +34,39 @@ def test_slash_completer_lists_and_filters_commands():
     assert "切换模型" in models.display_meta_text
 
 
+def test_escape_cancels_questionary_prompt():
+    import questionary
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from quiet_memo.infra.prompts import ask
+
+    with create_pipe_input() as inp:
+        question = questionary.text("name", input=inp, output=DummyOutput())
+        inp.send_text("\x1b")
+        assert ask(question) is None
+
+
+def test_session_select_delete_returns_sentinel():
+    import questionary
+    from prompt_toolkit.input import create_pipe_input
+    from prompt_toolkit.output import DummyOutput
+
+    from quiet_memo.app import session_ui
+
+    with create_pipe_input() as inp:
+        question = questionary.select(
+            "pick",
+            choices=[questionary.Choice("A", value="a")],
+            input=inp,
+            output=DummyOutput(),
+        )
+        inp.send_text("\x1b[3~")
+        result = session_ui._session_select(question)
+
+    assert result == (session_ui.DELETE, "a")
+
+
 def test_session_choices_are_grouped_by_date():
     import questionary
 
@@ -82,10 +115,13 @@ def test_session_choices_are_grouped_by_date():
     )
 
 
-def test_session_manager_returns_session_id_not_first_character(tmp_path, monkeypatch):
+def test_session_manager_returns_session_id_not_first_character(
+    tmp_path, monkeypatch, patch_questionary
+):
     from quiet_memo.agent.session import SessionStore, new_message_id
     from quiet_memo.app import session_ui
 
+    patch_questionary(session_ui)
     store = SessionStore(tmp_path)
     session = store.create()
     store.append(
@@ -93,21 +129,35 @@ def test_session_manager_returns_session_id_not_first_character(tmp_path, monkey
         {"type": "message", "id": new_message_id(), "role": "user", "content": "测试会话"},
     )
 
-    class Answer:
-        def __init__(self, value):
-            self.value = value
-
-        def ask(self):
-            return self.value
-
-    answers = [session.id, "resume"]
-    monkeypatch.setattr(
-        session_ui.questionary,
-        "select",
-        lambda *args, **kwargs: Answer(answers.pop(0)),
-    )
+    answers = [session.id]
+    monkeypatch.setattr(session_ui, "ask", lambda question, **kwargs: answers.pop(0))
 
     assert session_ui.session_manager(store, current_id=None) == session.id
+
+
+def test_session_manager_delete_key_asks_before_deleting(
+    tmp_path, monkeypatch, patch_questionary
+):
+    from quiet_memo.agent.session import SessionStore, new_message_id
+    from quiet_memo.app import session_ui
+
+    patch_questionary(session_ui)
+    store = SessionStore(tmp_path)
+    session = store.create()
+    store.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "待删除"},
+    )
+
+    answers = [(session_ui.DELETE, session.id), False, None]
+    monkeypatch.setattr(session_ui, "ask", lambda question, **kwargs: answers.pop(0))
+
+    assert session_ui.session_manager(store, current_id=None) is None
+    assert store.exists(session.id)
+
+    answers = [(session_ui.DELETE, session.id), True, None]
+    assert session_ui.session_manager(store, current_id=None) is None
+    assert not store.exists(session.id)
 
 
 def test_init_note_recall_commit(tmp_path):
