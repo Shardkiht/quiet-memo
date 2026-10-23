@@ -11,11 +11,15 @@ import yaml
 from .models import Entry, TopicInfo
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
+ENTRY_LINE_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) — (.*)$")
 COMMENT_LINE_RE = re.compile(
     r"^- <!-- ([^>]+) --> (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) — (.*)$"
 )
-LEGACY_LINE_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) — (.*)$")
 SLUG_RE = re.compile(r"[^\w\u4e00-\u9fff-]+")
+TAG_AT_END_RE = re.compile(r"\s+`([A-Za-z_][\w-]*)=([^`]*)`$")
+KNOWN_TAG_KEYS = frozenset(
+    {"id", "status", "supersedes", "source", "confidence", "note", "session", "message"}
+)
 
 STATUS_ACTIVE = "active"
 STATUS_SUPERSEDED = "superseded"
@@ -62,6 +66,20 @@ def _parse_comment(comment: str) -> dict[str, str]:
 
 def _render_comment(fields: dict[str, str]) -> str:
     return "; ".join(f"{key}={value}" for key, value in fields.items())
+
+
+def _render_tags(fields: dict[str, str]) -> str:
+    return " ".join(f"`{key}={value}`" for key, value in fields.items())
+
+
+def _split_tags(rest: str) -> tuple[str, dict[str, str]]:
+    # 只从行尾逐个剥离已知键，避免把正文里的行内代码误判为元数据。
+    tags: dict[str, str] = {}
+    text = rest.rstrip()
+    while (match := TAG_AT_END_RE.search(text)) and match.group(1) in KNOWN_TAG_KEYS:
+        tags[match.group(1)] = match.group(2)
+        text = text[: match.start()].rstrip()
+    return text, dict(reversed(list(tags.items())))
 
 
 class MemoryStore:
@@ -120,20 +138,19 @@ class MemoryStore:
         meta.setdefault("created", stamp.date())
         meta["updated"] = stamp.date()
 
-        comment_fields = {"id": entry_id, "status": STATUS_ACTIVE}
+        tags = {"id": entry_id, "status": STATUS_ACTIVE}
         if supersedes:
-            comment_fields["supersedes"] = supersedes
-        comment = _render_comment(comment_fields)
-
-        parts = [f"source: {source}", f"confidence: {confidence:.2f}"]
+            tags["supersedes"] = supersedes
+        tags["source"] = source
+        tags["confidence"] = f"{confidence:.2f}"
         if note:
-            parts.append(note)
+            tags["note"] = note
         for key, value in (extra or {}).items():
             if value:
-                parts.append(f"{key}: {value}")
+                tags[key] = value
         line = (
-            f"- <!-- {comment} --> {stamp.isoformat(timespec='seconds')} — {text}"
-            f"  ({', '.join(parts)})"
+            f"- {stamp.isoformat(timespec='seconds')} — {text}"
+            f"  {_render_tags(tags)}"
         )
 
         if not path.exists():
@@ -142,11 +159,11 @@ class MemoryStore:
             body = body.rstrip() + f"\n{line}\n"
         self._write(path, meta, body)
 
-        metadata = {}
-        for part in parts:
-            if ": " in part:
-                key, value = part.split(": ", 1)
-                metadata[key] = value
+        metadata = {
+            key: value
+            for key, value in tags.items()
+            if key not in ("id", "status", "supersedes")
+        }
         return Entry(
             id=entry_id,
             topic=slugify(topic),
@@ -158,32 +175,54 @@ class MemoryStore:
         )
 
     def _parse_line(self, line: str, topic: str) -> Entry | None:
-        match = COMMENT_LINE_RE.match(line.strip())
-        if match:
-            fields = _parse_comment(match.group(1))
-            text, metadata = _split_metadata(match.group(3))
+        stripped = line.strip()
+        comment = COMMENT_LINE_RE.match(stripped)
+        if comment:
+            fields = _parse_comment(comment.group(1))
+            text, metadata = _split_metadata(comment.group(3))
             return Entry(
                 id=fields.get("id") or self.new_entry_id(),
                 topic=topic,
                 text=text,
-                timestamp=match.group(2),
+                timestamp=comment.group(2),
                 status=fields.get("status", STATUS_ACTIVE),
                 supersedes=fields.get("supersedes"),
                 metadata=metadata,
             )
-        legacy = LEGACY_LINE_RE.match(line.strip())
-        if legacy:
-            text, metadata = _split_metadata(legacy.group(2))
-            digest = hashlib.sha1(f"{legacy.group(1)}{text}".encode("utf-8")).hexdigest()[:8]
+        match = ENTRY_LINE_RE.match(stripped)
+        if match is None:
+            return None
+        text, tags = _split_tags(match.group(2))
+        if tags:
+            metadata = {
+                key: value
+                for key, value in tags.items()
+                if key not in ("id", "status", "supersedes")
+            }
+            entry_id = tags.get("id") or self._legacy_id(match.group(1), text)
             return Entry(
-                id=f"mem-legacy-{digest}",
+                id=entry_id,
                 topic=topic,
                 text=text,
-                timestamp=legacy.group(1),
-                status=STATUS_ACTIVE,
+                timestamp=match.group(1),
+                status=tags.get("status", STATUS_ACTIVE),
+                supersedes=tags.get("supersedes"),
                 metadata=metadata,
             )
-        return None
+        text, metadata = _split_metadata(text)
+        return Entry(
+            id=self._legacy_id(match.group(1), text),
+            topic=topic,
+            text=text,
+            timestamp=match.group(1),
+            status=STATUS_ACTIVE,
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _legacy_id(timestamp: str, text: str) -> str:
+        digest = hashlib.sha1(f"{timestamp}{text}".encode("utf-8")).hexdigest()[:8]
+        return f"mem-legacy-{digest}"
 
     def entries(self, topic: str | None = None, include_inactive: bool = False) -> list[Entry]:
         if not self.root.exists():
@@ -212,38 +251,42 @@ class MemoryStore:
         if not self.root.exists():
             return False
         for path in sorted(self.root.glob("*.md")):
-            _, body = self._read(path, path.stem)
+            meta, body = self._read(path, path.stem)
             lines = body.splitlines()
-            changed = False
             for index, line in enumerate(lines):
-                match = COMMENT_LINE_RE.match(line.strip())
-                if match:
-                    fields = _parse_comment(match.group(1))
-                    if fields.get("id") != entry_id:
-                        continue
-                    fields["status"] = status
-                    lines[index] = (
-                        f"- <!-- {_render_comment(fields)} --> {match.group(2)} — {match.group(3)}"
-                    )
-                    changed = True
-                    break
-                legacy = LEGACY_LINE_RE.match(line.strip())
-                if legacy:
-                    text, _ = _split_metadata(legacy.group(2))
-                    digest = hashlib.sha1(
-                        f"{legacy.group(1)}{text}".encode("utf-8")
-                    ).hexdigest()[:8]
-                    if f"mem-legacy-{digest}" != entry_id:
-                        continue
-                    comment = _render_comment({"id": entry_id, "status": status})
-                    lines[index] = f"- <!-- {comment} --> {legacy.group(1)} — {legacy.group(2)}"
-                    changed = True
-                    break
-            if changed:
-                meta, _ = self._read(path, path.stem)
+                entry = self._parse_line(line, path.stem)
+                if entry is None or entry.id != entry_id:
+                    continue
+                lines[index] = self._rewrite_status(line, entry, status)
                 self._write(path, meta, "\n".join(lines) + "\n")
                 return True
         return False
+
+    @staticmethod
+    def _rewrite_status(line: str, entry: Entry, status: str) -> str:
+        stripped = line.strip()
+        comment = COMMENT_LINE_RE.match(stripped)
+        if comment:
+            fields = _parse_comment(comment.group(1))
+            fields["status"] = status
+            return (
+                f"- <!-- {_render_comment(fields)} --> "
+                f"{comment.group(2)} — {comment.group(3)}"
+            )
+        match = ENTRY_LINE_RE.match(stripped)
+        if match is None:
+            return line
+        text, tags = _split_tags(match.group(2))
+        if not tags:
+            text, tags = _split_metadata(text)
+        rest = {
+            key: value
+            for key, value in tags.items()
+            if key not in ("id", "status") and re.fullmatch(r"[A-Za-z_][\w-]*", key)
+        }
+        rebuilt = {"id": tags.get("id", entry.id), "status": status}
+        rebuilt.update(rest)
+        return f"- {match.group(1)} — {text}  {_render_tags(rebuilt)}"
 
     def topics(self) -> list[TopicInfo]:
         if not self.root.exists():

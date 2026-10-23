@@ -155,7 +155,7 @@ MCP 客户端配置：
 记忆按主题存为 `memories/<topic>.md`，条目带稳定 ID、状态、时间戳、来源和置信度：
 
 ```markdown
-- <!-- id=mem-20261022-194250-8f1e; status=active --> 2026-10-22T19:42:50 — 在找市区的房子  (source: session:s-... , confidence: 0.95, session: s-..., message: m-...)
+- 2026-10-22T19:42:50 — 在找市区的房子  `id=mem-20261022-194250-8f1e` `status=active` `source=session:s-...` `confidence=0.95` `session=s-...` `message=m-...`
 ```
 
 更正采用“新条目 + `supersedes`”，旧条目状态改为 `superseded`；删除是软删除 `deleted`，操作写入 `.quiet-memo/audit.jsonl`，Git 可回滚。
