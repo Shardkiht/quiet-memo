@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import questionary
+from prompt_toolkit.styles import Style
 from rich.console import Console
 
 from .config import (
@@ -18,6 +19,19 @@ from .config import (
 )
 
 console = Console()
+
+_MENU_STYLE = Style.from_dict(
+    {
+        "qmark": "bold #7aa2f7",
+        "question": "bold #c0caf5",
+        "pointer": "bold #7aa2f7",
+        "highlighted": "bg:#283457 #c0caf5",
+        "selected": "#9ece6a",
+        "separator": "#565f89",
+        "instruction": "#565f89",
+        "text": "#c0caf5",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -153,6 +167,10 @@ def _choose_model(preset: ProviderPreset, current: str) -> str:
             )
             for model in ordered
         ],
+        style=_MENU_STYLE,
+        qmark="›",
+        pointer="❯",
+        instruction="↑↓ 选择 · Enter 确认",
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
@@ -174,6 +192,10 @@ def _choose_reasoning(params: tuple[str, ...], current: str | None) -> str | Non
     selected = questionary.select(
         "思考强度",
         choices=[questionary.Choice(label, value=value) for label, value in efforts],
+        style=_MENU_STYLE,
+        qmark="›",
+        pointer="❯",
+        instruction="↑↓ 选择 · Enter 确认",
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
@@ -192,6 +214,10 @@ def _choose_context(max_input: int | None, current: int) -> int:
     selected = questionary.select(
         "上下文长度",
         choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
+        style=_MENU_STYLE,
+        qmark="›",
+        pointer="❯",
+        instruction="↑↓ 选择 · Enter 确认",
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
@@ -285,6 +311,10 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
     choice = questionary.select(
         "选择模型供应商",
         choices=[questionary.Choice(title=preset.label, value=preset) for preset in PRESETS],
+        style=_MENU_STYLE,
+        qmark="›",
+        pointer="❯",
+        instruction="↑↓ 选择 · Enter 确认",
     ).ask()
     if choice is None:
         raise KeyboardInterrupt
