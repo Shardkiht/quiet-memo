@@ -144,6 +144,13 @@ class SessionStore:
     def rename(self, session: Session, title: str) -> None:
         self.append(session, {"type": "title", "title": title.strip()[:80]})
 
+    def delete(self, session_id: str) -> bool:
+        path = self._path(session_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def list(self, limit: int = 20) -> list[dict]:
         if not self.root.exists():
             return []

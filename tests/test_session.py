@@ -69,3 +69,16 @@ def test_invalid_session_id_is_rejected(tmp_path):
         assert "非法会话" in str(exc)
     else:
         raise AssertionError("应当拒绝非法会话 ID")
+
+
+def test_delete_session_file(tmp_path):
+    store, session = make_store(tmp_path)
+    store.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "待删除"},
+    )
+
+    assert store.delete(session.id) is True
+    assert not session.path.exists()
+    assert store.list() == []
+    assert store.delete(session.id) is False

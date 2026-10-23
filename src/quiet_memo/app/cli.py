@@ -79,7 +79,7 @@ VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库�
 
 SLASH_COMMANDS = [
     ("new", "/new", "新建会话"),
-    ("sessions", "/sessions", "列出历史会话"),
+    ("sessions", "/sessions", "会话管理（选择、搜索、删除）"),
     ("resume", "/resume [id|query]", "恢复会话，无参数打开选择器"),
     ("compact", "/compact", "立即压缩上下文"),
     ("summary", "/summary", "查看当前会话摘要"),
@@ -555,8 +555,16 @@ def _handle_command(
             console.print(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]")
         return True
     if command == "/sessions":
-        rows = sessions.list(20)
-        _print_sessions(rows)
+        target = _session_manager(sessions, runtime.current.id)
+        if target is None or target == runtime.current.id:
+            return True
+        runtime.close()
+        try:
+            runtime.resume(target)
+        except KeyError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return True
+        console.print(f"[green]已恢复 {runtime.current.id} · {runtime.current.title()}[/green]")
         return True
     if command == "/resume":
         target = None
@@ -671,12 +679,84 @@ def _session_choices(rows: list[dict], current_id: str | None = None):
     return choices
 
 
+def _session_manager(sessions: SessionStore, current_id: str | None = None) -> str | None:
+    query = ""
+    while True:
+        rows = _visible_sessions(sessions.list(100))
+        if query:
+            needle = query.lower()
+            rows = [
+                row
+                for row in rows
+                if needle in row["title"].lower() or needle in row["id"].lower()
+            ]
+        if not rows:
+            console.print("[dim]没有匹配的会话。[/dim]")
+        choices = [
+            questionary.Choice(
+                f"搜索…（{query}）" if query else "搜索…",
+                value=("__search__", ""),
+            )
+        ]
+        choices.extend(_session_choices(rows, current_id))
+        choices.append(questionary.Choice("返回", value=("__back__", "")))
+
+        selected = questionary.select(
+            "会话管理",
+            choices=choices,
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        ).ask()
+        if selected is None or selected[0] == "__back__":
+            return None
+        if selected[0] == "__search__":
+            value = questionary.text("搜索标题或 ID（留空显示全部）", default=query).ask()
+            if value is not None:
+                query = value.strip()
+            continue
+
+        target = selected[0]
+        if target == current_id:
+            console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
+            continue
+        title = sessions.load(target).title()
+        action = questionary.select(
+            f"会话：{title}",
+            choices=[
+                questionary.Choice("恢复会话", value="resume"),
+                questionary.Choice("删除会话", value="delete"),
+                questionary.Choice("返回", value="back"),
+            ],
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        ).ask()
+        if action == "resume":
+            return target
+        if action == "delete":
+            confirmed = questionary.confirm(
+                f"删除会话「{title}」？不可恢复",
+                default=False,
+            ).ask()
+            if confirmed:
+                sessions.delete(target)
+                console.print(f"[{SUCCESS}]已删除会话 {target}[/]")
+
+
 def _pick_session(
     sessions: SessionStore,
     query: str = "",
     current_id: str | None = None,
+    *,
+    include_empty: bool = False,
+    exclude_current: bool = False,
 ) -> str | None:
-    rows = _visible_sessions(sessions.list(100))
+    rows = sessions.list(100) if include_empty else _visible_sessions(sessions.list(100))
+    if exclude_current and current_id:
+        rows = [row for row in rows if row["id"] != current_id]
     if query:
         needle = query.lower()
         rows = [
@@ -685,11 +765,11 @@ def _pick_session(
             if needle in row["title"].lower() or needle in row["id"].lower()
         ]
     if not rows:
-        console.print("[dim]没有可恢复的会话。[/dim]")
+        console.print("[dim]没有可选择的会话。[/dim]")
         return None
     choices = _session_choices(rows, current_id)
     return questionary.select(
-        "恢复会话（↑↓ 选择，Enter 确认）",
+        "选择会话（↑↓ 选择，Enter 确认）",
         choices=choices,
         style=MENU_STYLE,
         qmark="›",
