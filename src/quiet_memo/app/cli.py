@@ -81,9 +81,6 @@ def _root(ctx: typer.Context) -> None:
     """无子命令时进入主操作界面。"""
     if ctx.invoked_subcommand is not None:
         return
-    if not sys.stdin.isatty():
-        console.print(ctx.get_help())
-        return
     try:
         _main_menu()
     except Exception as exc:
