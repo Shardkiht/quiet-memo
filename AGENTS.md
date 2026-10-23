@@ -68,6 +68,7 @@ memory/agent → llm → infra
 
 README 面向用户，必须始终与 `src/quiet_memo` 的当前架构一致。以下变化必须在同一次改动内更新 README，不能留到后续：
 
+- README 有中英文两版：`README.md` 与 `README.en.md`；任何 README 改动都必须同步两版，并保持顶部语言切换链接。
 - 模块、目录或依赖方向变化：更新“结构”树与依赖说明。
 - 新增或删除 CLI 子命令：更新“命令行”示例。
 - 新增或删除 TUI 斜杠命令：更新“会话内命令”表。
