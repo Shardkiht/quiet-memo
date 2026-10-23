@@ -22,14 +22,14 @@ console = Console()
 
 _MENU_STYLE = Style.from_dict(
     {
-        "qmark": "bold #7aa2f7",
-        "question": "bold #c0caf5",
-        "pointer": "bold #7aa2f7",
-        "highlighted": "bg:#283457 #c0caf5",
-        "selected": "#9ece6a",
-        "separator": "#565f89",
-        "instruction": "#565f89",
-        "text": "#c0caf5",
+        "qmark": "bold #a7c080",
+        "question": "bold #d3d7cf",
+        "pointer": "bold #a7c080",
+        "highlighted": "bg:#2f3338 #ffffff",
+        "selected": "#a7c080",
+        "separator": "#7a8478",
+        "instruction": "#7a8478",
+        "text": "#d3d7cf",
     }
 )
 

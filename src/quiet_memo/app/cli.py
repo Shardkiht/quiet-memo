@@ -35,33 +35,31 @@ app = typer.Typer(
 )
 console = Console()
 
-ACCENT = "#7aa2f7"
-MUTED = "#565f89"
-SUCCESS = "#9ece6a"
-WARNING = "#e0af68"
+ACCENT = "#a7c080"
+MUTED = "#7a8478"
+SUCCESS = "#a7c080"
+WARNING = "#dbbc7f"
 
 MENU_STYLE = Style.from_dict(
     {
         "qmark": f"bold {ACCENT}",
-        "question": "bold #c0caf5",
+        "question": "bold #d3d7cf",
         "pointer": f"bold {ACCENT}",
-        "highlighted": "bg:#283457 #c0caf5",
+        "highlighted": "bg:#2f3338 #ffffff",
         "selected": SUCCESS,
         "separator": MUTED,
         "instruction": MUTED,
-        "text": "#c0caf5",
+        "text": "#d3d7cf",
     }
 )
 
 PROMPT_STYLE = Style.from_dict(
     {
         "prompt": f"bold {ACCENT}",
-        "session": MUTED,
-        "arrow": f"bold {ACCENT}",
-        "completion-menu.completion": "bg:#1f2335 #c0caf5",
-        "completion-menu.completion.current": "bg:#283457 #c0caf5",
-        "completion-menu.meta.completion": "bg:#1f2335 #565f89",
-        "completion-menu.meta.completion.current": "bg:#283457 #7aa2f7",
+        "completion-menu.completion": "bg:#1f2125 #d3d7cf",
+        "completion-menu.completion.current": "bg:#2f3338 #ffffff",
+        "completion-menu.meta.completion": "bg:#1f2125 #7a8478",
+        "completion-menu.meta.completion.current": "bg:#2f3338 #a7c080",
     }
 )
 
@@ -321,12 +319,7 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
 
     try:
         while True:
-            status = runtime.status()
-            prompt_text = [
-                ("class:prompt", "你 "),
-                ("class:session", f"[{status['session_id'][-4:]}] "),
-                ("class:arrow", "› "),
-            ]
+            prompt_text = [("class:prompt", "❯ ")]
             try:
                 line = prompt.prompt(prompt_text)
             except (EOFError, KeyboardInterrupt):
