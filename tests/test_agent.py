@@ -198,3 +198,38 @@ def test_reload_llm_updates_model_and_extractor(tmp_path, monkeypatch):
     assert runtime.model_label == "siliconflow/deepseek-ai/DeepSeek-V3"
     assert service.config.llm is new_llm
     assert runtime.context.config is service.config.chat
+
+
+def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
+    from quiet_memo.app import cli
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    config_path = tmp_path / "quiet-memo.toml"
+
+    class Answer:
+        def __init__(self, value):
+            self.value = value
+
+        def ask(self):
+            return self.value
+
+    monkeypatch.setattr(
+        cli.questionary,
+        "select",
+        lambda *args, **kwargs: Answer(("deepseek", "deepseek-reasoner")),
+    )
+    monkeypatch.setattr(
+        "quiet_memo.infra.providers.resolve_config_path",
+        lambda path=None: config_path,
+    )
+    monkeypatch.setattr(
+        "quiet_memo.infra.config.load_config",
+        lambda *args, **kwargs: service.config,
+    )
+
+    cli._switch_model(runtime, service)
+
+    assert service.config.llm.model == "deepseek-reasoner"
+    assert runtime.model_label == "deepseek/deepseek-reasoner"
+    assert config_path.exists()
+    assert "deepseek-reasoner" in config_path.read_text(encoding="utf-8")

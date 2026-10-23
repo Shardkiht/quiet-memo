@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import questionary
@@ -210,7 +211,7 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
         Panel(
             f"会话 {runtime.current.id} · {runtime.current.title()}\n"
             f"模型 {runtime.model_label} · 上下文 {service.config.chat.context_window}\n"
-            "/help 查看命令 · /setup 修改模型 · /exit 退出",
+            "/help 查看命令 · /models 切换模型 · /exit 退出",
             title="quiet-memo",
             border_style="cyan",
         )
@@ -279,6 +280,104 @@ def _print_hits(query: str, hits) -> None:
     console.print(table)
 
 
+def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
+    from ..infra.providers import PRESETS, resolve_config_path, write_config
+    from ..llm import model_metadata, supported_params
+
+    current = service.config.llm
+    entries: list[tuple[str, str, object | None]] = []
+    seen: set[tuple[str, str]] = set()
+    for preset in PRESETS:
+        if preset.key == "custom":
+            continue
+        for model in preset.models:
+            entries.append((preset.key, model, preset))
+            seen.add((preset.key, model))
+    if (current.provider, current.model) not in seen:
+        entries.insert(0, (current.provider, current.model, None))
+
+    choices = []
+    for provider, model, preset in entries:
+        candidate = replace(
+            current,
+            provider=provider,
+            model=model,
+            base_url=preset.base_url if preset else current.base_url,
+            api_key_env=preset.api_key_env if preset else current.api_key_env,
+        )
+        key = candidate.litellm_model()
+        info = model_metadata(key)
+        caps = []
+        max_input = info.get("max_input_tokens")
+        if max_input:
+            try:
+                caps.append(f"{int(max_input) // 1000}k")
+            except (TypeError, ValueError):
+                pass
+        if "reasoning_effort" in supported_params(key):
+            caps.append("reasoning")
+        label = f"[{provider}] {model}"
+        if caps:
+            label += f"  ({', '.join(caps)})"
+        if (provider, model) == (current.provider, current.model):
+            label += "  ← 当前"
+        choices.append(questionary.Choice(label, value=(provider, model)))
+    choices.append(questionary.Choice("自定义模型…", value=("__custom__", "")))
+
+    selected = questionary.select(
+        f"当前模型：{runtime.model_label}",
+        choices=choices,
+        default=(current.provider, current.model),
+    ).ask()
+    if selected is None:
+        return
+
+    if selected[0] == "__custom__":
+        value = questionary.text("模型名称", default=current.model).ask()
+        if value is None or not value.strip():
+            return
+        new_llm = replace(current, model=value.strip())
+    else:
+        provider, model = selected
+        preset = next((item for item in PRESETS if item.key == provider), None)
+        new_llm = replace(
+            current,
+            provider=provider,
+            model=model,
+            base_url=preset.base_url if preset else current.base_url,
+            api_key_env=preset.api_key_env if preset else current.api_key_env,
+        )
+        if new_llm.provider != current.provider and not new_llm.api_key():
+            console.print(
+                f"[yellow]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/yellow]"
+            )
+            return
+
+    key = new_llm.litellm_model()
+    info = model_metadata(key)
+    params = supported_params(key)
+    if new_llm.reasoning_effort and "reasoning_effort" not in params:
+        new_llm.reasoning_effort = None
+    max_input = info.get("max_input_tokens")
+    if max_input is not None:
+        try:
+            max_input = int(max_input)
+        except (TypeError, ValueError):
+            max_input = None
+    context_window = service.config.chat.context_window
+    if max_input and context_window > max_input:
+        context_window = max_input
+
+    service.config.llm = new_llm
+    service.config.chat.context_window = context_window
+    write_config(resolve_config_path(None), service.config)
+    runtime.reload_llm()
+    console.print(
+        f"[green]模型已切换：{runtime.model_label}[/green] "
+        f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
+    )
+
+
 def _handle_command(
     runtime: AgentRuntime,
     service: MemoryService,
@@ -303,7 +402,8 @@ def _handle_command(
                         "/compact          立即压缩上下文",
                         "/summary          查看当前会话摘要",
                         "/status           会话与记忆状态",
-                        "/setup            配置模型 / API Key",
+                        "/models           切换模型",
+                        "/setup            完整配置模型 / API Key",
                         "/rename <title>   重命名当前会话",
                         "/recall <query>   直接检索记忆",
                         "/remember <text>  直接写入记忆",
@@ -315,7 +415,10 @@ def _handle_command(
             )
         )
         return True
-    if command in ("/setup", "/model"):
+    if command in ("/models", "/model"):
+        _switch_model(runtime, service)
+        return True
+    if command == "/setup":
         from ..infra.providers import run_setup
 
         try:
