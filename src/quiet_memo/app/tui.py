@@ -8,6 +8,7 @@ from rich.panel import Panel
 
 from ..agent.runtime import AgentRuntime
 from ..agent.session import SessionStore
+from ..infra.tokens import format_tokens
 from ..llm import ChatModelError, LiteLLMChatModel
 from ..memory.service import MemoryService
 from .model_ui import switch_model
@@ -31,7 +32,8 @@ def run_chat(service: MemoryService, resume: str | None = None) -> None:
     if not service.config.llm.api_key():
         fail(
             f"未配置 LLM API Key，请设置环境变量 {service.config.llm.api_key_env}，"
-            "或在聊天里输入 /setup 配置。"
+            "或在聊天里输入 /setup 配置。",
+            center=True,
         )
     if not (service.config.vault / ".git").exists():
         service.init_vault()
@@ -41,7 +43,7 @@ def run_chat(service: MemoryService, resume: str | None = None) -> None:
         try:
             runtime.resume(resume)
         except KeyError as exc:
-            fail(str(exc))
+            fail(str(exc), center=True)
             return
         print_transcript(runtime.current)
     else:
@@ -92,6 +94,18 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
 
     history_path = service.config.vault / ".quiet-memo" / "chat_history"
     history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def status_bar() -> str:
+        # 底部状态栏：模型 + 本轮实际占用的上下文，随每轮刷新。
+        total = service.config.chat.context_window
+        plan = runtime.last_plan
+        used = plan.estimated_tokens if plan is not None else 0
+        percent = used / max(total, 1)
+        return (
+            f"{indent()} {runtime.model_label} · "
+            f"上下文 {format_tokens(used)}/{format_tokens(total)} · {percent:.0%}"
+        )
+
     try:
         prompt = PromptSession(
             history=FileHistory(str(history_path)),
@@ -100,6 +114,7 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             complete_style=CompleteStyle.COLUMN,
             reserve_space_for_menu=10,
             style=PROMPT_STYLE,
+            bottom_toolbar=status_bar,
         )
     except Exception as exc:
         console.print(
@@ -119,7 +134,7 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
                 f"[bold]{session_title}[/]\n"
                 f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
-                f"[{MUTED}]上下文[/] {service.config.chat.context_window}\n"
+                f"[{MUTED}]上下文[/] {format_tokens(service.config.chat.context_window)}\n"
                 f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
                 border_style=ACCENT,
                 box=box.ROUNDED,
@@ -298,7 +313,7 @@ def handle_command(
                 Panel(
                     f"会话：{info['session_id']} · {info['title']}\n"
                     f"模型：{info['model']}\n"
-                    f"上下文：{info['estimated_tokens']}/{info['context_window']}（{percent:.0%}）\n"
+                    f"上下文：{format_tokens(info['estimated_tokens'])}/{format_tokens(info['context_window'])}（{percent:.0%}）\n"
                     f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
                     f"已覆盖 {info['covered_records']} 条记录\n"
                     f"待确认：{info['pending']} 条",

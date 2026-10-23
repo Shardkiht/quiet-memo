@@ -34,6 +34,26 @@ def test_slash_completer_lists_and_filters_commands():
     assert "切换模型" in models.display_meta_text
 
 
+def test_format_tokens_uses_km_units():
+    from quiet_memo.infra.tokens import format_tokens
+
+    assert format_tokens(800) == "800"
+    assert format_tokens(16000) == "16K"
+    assert format_tokens(64000) == "64K"
+    assert format_tokens(1000000) == "1M"
+    assert format_tokens(1500000) == "1.5M"
+
+
+def test_layout_widths_center_content():
+    from quiet_memo.infra.layout import widths
+
+    for cols in (80, 120, 200):
+        left, width, right = widths(cols)
+        assert left + width + right == cols
+        assert width == max(40, min(cols - 4, round(cols * 0.36)))
+        assert abs(left - right) <= 1
+
+
 def test_escape_cancels_questionary_prompt():
     import questionary
     from prompt_toolkit.input import create_pipe_input

@@ -18,6 +18,7 @@ from .config import (
     write_example_config,
 )
 from .prompts import ask
+from .tokens import format_tokens
 
 console = Console()
 
@@ -219,7 +220,7 @@ def _choose_context(max_input: int | None, current: int) -> int:
     selected = ask(
         questionary.select(
             "上下文长度",
-            choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
+            choices=[questionary.Choice(format_tokens(value), value=value) for value in options],
             style=_MENU_STYLE,
             qmark="›",
             pointer="❯",
@@ -351,7 +352,7 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
         except (TypeError, ValueError):
             max_input = None
     if max_input:
-        console.print(f"模型上下文上限：{max_input} tokens")
+        console.print(f"模型上下文上限：{format_tokens(max_input)} tokens")
     effort = _choose_reasoning(params, config.llm.reasoning_effort)
     context_window = _choose_context(max_input, config.chat.context_window)
     console.print(

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import shutil
-
 import typer
 from prompt_toolkit.styles import Style
 from rich import box
 from rich.console import Console
 from rich.padding import Padding
 from rich.table import Table
+
+from ..infra.layout import widths
 
 console = Console()
 
@@ -17,17 +17,9 @@ SUCCESS = "#d0d0d0"
 WARNING = "#b8b8b8"
 
 
-def terminal_width() -> int:
-    return shutil.get_terminal_size((100, 30)).columns
-
-
 def layout_widths(cols: int | None = None) -> tuple[int, int, int]:
-    """返回（左边距, 内容宽度, 右边距）：对话区约占窗口中间 1/3。"""
-    cols = cols or terminal_width()
-    width = max(40, min(cols - 4, cols // 3))
-    left = max(0, (cols - width) // 2)
-    right = max(0, cols - width - left)
-    return left, width, right
+    # 统一以 Rich 实际渲染宽度为准，避免终端检测不一致导致内容偏右。
+    return widths(cols or console.width)
 
 
 def indent(cols: int | None = None) -> str:
@@ -54,6 +46,7 @@ MENU_STYLE = Style.from_dict(
 PROMPT_STYLE = Style.from_dict(
     {
         "prompt": f"bold {ACCENT}",
+        "bottom-toolbar": MUTED,
         "completion-menu.completion": "bg:#262626 #d8d8d8",
         "completion-menu.completion.current": "bg:#3a3a3a #ffffff",
         "completion-menu.meta.completion": "bg:#262626 #808080",
@@ -125,6 +118,6 @@ def slash_completer():
     return SlashCompleter()
 
 
-def fail(message: str) -> None:
-    console.print(f"[red]{message}[/red]")
+def fail(message: str, center: bool = False) -> None:
+    console.print(centered(f"[red]{message}[/red]") if center else f"[red]{message}[/red]")
     raise typer.Exit(code=1)

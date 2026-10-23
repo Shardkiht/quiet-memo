@@ -6,6 +6,7 @@ import questionary
 
 from ..agent.runtime import AgentRuntime
 from ..infra.prompts import ask
+from ..infra.tokens import format_tokens
 from ..llm import fetch_provider_models, model_metadata, supported_params
 from ..memory.service import MemoryService
 from .ui import MENU_STYLE, centered, console
@@ -62,7 +63,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
         max_input = info.get("max_input_tokens")
         if max_input:
             try:
-                caps.append(f"{int(max_input) // 1000}k")
+                caps.append(format_tokens(int(max_input)))
             except (TypeError, ValueError):
                 pass
         if "reasoning_effort" in supported_params(key):
@@ -136,6 +137,6 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     console.print(
         centered(
             f"[bold]模型已切换：{runtime.model_label}[/] "
-            f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
+            f"[dim]上下文 {format_tokens(context_window)} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
         )
     )

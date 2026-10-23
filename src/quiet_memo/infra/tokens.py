@@ -44,6 +44,15 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
     return total
 
 
+def format_tokens(value: int) -> str:
+    """把 token 数格式化为 K/M 单位，如 64000 → 64K、1000000 → 1M。"""
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:g}M"
+    if value >= 1000:
+        return f"{value / 1000:g}K"
+    return str(value)
+
+
 def truncate_to_tokens(text: str, max_tokens: int) -> str:
     if max_tokens <= 0:
         return ""
