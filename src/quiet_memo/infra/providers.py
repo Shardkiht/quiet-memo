@@ -156,12 +156,14 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
         base_url = questionary.text("Base URL", default=config.llm.base_url or "https://").ask()
         model = questionary.text("模型名称", default=config.llm.model).ask()
         env_name = questionary.text("API Key 环境变量名", default=config.llm.api_key_env).ask()
+        if base_url is None or model is None or env_name is None:
+            raise KeyboardInterrupt
     else:
-        base_url = questionary.text("Base URL", default=preset.base_url).ask()
-        model = questionary.text("模型名称", default=preset.model).ask()
-        env_name = questionary.text("API Key 环境变量名", default=preset.api_key_env).ask()
-    if base_url is None or model is None or env_name is None:
-        raise KeyboardInterrupt
+        base_url = preset.base_url
+        model = preset.model
+        env_name = preset.api_key_env
+
+    console.print(f"使用 {preset.label}：{model} · {base_url}")
 
     api_key = questionary.password(
         "API Key（不会写入配置文件；留空则跳过）"
