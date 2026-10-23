@@ -6,6 +6,8 @@ from .client import (
     ToolCall,
     Usage,
     complete,
+    model_metadata,
+    supported_params,
 )
 from .summarizer import LLMSummarizer, Summarizer, fallback_summary
 
@@ -25,4 +27,6 @@ __all__ = [
     "Usage",
     "complete",
     "fallback_summary",
+    "model_metadata",
+    "supported_params",
 ]

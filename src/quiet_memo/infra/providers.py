@@ -27,6 +27,7 @@ class ProviderPreset:
     base_url: str
     model: str
     api_key_env: str
+    models: tuple[str, ...] = ()
 
 
 PRESETS: tuple[ProviderPreset, ...] = (
@@ -36,6 +37,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "https://api.deepseek.com/v1",
         "deepseek-chat",
         "DEEPSEEK_API_KEY",
+        ("deepseek-chat", "deepseek-reasoner"),
     ),
     ProviderPreset(
         "siliconflow",
@@ -43,6 +45,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "https://api.siliconflow.cn/v1",
         "deepseek-ai/DeepSeek-V3",
         "SILICONFLOW_API_KEY",
+        ("deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct", "Qwen/Qwen3-32B"),
     ),
     ProviderPreset(
         "dashscope",
@@ -50,6 +53,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "qwen-plus",
         "DASHSCOPE_API_KEY",
+        ("qwen-plus", "qwen-max", "qwen-turbo"),
     ),
     ProviderPreset(
         "openai",
@@ -57,6 +61,7 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "https://api.openai.com/v1",
         "gpt-4o-mini",
         "OPENAI_API_KEY",
+        ("gpt-4o-mini", "gpt-4o", "o3-mini"),
     ),
     ProviderPreset(
         "openrouter",
@@ -64,9 +69,80 @@ PRESETS: tuple[ProviderPreset, ...] = (
         "https://openrouter.ai/api/v1",
         "openai/gpt-4o-mini",
         "OPENROUTER_API_KEY",
+        ("openai/gpt-4o-mini", "anthropic/claude-sonnet-4.5", "google/gemini-2.5-flash"),
     ),
     ProviderPreset("custom", "自定义 OpenAI 兼容接口", "", "", "OPENAI_API_KEY"),
 )
+
+
+EFFORT_CHOICES = (
+    ("默认", "default"),
+    ("低", "low"),
+    ("中", "medium"),
+    ("高", "high"),
+)
+
+
+def _choose_model(preset: ProviderPreset, current: str) -> str:
+    options = list(preset.models)
+    if current and current not in options:
+        options.insert(0, current)
+    if not options:
+        value = questionary.text("模型名称", default=current).ask()
+        if value is None or not value.strip():
+            raise KeyboardInterrupt
+        return value.strip()
+    options.append("自定义模型")
+    default = current if current in options else preset.model
+    selected = questionary.select("选择模型", choices=options, default=default).ask()
+    if selected is None:
+        raise KeyboardInterrupt
+    if selected == "自定义模型":
+        value = questionary.text("模型名称", default=current).ask()
+        if value is None or not value.strip():
+            raise KeyboardInterrupt
+        return value.strip()
+    return selected
+
+
+def _choose_reasoning(params: tuple[str, ...], current: str | None) -> str | None:
+    if "reasoning_effort" not in params:
+        console.print("[dim]该模型不支持 reasoning_effort，跳过思考强度。[/dim]")
+        return None
+    selected = questionary.select(
+        "思考强度",
+        choices=[questionary.Choice(label, value=value) for label, value in EFFORT_CHOICES],
+        default=current or "default",
+    ).ask()
+    if selected is None:
+        raise KeyboardInterrupt
+    return None if selected == "default" else selected
+
+
+def _choose_context(max_input: int | None, current: int) -> int:
+    if max_input:
+        options = [value for value in (16000, 32000, 64000, 128000, 256000) if value <= max_input]
+        if not options:
+            options = [max_input]
+    else:
+        options = [16000, 32000, 64000]
+    default = min(options, key=lambda value: abs(value - current))
+    selected = questionary.select(
+        "上下文长度",
+        choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
+        default=default,
+    ).ask()
+    if selected is None:
+        raise KeyboardInterrupt
+    return int(selected)
+
+
+def _capabilities(provider: str, base_url: str, model: str, env_name: str):
+    from ..llm import model_metadata, supported_params
+
+    llm = LLMConfig(provider=provider, base_url=base_url, model=model, api_key_env=env_name)
+    key = llm.litellm_model()
+    return model_metadata(key), supported_params(key)
 
 
 def save_api_key(env_name: str, api_key: str) -> bool:
@@ -110,6 +186,7 @@ provider = "{config.llm.provider}"
 base_url = "{config.llm.base_url}"
 model = "{config.llm.model}"
 api_key_env = "{config.llm.api_key_env}"
+reasoning_effort = "{config.llm.reasoning_effort or ''}"
 fallbacks = [{", ".join(f'"{item}"' for item in config.llm.fallbacks)}]
 num_retries = {config.llm.num_retries}
 temperature = {config.llm.temperature}
@@ -154,16 +231,33 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
 
     if preset.key == "custom":
         base_url = questionary.text("Base URL", default=config.llm.base_url or "https://").ask()
-        model = questionary.text("模型名称", default=config.llm.model).ask()
         env_name = questionary.text("API Key 环境变量名", default=config.llm.api_key_env).ask()
-        if base_url is None or model is None or env_name is None:
+        if base_url is None or env_name is None:
             raise KeyboardInterrupt
+        model = _choose_model(preset, config.llm.model)
+        provider = "custom"
     else:
         base_url = preset.base_url
-        model = preset.model
         env_name = preset.api_key_env
+        current_model = config.llm.model if config.llm.provider == preset.key else preset.model
+        model = _choose_model(preset, current_model)
+        provider = preset.key
 
-    console.print(f"使用 {preset.label}：{model} · {base_url}")
+    metadata, params = _capabilities(provider, base_url.strip(), model, env_name.strip())
+    max_input = metadata.get("max_input_tokens")
+    if max_input is not None:
+        try:
+            max_input = int(max_input)
+        except (TypeError, ValueError):
+            max_input = None
+    if max_input:
+        console.print(f"模型上下文上限：{max_input} tokens")
+    effort = _choose_reasoning(params, config.llm.reasoning_effort)
+    context_window = _choose_context(max_input, config.chat.context_window)
+    console.print(
+        f"使用 {preset.label}：{model} · 上下文 {context_window} · "
+        f"思考强度 {effort or '默认'}"
+    )
 
     api_key = questionary.password(
         "API Key（不会写入配置文件；留空则跳过）"
@@ -176,15 +270,17 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
             keyring_error = "系统凭据存储不可用，请改用环境变量。"
 
     config.llm = LLMConfig(
-        provider=preset.key if preset.key != "custom" else "custom",
+        provider=provider,
         base_url=base_url.strip(),
         model=model.strip(),
         api_key_env=env_name.strip(),
+        reasoning_effort=effort,
         fallbacks=config.llm.fallbacks,
         num_retries=config.llm.num_retries,
         temperature=config.llm.temperature,
         timeout=config.llm.timeout,
     )
+    config.chat.context_window = context_window
     write_config(path, config)
 
     check = False
@@ -207,6 +303,8 @@ def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dic
         "base_url": config.llm.base_url,
         "model": config.llm.model,
         "api_key_env": config.llm.api_key_env,
+        "reasoning_effort": config.llm.reasoning_effort,
+        "context_window": config.chat.context_window,
         "key_saved": key_saved,
         "keyring_error": keyring_error,
         "checked": check,

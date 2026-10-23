@@ -21,6 +21,7 @@ class LLMConfig:
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     api_key_env: str = DEFAULT_API_KEY_ENV
+    reasoning_effort: str | None = None
     fallbacks: list[str] = field(default_factory=list)
     num_retries: int = 2
     temperature: float = 0.1
@@ -121,6 +122,7 @@ def load_config(path: Path | str | None = None) -> Config:
         base_url=base_url,
         model=llm_raw.get("model", DEFAULT_MODEL),
         api_key_env=llm_raw.get("api_key_env", DEFAULT_API_KEY_ENV),
+        reasoning_effort=(str(llm_raw.get("reasoning_effort") or "").strip() or None),
         fallbacks=[str(item) for item in fallbacks if str(item).strip()],
         num_retries=int(llm_raw.get("num_retries", 2)),
         temperature=float(llm_raw.get("temperature", 0.1)),
@@ -158,6 +160,7 @@ provider = "deepseek"
 base_url = "{DEFAULT_BASE_URL}"
 model = "{DEFAULT_MODEL}"
 api_key_env = "{DEFAULT_API_KEY_ENV}"
+reasoning_effort = ""
 fallbacks = []
 num_retries = 2
 temperature = 0.1

@@ -30,6 +30,7 @@ def test_write_config_roundtrip(tmp_path):
             base_url="https://api.siliconflow.cn/v1",
             model="deepseek-ai/DeepSeek-V3",
             api_key_env="SILICONFLOW_API_KEY",
+            reasoning_effort="medium",
             fallbacks=["openai/gpt-4o-mini"],
             num_retries=1,
         ),
@@ -40,6 +41,7 @@ def test_write_config_roundtrip(tmp_path):
     loaded = load_config(path)
 
     assert loaded.llm.provider == "siliconflow"
+    assert loaded.llm.reasoning_effort == "medium"
     assert loaded.llm.fallbacks == ["openai/gpt-4o-mini"]
     assert loaded.llm.num_retries == 1
     assert loaded.chat.context_window == 16000
@@ -61,3 +63,11 @@ def test_env_key_takes_precedence_over_keyring(monkeypatch):
 def test_provider_presets_cover_domestic_providers():
     keys = {preset.key for preset in PRESETS}
     assert {"deepseek", "siliconflow", "dashscope", "custom"} <= keys
+
+
+def test_litellm_metadata_exposes_context_and_reasoning():
+    from quiet_memo.llm import model_metadata, supported_params
+
+    info = model_metadata("deepseek/deepseek-chat")
+    assert info.get("max_input_tokens", 0) > 0
+    assert "reasoning_effort" in supported_params("deepseek/deepseek-chat")

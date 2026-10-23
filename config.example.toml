@@ -16,5 +16,7 @@ base_url = "https://api.deepseek.com/v1"
 model = "deepseek-chat"
 # 只写环境变量名，不写 Key 本身。
 api_key_env = "DEEPSEEK_API_KEY"
+# 支持该参数的模型可选 low / medium / high；留空表示默认
+reasoning_effort = ""
 temperature = 0.1
 timeout = 60.0

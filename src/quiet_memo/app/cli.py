@@ -100,6 +100,9 @@ def setup(
     console.print(
         f"供应商：{result['base_url']} · 模型：{result['model']} · provider：{result['provider']}"
     )
+    console.print(
+        f"上下文：{result['context_window']} · 思考强度：{result['reasoning_effort'] or '默认'}"
+    )
     if result["key_saved"]:
         console.print(
             f"[green]API Key 已保存到系统凭据[/green]（环境变量 {result['api_key_env']} 优先）"

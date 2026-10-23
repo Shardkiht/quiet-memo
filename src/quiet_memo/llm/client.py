@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Protocol
 
 from ..infra.config import LLMConfig
@@ -70,6 +71,8 @@ def complete(
     }
     if config.base_url:
         kwargs["api_base"] = config.base_url
+    if config.reasoning_effort:
+        kwargs["reasoning_effort"] = config.reasoning_effort
     if tools:
         kwargs["tools"] = tools
     if response_format:
@@ -85,6 +88,26 @@ def _field(value, name: str, default=None):
     if isinstance(value, dict):
         return value.get(name, default)
     return getattr(value, name, default)
+
+
+@lru_cache(maxsize=128)
+def model_metadata(model: str) -> dict:
+    """读取 LiteLLM 本地模型元数据；未知模型返回空字典。"""
+    litellm = _litellm()
+    try:
+        return dict(litellm.get_model_info(model))
+    except Exception:
+        return {}
+
+
+@lru_cache(maxsize=128)
+def supported_params(model: str) -> tuple[str, ...]:
+    """读取 LiteLLM 认为该模型支持的 OpenAI 参数。"""
+    litellm = _litellm()
+    try:
+        return tuple(litellm.get_supported_openai_params(model=model) or ())
+    except Exception:
+        return ()
 
 
 def _usage(response, litellm) -> Usage:
