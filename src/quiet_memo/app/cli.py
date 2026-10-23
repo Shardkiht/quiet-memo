@@ -35,31 +35,31 @@ app = typer.Typer(
 )
 console = Console()
 
-ACCENT = "#a7c080"
-MUTED = "#7a8478"
-SUCCESS = "#a7c080"
-WARNING = "#dbbc7f"
+ACCENT = "#d0d0d0"
+MUTED = "#808080"
+SUCCESS = "#d0d0d0"
+WARNING = "#b8b8b8"
 
 MENU_STYLE = Style.from_dict(
     {
         "qmark": f"bold {ACCENT}",
-        "question": "bold #d3d7cf",
+        "question": "bold #e0e0e0",
         "pointer": f"bold {ACCENT}",
-        "highlighted": "bg:#2f3338 #ffffff",
+        "highlighted": "bg:#3a3a3a #ffffff",
         "selected": SUCCESS,
         "separator": MUTED,
         "instruction": MUTED,
-        "text": "#d3d7cf",
+        "text": "#d8d8d8",
     }
 )
 
 PROMPT_STYLE = Style.from_dict(
     {
         "prompt": f"bold {ACCENT}",
-        "completion-menu.completion": "bg:#1f2125 #d3d7cf",
-        "completion-menu.completion.current": "bg:#2f3338 #ffffff",
-        "completion-menu.meta.completion": "bg:#1f2125 #7a8478",
-        "completion-menu.meta.completion.current": "bg:#2f3338 #a7c080",
+        "completion-menu.completion": "bg:#262626 #d8d8d8",
+        "completion-menu.completion.current": "bg:#3a3a3a #ffffff",
+        "completion-menu.meta.completion": "bg:#262626 #808080",
+        "completion-menu.meta.completion.current": "bg:#3a3a3a #d0d0d0",
     }
 )
 
@@ -124,7 +124,7 @@ def _root(ctx: typer.Context) -> None:
     try:
         _main_menu()
     except Exception as exc:
-        console.print(f"[yellow]无法启动交互菜单：{exc}[/yellow]")
+        console.print(f"[#b8b8b8]无法启动交互菜单：{exc}[/]")
         console.print(ctx.get_help())
 
 
@@ -181,16 +181,16 @@ def setup(
     )
     if result["key_saved"]:
         console.print(
-            f"[green]API Key 已保存到系统凭据[/green]（环境变量 {result['api_key_env']} 优先）"
+            f"[bold]API Key 已保存到系统凭据[/]（环境变量 {result['api_key_env']} 优先）"
         )
     elif result["keyring_error"]:
-        console.print(f"[yellow]{result['keyring_error']}[/yellow]")
+        console.print(f"[#b8b8b8]{result['keyring_error']}[/]")
     if result["checked"]:
-        console.print(f"[green]连接测试：{result['check_detail']}[/green]")
+        console.print(f"[bold]连接测试：{result['check_detail']}[/]")
     elif result["base_url"]:
         console.print(f"[dim]{result['check_detail']}[/dim]")
     if result["initialized"]:
-        console.print(f"[green]记忆库已初始化：{result['vault']}[/green]")
+        console.print(f"[bold]记忆库已初始化：{result['vault']}[/]")
 
 
 @app.command()
@@ -247,7 +247,7 @@ def _main_menu() -> None:
             try:
                 run_setup()
             except KeyboardInterrupt:
-                console.print("[yellow]已取消配置。[/yellow]")
+                console.print("[#b8b8b8]已取消配置。[/]")
             continue
         if choice == "sessions":
             _print_sessions(SessionStore(service.config.vault).list(20))
@@ -259,7 +259,7 @@ def _main_menu() -> None:
             continue
         if choice == "chat":
             if not has_key:
-                console.print("[yellow]先配置 API Key，再开始对话。[/yellow]")
+                console.print("[#b8b8b8]先配置 API Key，再开始对话。[/]")
                 continue
             _run_chat(service)
 
@@ -300,7 +300,7 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
         )
     except Exception as exc:
         console.print(
-            f"[yellow]当前终端不支持交互输入：{exc}[/yellow]\n"
+            f"[#b8b8b8]当前终端不支持交互输入：{exc}[/]\n"
             "请在 Windows Terminal / PowerShell 中运行，Git Bash 可尝试 winpty。"
         )
         return
@@ -477,7 +477,7 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool =
         )
         if new_llm.provider != current.provider and not new_llm.api_key():
             console.print(
-                f"[yellow]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/yellow]"
+                f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]"
             )
             return
 
@@ -501,7 +501,7 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool =
     write_config(resolve_config_path(None), service.config)
     runtime.reload_llm()
     console.print(
-        f"[green]模型已切换：{runtime.model_label}[/green] "
+        f"[bold]模型已切换：{runtime.model_label}[/] "
         f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
     )
 
@@ -542,15 +542,15 @@ def _handle_command(
         try:
             run_setup()
         except KeyboardInterrupt:
-            console.print("[yellow]已取消配置。[/yellow]")
+            console.print("[#b8b8b8]已取消配置。[/]")
             return True
         runtime.reload_llm()
-        console.print(f"[green]模型已切换：{runtime.model_label}[/green]")
+        console.print(f"[bold]模型已切换：{runtime.model_label}[/]")
         return True
     if command == "/new":
         stats = runtime.close()
         runtime.start()
-        console.print(f"[green]新会话：{runtime.current.id}[/green]")
+        console.print(f"[bold]新会话：{runtime.current.id}[/]")
         if stats.get("admitted"):
             console.print(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]")
         return True
@@ -564,7 +564,7 @@ def _handle_command(
         except KeyError as exc:
             console.print(f"[red]{exc}[/red]")
             return True
-        console.print(f"[green]已恢复 {runtime.current.id} · {runtime.current.title()}[/green]")
+        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
         return True
     if command == "/resume":
         target = None
@@ -587,7 +587,7 @@ def _handle_command(
         except KeyError as exc:
             console.print(f"[red]{exc}[/red]")
             return True
-        console.print(f"[green]已恢复 {runtime.current.id} · {runtime.current.title()}[/green]")
+        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
         return True
     if command == "/compact":
         for event in runtime.force_compact():
@@ -616,20 +616,20 @@ def _handle_command(
         return True
     if command == "/rename":
         if not argument:
-            console.print("[yellow]用法：/rename <title>[/yellow]")
+            console.print("[#b8b8b8]用法：/rename <title>[/]")
             return True
         runtime.rename(argument)
-        console.print(f"[green]已重命名为：{argument}[/green]")
+        console.print(f"[bold]已重命名为：{argument}[/]")
         return True
     if command == "/recall":
         if not argument:
-            console.print("[yellow]用法：/recall <query>[/yellow]")
+            console.print("[#b8b8b8]用法：/recall <query>[/]")
             return True
         _print_hits(argument, service.recall(argument, 10))
         return True
     if command == "/remember":
         if not argument:
-            console.print("[yellow]用法：/remember <text>[/yellow]")
+            console.print("[#b8b8b8]用法：/remember <text>[/]")
             return True
         result = service.memorize(argument, source=f"session:{runtime.current.id}:manual")
         console.print(
@@ -651,7 +651,7 @@ def _handle_command(
             table.add_row(item.id, item.topic, item.reason, item.text)
         console.print(table)
         return True
-    console.print(f"[yellow]未知命令：{command}，输入 /help 查看帮助。[/yellow]")
+    console.print(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]")
     return True
 
 
@@ -828,9 +828,9 @@ def memorize(
         _fail(str(exc))
         return
     for entry in result.admitted:
-        console.print(f"[green]已写入[/green] [{entry.topic}] {entry.text}")
+        console.print(f"[bold]已写入[/] [{entry.topic}] {entry.text}")
     for item in result.queued:
-        console.print(f"[yellow]待确认[/yellow] {item.id} [{item.topic}] {item.text}  ({item.reason})")
+        console.print(f"[#b8b8b8]待确认[/] {item.id} [{item.topic}] {item.text}  ({item.reason})")
     for text_ in result.duplicates:
         console.print(f"[dim]已存在，跳过：{text_}[/dim]")
     if not result.admitted and not result.queued:
@@ -852,7 +852,7 @@ def note(
     except ValueError as exc:
         _fail(str(exc))
         return
-    console.print(f"[green]已记录[/green] [{entry.topic}] {entry.text}")
+    console.print(f"[bold]已记录[/] [{entry.topic}] {entry.text}")
 
 
 @app.command()
@@ -910,7 +910,7 @@ def approve(
     except KeyError as exc:
         _fail(str(exc))
         return
-    console.print(f"[green]已写入[/green] [{entry.topic}] {entry.text}")
+    console.print(f"[bold]已写入[/] [{entry.topic}] {entry.text}")
 
 
 @app.command()
@@ -988,7 +988,7 @@ def commit(
     console.print(result["summary"])
     console.print(f"提交：{result['hash']}")
     if result["pushed"]:
-        console.print("[green]已推送[/green]")
+        console.print("[bold]已推送[/]")
 
 
 @app.command()
