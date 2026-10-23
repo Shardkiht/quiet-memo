@@ -83,6 +83,26 @@ class AgentRuntime:
         self._closed = False
         return self.session
 
+    def reload_llm(self) -> None:
+        """配置变更后热更新模型、抽取器和摘要器，不重启会话。"""
+        from ..infra.config import load_config
+        from ..llm import LLMSummarizer, LiteLLMChatModel
+        from ..memory.extractor import LLMExtractor
+
+        config = load_config()
+        self.service.config.llm = config.llm
+        self.service.config.chat = config.chat
+        self.service.extractor = LLMExtractor(config.llm)
+        self.model = LiteLLMChatModel(config.llm)
+        self.summarizer = LLMSummarizer(config.llm)
+        self.config = config.chat
+        self.context.config = config.chat
+        self.context.summarizer = self.summarizer
+
+    @property
+    def model_label(self) -> str:
+        return f"{self.service.config.llm.provider}/{self.service.config.llm.model}"
+
     @property
     def current(self) -> Session:
         if self.session is None:
@@ -231,6 +251,7 @@ class AgentRuntime:
         return {
             "session_id": session.id,
             "title": session.title(),
+            "model": self.model_label,
             "messages": len(session.messages),
             "records": len(session.records),
             "summaries": sum(1 for record in session.records if record.get("type") == "summary"),

@@ -15,14 +15,14 @@
 ```bash
 uv sync
 
-# 交互式选择供应商，API Key 存入系统凭据（不写配置文件）
-uv run qm setup
-
-# 开始对话
-uv run qm chat
+# 进入主菜单（新建会话、配置模型、检索记忆）
+uv run qm
+uv run quietmemo        # 同上，等价别名
 ```
 
-`qm setup` 会写入 `quiet-memo.toml`，初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
+主菜单里可以选择“配置模型 / API Key”，不需要先记命令。也可以直接运行 `uv run qm setup` 做同样的配置。
+
+`qm setup` 会写入配置文件（默认 `quiet-memo.toml`），初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
 
 ```bash
 export DEEPSEEK_API_KEY=sk-...
@@ -56,11 +56,11 @@ auto_recall = 3
 extract_on_exit = true
 ```
 
-Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。
+Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，建议用 Windows Terminal / PowerShell；Git Bash 可尝试 `winpty`。
 
 ## 对话 Agent
 
-`qm chat` 是完整的多轮 Agent，不是一次性问答：
+直接运行 `qm` 或 `quietmemo` 进入主菜单；选择“开始对话”后进入多轮 Agent。也可以 `qm chat` 直接进入。
 
 - 每轮自动检索相关长期记忆，注入上下文。
 - 模型可调用 `recall / memorize / correct / forget / review_pending / list_topics`。
@@ -77,7 +77,8 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。
 | `/resume <id>` | 恢复会话 |
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
-| `/status` | 会话、token、待确认状态 |
+| `/status` | 会话、模型、上下文和待确认状态 |
+| `/setup` | 在聊天内重新配置模型 / API Key |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |

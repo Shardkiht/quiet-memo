@@ -179,3 +179,22 @@ def test_close_extracts_memories_once(tmp_path):
     entries = service.store.entries()
     assert len(entries) == 1
     assert entries[0].metadata["source"] == f"session:{runtime.current.id}:exit"
+
+
+def test_reload_llm_updates_model_and_extractor(tmp_path, monkeypatch):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    new_llm = LLMConfig(
+        provider="siliconflow",
+        base_url="https://api.siliconflow.cn/v1",
+        model="deepseek-ai/DeepSeek-V3",
+    )
+    monkeypatch.setattr(
+        "quiet_memo.infra.config.load_config",
+        lambda *args, **kwargs: Config(vault=service.config.vault, llm=new_llm),
+    )
+
+    runtime.reload_llm()
+
+    assert runtime.model_label == "siliconflow/deepseek-ai/DeepSeek-V3"
+    assert service.config.llm is new_llm
+    assert runtime.context.config is service.config.chat

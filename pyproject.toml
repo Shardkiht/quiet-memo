@@ -24,7 +24,8 @@ dependencies = [
 ]
 
 [project.scripts]
-qm = "quiet_memo.app.cli:app"
+qm = "quiet_memo.app.cli:main"
+quietmemo = "quiet_memo.app.cli:main"
 
 [dependency-groups]
 dev = [

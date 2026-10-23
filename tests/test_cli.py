@@ -11,6 +11,12 @@ def invoke(args):
     return runner.invoke(app, args)
 
 
+def test_bare_invocation_falls_back_to_help_without_tty():
+    result = invoke([])
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
+
+
 def test_init_note_recall_commit(tmp_path):
     config = tmp_path / "quiet-memo.toml"
     vault = tmp_path / "vault"

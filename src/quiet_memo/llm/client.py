@@ -38,9 +38,14 @@ class AssistantTurn:
 
 
 def _litellm():
+    import os
+
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    os.environ.setdefault("LITELLM_LOG", "ERROR")
     import litellm
 
     litellm.suppress_debug_info = True
+    litellm.telemetry = False
     return litellm
 
 

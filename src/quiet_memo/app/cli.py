@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import sys
 import time
 from pathlib import Path
 
+import questionary
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
@@ -25,13 +27,29 @@ from ..memory.service import MemoryService, get_service
 
 app = typer.Typer(
     help="quiet-memo — 安静的个人记忆库：默认无感写入本地 Markdown，Git 可回滚，MCP 可调用。",
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
     add_completion=False,
 )
 console = Console()
 
 CONFIG_OPTION = typer.Option(None, "--config", "-c", help="配置文件路径")
 VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库路径")
+
+
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """无子命令时进入主操作界面。"""
+    if ctx.invoked_subcommand is not None:
+        return
+    if not sys.stdin.isatty():
+        console.print(ctx.get_help())
+        return
+    try:
+        _main_menu()
+    except Exception as exc:
+        console.print(f"[yellow]无法启动交互菜单：{exc}[/yellow]")
+        console.print(ctx.get_help())
 
 
 def _service(config: Path | None, vault: Path | None) -> MemoryService:
@@ -103,11 +121,61 @@ def chat(
     vault: Path | None = VAULT_OPTION,
 ) -> None:
     """启动交互式记忆 Agent。支持 /new /sessions /compact 等命令。"""
-    service = _service(config, vault)
+    _run_chat(_service(config, vault), resume)
+
+
+def _main_menu() -> None:
+    from ..infra.providers import run_setup
+
+    while True:
+        service = _service(None, None)
+        if not (service.config.vault / ".git").exists():
+            service.init_vault()
+        has_key = bool(service.config.llm.api_key())
+        model = f"{service.config.llm.provider}/{service.config.llm.model}"
+        message = f"quiet-memo\n{model} · {service.config.vault}"
+        if not has_key:
+            message += "\n未配置 API Key"
+        choices = [
+            questionary.Choice("开始对话", value="chat"),
+            questionary.Choice("配置模型 / API Key", value="setup"),
+            questionary.Choice("查看会话", value="sessions"),
+            questionary.Choice("检索记忆", value="recall"),
+            questionary.Choice("退出", value="exit"),
+        ]
+        choice = questionary.select(
+            message,
+            choices=choices,
+            default="chat" if has_key else "setup",
+        ).ask()
+        if choice in (None, "exit"):
+            return
+        if choice == "setup":
+            try:
+                run_setup()
+            except KeyboardInterrupt:
+                console.print("[yellow]已取消配置。[/yellow]")
+            continue
+        if choice == "sessions":
+            _print_sessions(SessionStore(service.config.vault).list(20))
+            continue
+        if choice == "recall":
+            query = questionary.text("检索关键词").ask()
+            if query:
+                _print_hits(query, service.recall(query, 10))
+            continue
+        if choice == "chat":
+            if not has_key:
+                console.print("[yellow]先配置 API Key，再开始对话。[/yellow]")
+                continue
+            _run_chat(service)
+
+
+def _run_chat(service: MemoryService, resume: str | None = None) -> None:
     if not service.config.llm.api_key():
         _fail(
             f"未配置 LLM API Key，请设置环境变量 {service.config.llm.api_key_env}，"
-            "或在配置中修改 llm.api_key_env。"
+            "或在聊天里输入 /setup 配置。"
         )
     if not (service.config.vault / ".git").exists():
         service.init_vault()
@@ -118,17 +186,28 @@ def chat(
     except KeyError as exc:
         _fail(str(exc))
         return
+    _chat_loop(runtime, service, sessions)
 
+
+def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionStore) -> None:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
 
     history_path = service.config.vault / ".quiet-memo" / "chat_history"
     history_path.parent.mkdir(parents=True, exist_ok=True)
-    prompt = PromptSession(history=FileHistory(str(history_path)))
+    try:
+        prompt = PromptSession(history=FileHistory(str(history_path)))
+    except Exception as exc:
+        console.print(
+            f"[yellow]当前终端不支持交互输入：{exc}[/yellow]\n"
+            "请在 Windows Terminal / PowerShell 中运行，Git Bash 可尝试 winpty。"
+        )
+        return
     console.print(
         Panel(
             f"会话 {runtime.current.id} · {runtime.current.title()}\n"
-            "输入 /help 查看命令，/exit 退出。",
+            f"模型 {runtime.model_label} · 上下文 {service.config.chat.context_window}\n"
+            "/help 查看命令 · /setup 修改模型 · /exit 退出",
             title="quiet-memo",
             border_style="cyan",
         )
@@ -137,10 +216,7 @@ def chat(
     try:
         while True:
             status = runtime.status()
-            prompt_text = (
-                f"你 [{status['session_id'][-4:]}] "
-                f"{status['estimated_tokens']}/{status['context_window']} › "
-            )
+            prompt_text = f"你 [{status['session_id'][-4:]}] › "
             try:
                 line = prompt.prompt(prompt_text)
             except (EOFError, KeyboardInterrupt):
@@ -154,7 +230,8 @@ def chat(
                 break
             started = time.monotonic()
             try:
-                reply = runtime.ask(line)
+                with console.status("[dim]思考中…[/dim]", spinner="dots"):
+                    reply = runtime.ask(line)
             except KeyboardInterrupt:
                 console.print("[yellow]已中断当前请求。[/yellow]")
                 continue
@@ -165,10 +242,14 @@ def chat(
             for event in reply.events:
                 console.print(f"[dim]· {event}[/dim]")
             console.print(Markdown(reply.content or "(空回复)"))
-            console.print(
-                f"[dim]step {reply.steps} · ctx {reply.estimated_tokens}/"
-                f"{service.config.chat.context_window} · {elapsed:.1f}s[/dim]"
-            )
+            meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
+            percent = reply.estimated_tokens / max(service.config.chat.context_window, 1)
+            if percent >= 0.5:
+                meta.append(f"上下文 {percent:.0%}")
+            if reply.usage.cost_usd:
+                meta.append(f"${reply.usage.cost_usd:.4f}")
+            meta.append(f"{elapsed:.1f}s")
+            console.print(f"[dim]{' · '.join(meta)}[/dim]")
     finally:
         stats = runtime.close()
         console.print(f"[dim]会话已保存：{runtime.current.id}[/dim]")
@@ -179,6 +260,20 @@ def chat(
                 f"[dim]退出时沉淀记忆：写入 {stats['admitted']} 条，"
                 f"待确认 {stats['queued']} 条，拦截 {stats['blocked']} 条[/dim]"
             )
+
+
+def _print_hits(query: str, hits) -> None:
+    if not hits:
+        console.print("[dim]未找到相关记忆。[/dim]")
+        return
+    table = Table(title=f"检索：{query}")
+    table.add_column("ID")
+    table.add_column("主题")
+    table.add_column("分数")
+    table.add_column("内容", overflow="fold")
+    for hit in hits:
+        table.add_row(hit.id, hit.topic, f"{hit.score:.2f}", hit.text)
+    console.print(table)
 
 
 def _handle_command(
@@ -205,6 +300,7 @@ def _handle_command(
                         "/compact          立即压缩上下文",
                         "/summary          查看当前会话摘要",
                         "/status           会话与记忆状态",
+                        "/setup            配置模型 / API Key",
                         "/rename <title>   重命名当前会话",
                         "/recall <query>   直接检索记忆",
                         "/remember <text>  直接写入记忆",
@@ -215,6 +311,17 @@ def _handle_command(
                 title="命令",
             )
         )
+        return True
+    if command in ("/setup", "/model"):
+        from ..infra.providers import run_setup
+
+        try:
+            run_setup()
+        except KeyboardInterrupt:
+            console.print("[yellow]已取消配置。[/yellow]")
+            return True
+        runtime.reload_llm()
+        console.print(f"[green]模型已切换：{runtime.model_label}[/green]")
         return True
     if command == "/new":
         stats = runtime.close()
@@ -249,8 +356,19 @@ def _handle_command(
         return True
     if command == "/status":
         info = runtime.status()
-        for key, value in info.items():
-            console.print(f"{key}: {value}")
+        percent = info["estimated_tokens"] / max(info["context_window"], 1)
+        console.print(
+            Panel(
+                f"会话：{info['session_id']} · {info['title']}\n"
+                f"模型：{info['model']}\n"
+                f"上下文：{info['estimated_tokens']}/{info['context_window']}（{percent:.0%}）\n"
+                f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
+                f"已覆盖 {info['covered_records']} 条记录\n"
+                f"待确认：{info['pending']} 条",
+                title="状态",
+                border_style="cyan",
+            )
+        )
         return True
     if command == "/rename":
         if not argument:
@@ -263,18 +381,7 @@ def _handle_command(
         if not argument:
             console.print("[yellow]用法：/recall <query>[/yellow]")
             return True
-        hits = service.recall(argument, 10)
-        if not hits:
-            console.print("[dim]未找到相关记忆。[/dim]")
-            return True
-        table = Table(title=f"检索：{argument}")
-        table.add_column("ID")
-        table.add_column("主题")
-        table.add_column("分数")
-        table.add_column("内容", overflow="fold")
-        for hit in hits:
-            table.add_row(hit.id, hit.topic, f"{hit.score:.2f}", hit.text)
-        console.print(table)
+        _print_hits(argument, service.recall(argument, 10))
         return True
     if command == "/remember":
         if not argument:
