@@ -40,7 +40,7 @@ VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库�
 SLASH_COMMANDS = [
     ("new", "/new", "新建会话"),
     ("sessions", "/sessions", "列出历史会话"),
-    ("resume", "/resume <id>", "恢复会话"),
+    ("resume", "/resume [id|query]", "恢复会话，无参数打开选择器"),
     ("compact", "/compact", "立即压缩上下文"),
     ("summary", "/summary", "查看当前会话摘要"),
     ("status", "/status", "会话与记忆状态"),
@@ -492,12 +492,23 @@ def _handle_command(
         _print_sessions(rows)
         return True
     if command == "/resume":
-        if not argument:
-            console.print("[yellow]用法：/resume <session-id>[/yellow]")
+        target = None
+        if argument:
+            try:
+                if sessions.exists(argument):
+                    target = argument
+            except KeyError:
+                pass
+        if target is None:
+            target = _pick_session(sessions, argument, runtime.current.id)
+        if target is None:
+            return True
+        if target == runtime.current.id:
+            console.print("[dim]已经是当前会话。[/dim]")
             return True
         runtime.close()
         try:
-            runtime.resume(argument)
+            runtime.resume(target)
         except KeyError as exc:
             console.print(f"[red]{exc}[/red]")
             return True
@@ -566,6 +577,51 @@ def _handle_command(
         return True
     console.print(f"[yellow]未知命令：{command}，输入 /help 查看帮助。[/yellow]")
     return True
+
+
+def _session_choices(rows: list[dict], current_id: str | None = None):
+    choices = []
+    last_date = None
+    for row in rows:
+        stamp = row.get("updated_at") or row.get("started_at") or ""
+        date = stamp[:10]
+        if date != last_date:
+            choices.append(questionary.Separator(date or "未知日期"))
+            last_date = date
+        time_text = stamp[11:16] if len(stamp) >= 16 else ""
+        label = f"{time_text}  {row['title']}"
+        label += f"  · {row['messages']} 条"
+        if row.get("summaries"):
+            label += f" · 摘要 {row['summaries']}"
+        if row.get("id") == current_id:
+            label += "  ← 当前"
+        choices.append(questionary.Choice(label, value=row["id"]))
+    return choices
+
+
+def _pick_session(
+    sessions: SessionStore,
+    query: str = "",
+    current_id: str | None = None,
+) -> str | None:
+    rows = sessions.list(100)
+    if query:
+        needle = query.lower()
+        rows = [
+            row
+            for row in rows
+            if needle in row["title"].lower() or needle in row["id"].lower()
+        ]
+    if not rows:
+        console.print("[dim]没有匹配的会话。[/dim]")
+        return None
+    choices = _session_choices(rows, current_id)
+    default = current_id if any(row["id"] == current_id for row in rows) else None
+    return questionary.select(
+        "恢复会话（↑↓ 选择，Enter 确认）",
+        choices=choices,
+        default=default,
+    ).ask()
 
 
 def _print_sessions(rows: list[dict]) -> None:

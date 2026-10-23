@@ -75,7 +75,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | --- | --- |
 | `/new` | 结束当前会话并新建 |
 | `/sessions` | 列出历史会话 |
-| `/resume <id>` | 恢复会话 |
+| `/resume [id|query]` | 恢复会话；无参数打开排序后的会话选择器，带关键词则先过滤 |
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、上下文和待确认状态 |

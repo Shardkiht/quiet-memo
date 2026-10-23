@@ -34,6 +34,45 @@ def test_slash_completer_lists_and_filters_commands():
     assert "切换模型" in models.display_meta_text
 
 
+def test_session_choices_are_grouped_by_date():
+    import questionary
+
+    from quiet_memo.app.cli import _session_choices
+
+    rows = [
+        {
+            "id": "s-2",
+            "title": "新会话",
+            "messages": 3,
+            "summaries": 0,
+            "updated_at": "2026-10-22T10:00:00",
+        },
+        {
+            "id": "s-1",
+            "title": "旧会话",
+            "messages": 1,
+            "summaries": 1,
+            "updated_at": "2026-10-21T09:00:00",
+        },
+    ]
+
+    choices = _session_choices(rows, current_id="s-2")
+    separators = [item for item in choices if isinstance(item, questionary.Separator)]
+    values = [
+        item.value
+        for item in choices
+        if isinstance(item, questionary.Choice) and not isinstance(item, questionary.Separator)
+    ]
+
+    assert [item.title for item in separators] == ["2026-10-22", "2026-10-21"]
+    assert values == ["s-2", "s-1"]
+    assert "← 当前" in next(
+        item.title
+        for item in choices
+        if getattr(item, "value", None) == "s-2" and not isinstance(item, questionary.Separator)
+    )
+
+
 def test_init_note_recall_commit(tmp_path):
     config = tmp_path / "quiet-memo.toml"
     vault = tmp_path / "vault"
