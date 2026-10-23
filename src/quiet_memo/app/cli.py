@@ -695,11 +695,11 @@ def _session_manager(sessions: SessionStore, current_id: str | None = None) -> s
         choices = [
             questionary.Choice(
                 f"搜索…（{query}）" if query else "搜索…",
-                value=("__search__", ""),
+                value="__search__",
             )
         ]
         choices.extend(_session_choices(rows, current_id))
-        choices.append(questionary.Choice("返回", value=("__back__", "")))
+        choices.append(questionary.Choice("返回", value="__back__"))
 
         selected = questionary.select(
             "会话管理",
@@ -709,15 +709,15 @@ def _session_manager(sessions: SessionStore, current_id: str | None = None) -> s
             pointer="❯",
             instruction="↑↓ 选择 · Enter 确认",
         ).ask()
-        if selected is None or selected[0] == "__back__":
+        if selected is None or selected == "__back__":
             return None
-        if selected[0] == "__search__":
+        if selected == "__search__":
             value = questionary.text("搜索标题或 ID（留空显示全部）", default=query).ask()
             if value is not None:
                 query = value.strip()
             continue
 
-        target = selected[0]
+        target = selected
         if target == current_id:
             console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
             continue

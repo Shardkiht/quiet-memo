@@ -82,6 +82,34 @@ def test_session_choices_are_grouped_by_date():
     )
 
 
+def test_session_manager_returns_session_id_not_first_character(tmp_path, monkeypatch):
+    from quiet_memo.agent.session import SessionStore, new_message_id
+    from quiet_memo.app import cli
+
+    store = SessionStore(tmp_path)
+    session = store.create()
+    store.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "测试会话"},
+    )
+
+    class Answer:
+        def __init__(self, value):
+            self.value = value
+
+        def ask(self):
+            return self.value
+
+    answers = [session.id, "resume"]
+    monkeypatch.setattr(
+        cli.questionary,
+        "select",
+        lambda *args, **kwargs: Answer(answers.pop(0)),
+    )
+
+    assert cli._session_manager(store, current_id=None) == session.id
+
+
 def test_init_note_recall_commit(tmp_path):
     config = tmp_path / "quiet-memo.toml"
     vault = tmp_path / "vault"
