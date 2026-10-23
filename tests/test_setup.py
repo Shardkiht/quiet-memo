@@ -72,3 +72,26 @@ def test_litellm_metadata_exposes_context_and_reasoning():
     info = model_metadata("openai/gpt-4o-mini")
     assert info.get("max_input_tokens", 0) > 0
     assert "reasoning_effort" in supported_params("openai/gpt-4o-mini")
+
+
+def test_provider_model_list_cache(monkeypatch):
+    from quiet_memo.llm import client
+
+    config = LLMConfig()
+    calls = []
+    monkeypatch.setattr(LLMConfig, "api_key", lambda self: "test-key")
+    monkeypatch.setattr(
+        client,
+        "_fetch_provider_models_uncached",
+        lambda cfg, timeout: calls.append(1) or ["model-a"],
+    )
+    client.clear_model_cache()
+    try:
+        assert client.fetch_provider_models(config) == ["model-a"]
+        assert client.fetch_provider_models(config) == ["model-a"]
+        assert len(calls) == 1
+
+        assert client.fetch_provider_models(config, refresh=True) == ["model-a"]
+        assert len(calls) == 2
+    finally:
+        client.clear_model_cache()

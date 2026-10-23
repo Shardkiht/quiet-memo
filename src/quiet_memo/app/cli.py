@@ -280,7 +280,7 @@ def _print_hits(query: str, hits) -> None:
     console.print(table)
 
 
-def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
+def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = False) -> None:
     from ..infra.providers import (
         PRESETS,
         display_model,
@@ -292,7 +292,7 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
     from ..llm import fetch_provider_models, model_metadata, supported_params
 
     current = service.config.llm
-    fetched_models = fetch_provider_models(current)
+    fetched_models = fetch_provider_models(current, refresh=refresh)
     entries: list[tuple[str, str, object | None]] = []
     seen: set[tuple[str, str]] = set()
     for preset in PRESETS:
@@ -338,6 +338,7 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
         if (provider, model) == (current.provider, current.model):
             label += "  ← 当前"
         choices.append(questionary.Choice(label, value=(provider, model)))
+    choices.append(questionary.Choice("↻ 刷新模型列表", value=("__refresh__", "")))
     choices.append(questionary.Choice("自定义模型…", value=("__custom__", "")))
 
     selected = questionary.select(
@@ -346,6 +347,10 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
         default=(current.provider, current.model),
     ).ask()
     if selected is None:
+        return
+    if selected[0] == "__refresh__":
+        console.print("[dim]正在刷新模型列表…[/dim]")
+        _switch_model(runtime, service, refresh=True)
         return
 
     if selected[0] == "__custom__":
@@ -418,7 +423,7 @@ def _handle_command(
                         "/compact          立即压缩上下文",
                         "/summary          查看当前会话摘要",
                         "/status           会话与记忆状态",
-                        "/models           切换模型",
+                        "/models           切换模型（/models refresh 强制刷新）",
                         "/setup            完整配置模型 / API Key",
                         "/rename <title>   重命名当前会话",
                         "/recall <query>   直接检索记忆",
@@ -432,7 +437,11 @@ def _handle_command(
         )
         return True
     if command in ("/models", "/model"):
-        _switch_model(runtime, service)
+        _switch_model(
+            runtime,
+            service,
+            refresh=argument.lower() in ("refresh", "--refresh", "-r"),
+        )
         return True
     if command == "/setup":
         from ..infra.providers import run_setup

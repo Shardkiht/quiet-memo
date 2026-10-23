@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Protocol
@@ -10,6 +11,9 @@ from ..infra.config import LLMConfig
 
 class ChatModelError(RuntimeError):
     pass
+
+
+_MODEL_CACHE: dict[tuple[str, str], tuple[float, list[str]]] = {}
 
 
 @dataclass
@@ -110,8 +114,31 @@ def supported_params(model: str) -> tuple[str, ...]:
         return ()
 
 
-def fetch_provider_models(config: LLMConfig, timeout: float = 5.0) -> list[str]:
-    """向 OpenAI 兼容端点请求真实模型列表；失败返回空列表。"""
+def fetch_provider_models(
+    config: LLMConfig,
+    timeout: float = 5.0,
+    ttl: float = 12 * 3600,
+    refresh: bool = False,
+) -> list[str]:
+    """向 OpenAI 兼容端点请求真实模型列表；带进程内 12 小时 TTL 缓存。"""
+    key = (config.provider, config.base_url)
+    now = time.monotonic()
+    cached = _MODEL_CACHE.get(key)
+    if cached and not refresh:
+        max_age = ttl if cached[1] else 30.0
+        if now - cached[0] < max_age:
+            return list(cached[1])
+
+    models = _fetch_provider_models_uncached(config, timeout)
+    _MODEL_CACHE[key] = (now, models)
+    return models
+
+
+def clear_model_cache() -> None:
+    _MODEL_CACHE.clear()
+
+
+def _fetch_provider_models_uncached(config: LLMConfig, timeout: float) -> list[str]:
     api_key = config.api_key()
     if not api_key or not config.base_url:
         return []
