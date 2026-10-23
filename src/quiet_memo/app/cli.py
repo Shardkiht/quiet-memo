@@ -182,10 +182,11 @@ def _main_menu() -> None:
             questionary.Choice("检索记忆", value="recall"),
             questionary.Choice("退出", value="exit"),
         ]
+        if not has_key:
+            choices.insert(0, choices.pop(1))
         choice = questionary.select(
             message,
             choices=choices,
-            default="chat" if has_key else "setup",
         ).ask()
         if choice in (None, "exit"):
             return
@@ -353,6 +354,11 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool =
             seen.add((current.provider, model))
     if (current.provider, current.model) not in seen:
         entries.insert(0, (current.provider, current.model, None))
+    entries.sort(
+        key=lambda item: 0
+        if (item[0], item[1]) == (current.provider, current.model)
+        else 1
+    )
 
     choices = []
     for provider, model, preset in entries:
@@ -386,7 +392,6 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool =
     selected = questionary.select(
         f"当前模型：{runtime.model_label}",
         choices=choices,
-        default=(current.provider, current.model),
     ).ask()
     if selected is None:
         return
@@ -579,6 +584,10 @@ def _handle_command(
     return True
 
 
+def _visible_sessions(rows: list[dict]) -> list[dict]:
+    return [row for row in rows if int(row.get("messages", 0) or 0) > 0]
+
+
 def _session_choices(rows: list[dict], current_id: str | None = None):
     choices = []
     last_date = None
@@ -604,7 +613,7 @@ def _pick_session(
     query: str = "",
     current_id: str | None = None,
 ) -> str | None:
-    rows = sessions.list(100)
+    rows = _visible_sessions(sessions.list(100))
     if query:
         needle = query.lower()
         rows = [
@@ -613,18 +622,17 @@ def _pick_session(
             if needle in row["title"].lower() or needle in row["id"].lower()
         ]
     if not rows:
-        console.print("[dim]没有匹配的会话。[/dim]")
+        console.print("[dim]没有可恢复的会话。[/dim]")
         return None
     choices = _session_choices(rows, current_id)
-    default = current_id if any(row["id"] == current_id for row in rows) else None
     return questionary.select(
         "恢复会话（↑↓ 选择，Enter 确认）",
         choices=choices,
-        default=default,
     ).ask()
 
 
 def _print_sessions(rows: list[dict]) -> None:
+    rows = _visible_sessions(rows)
     if not rows:
         console.print("[dim]暂无会话。[/dim]")
         return

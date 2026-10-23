@@ -37,7 +37,7 @@ def test_slash_completer_lists_and_filters_commands():
 def test_session_choices_are_grouped_by_date():
     import questionary
 
-    from quiet_memo.app.cli import _session_choices
+    from quiet_memo.app.cli import _session_choices, _visible_sessions
 
     rows = [
         {
@@ -54,9 +54,17 @@ def test_session_choices_are_grouped_by_date():
             "summaries": 1,
             "updated_at": "2026-10-21T09:00:00",
         },
+        {
+            "id": "s-empty",
+            "title": "(空会话)",
+            "messages": 0,
+            "summaries": 0,
+            "updated_at": "2026-10-20T09:00:00",
+        },
     ]
 
-    choices = _session_choices(rows, current_id="s-2")
+    visible = _visible_sessions(rows)
+    choices = _session_choices(visible, current_id="s-2")
     separators = [item for item in choices if isinstance(item, questionary.Separator)]
     values = [
         item.value
@@ -64,6 +72,7 @@ def test_session_choices_are_grouped_by_date():
         if isinstance(item, questionary.Choice) and not isinstance(item, questionary.Separator)
     ]
 
+    assert [row["id"] for row in visible] == ["s-2", "s-1"]
     assert [item.title for item in separators] == ["2026-10-22", "2026-10-21"]
     assert values == ["s-2", "s-1"]
     assert "← 当前" in next(

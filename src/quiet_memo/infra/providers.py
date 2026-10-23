@@ -141,8 +141,9 @@ def _choose_model(preset: ProviderPreset, current: str) -> str:
         if value is None or not value.strip():
             raise KeyboardInterrupt
         return value.strip()
-    options.append("自定义模型")
-    default = current if current in options else preset.model
+    preferred = current if current in options else preset.model
+    ordered = [preferred] + [model for model in options if model != preferred]
+    ordered.append("自定义模型")
     selected = questionary.select(
         "选择模型",
         choices=[
@@ -150,9 +151,8 @@ def _choose_model(preset: ProviderPreset, current: str) -> str:
                 (display_model(model) + ("  ← 当前" if model == current else "")),
                 value=model,
             )
-            for model in options
+            for model in ordered
         ],
-        default=default,
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
@@ -168,10 +168,12 @@ def _choose_reasoning(params: tuple[str, ...], current: str | None) -> str | Non
     if "reasoning_effort" not in params:
         console.print("[dim]该模型不支持 reasoning_effort，跳过思考强度。[/dim]")
         return None
+    efforts = list(EFFORT_CHOICES)
+    if current:
+        efforts.sort(key=lambda item: 0 if item[1] == current else 1)
     selected = questionary.select(
         "思考强度",
-        choices=[questionary.Choice(label, value=value) for label, value in EFFORT_CHOICES],
-        default=current or "default",
+        choices=[questionary.Choice(label, value=value) for label, value in efforts],
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
@@ -186,10 +188,10 @@ def _choose_context(max_input: int | None, current: int) -> int:
     else:
         options = [16000, 32000, 64000]
     default = min(options, key=lambda value: abs(value - current))
+    options = [default] + [value for value in options if value != default]
     selected = questionary.select(
         "上下文长度",
         choices=[questionary.Choice(f"{value // 1000}k", value=value) for value in options],
-        default=default,
     ).ask()
     if selected is None:
         raise KeyboardInterrupt
