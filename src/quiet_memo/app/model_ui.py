@@ -8,7 +8,7 @@ from ..agent.runtime import AgentRuntime
 from ..infra.prompts import ask
 from ..llm import fetch_provider_models, model_metadata, supported_params
 from ..memory.service import MemoryService
-from .ui import MENU_STYLE, console
+from .ui import MENU_STYLE, centered, console
 
 
 def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = False) -> None:
@@ -89,7 +89,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     if selected is None:
         return
     if selected[0] == "__refresh__":
-        console.print("[dim]正在刷新模型列表…[/dim]")
+        console.print(centered("[dim]正在刷新模型列表…[/dim]"))
         switch_model(runtime, service, refresh=True)
         return
 
@@ -110,7 +110,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
         )
         if new_llm.provider != current.provider and not new_llm.api_key():
             console.print(
-                f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]"
+                centered(f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]")
             )
             return
 
@@ -134,6 +134,8 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     write_config(resolve_config_path(None), service.config)
     runtime.reload_llm()
     console.print(
-        f"[bold]模型已切换：{runtime.model_label}[/] "
-        f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
+        centered(
+            f"[bold]模型已切换：{runtime.model_label}[/] "
+            f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
+        )
     )

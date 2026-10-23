@@ -6,7 +6,7 @@ from prompt_toolkit.keys import Keys
 
 from ..agent.session import SessionStore
 from ..infra.prompts import ask, pointer_control
-from .ui import MENU_STYLE, SUCCESS, console, styled_table
+from .ui import MENU_STYLE, SUCCESS, centered, console, styled_table
 
 DELETE = "__delete__"
 
@@ -47,7 +47,7 @@ def session_manager(sessions: SessionStore, current_id: str | None = None) -> st
                 if needle in row["title"].lower() or needle in row["id"].lower()
             ]
         if not rows:
-            console.print("[dim]没有匹配的会话。[/dim]")
+            console.print(centered("[dim]没有匹配的会话。[/dim]"))
         choices = [
             questionary.Choice(
                 f"搜索…（{query}）" if query else "搜索…",
@@ -81,7 +81,7 @@ def session_manager(sessions: SessionStore, current_id: str | None = None) -> st
             if target in ("__search__", "__back__"):
                 continue
             if target == current_id:
-                console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
+                console.print(centered("[dim]当前会话不能删除，先 /new 再处理。[/dim]"))
                 continue
             title = sessions.load(target).title()
             confirmed = ask(
@@ -92,7 +92,7 @@ def session_manager(sessions: SessionStore, current_id: str | None = None) -> st
             )
             if confirmed:
                 sessions.delete(target)
-                console.print(f"[{SUCCESS}]已删除会话 {target}[/]")
+                console.print(centered(f"[{SUCCESS}]已删除会话 {target}[/]"))
             continue
 
         target = selected
@@ -132,7 +132,7 @@ def pick_session(
             if needle in row["title"].lower() or needle in row["id"].lower()
         ]
     if not rows:
-        console.print("[dim]没有可选择的会话。[/dim]")
+        console.print(centered("[dim]没有可选择的会话。[/dim]"))
         return None
     choices = session_choices(rows, current_id)
     return ask(

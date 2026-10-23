@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import shutil
+
 import typer
 from prompt_toolkit.styles import Style
 from rich import box
 from rich.console import Console
+from rich.padding import Padding
 from rich.table import Table
 
 console = Console()
@@ -12,6 +15,28 @@ ACCENT = "#d0d0d0"
 MUTED = "#808080"
 SUCCESS = "#d0d0d0"
 WARNING = "#b8b8b8"
+
+
+def terminal_width() -> int:
+    return shutil.get_terminal_size((100, 30)).columns
+
+
+def layout_widths(cols: int | None = None) -> tuple[int, int, int]:
+    """返回（左边距, 内容宽度, 右边距）：对话区约占窗口中间 1/3。"""
+    cols = cols or terminal_width()
+    width = max(40, min(cols - 4, cols // 3))
+    left = max(0, (cols - width) // 2)
+    right = max(0, cols - width - left)
+    return left, width, right
+
+
+def indent(cols: int | None = None) -> str:
+    return " " * layout_widths(cols)[0]
+
+
+def centered(renderable, cols: int | None = None):
+    left, _, right = layout_widths(cols)
+    return Padding(renderable, (0, right, 0, left))
 
 MENU_STYLE = Style.from_dict(
     {
@@ -65,9 +90,9 @@ def styled_table(title: str) -> Table:
     )
 
 
-def print_hits(query: str, hits) -> None:
+def print_hits(query: str, hits, center: bool = False) -> None:
     if not hits:
-        console.print("[dim]未找到相关记忆。[/dim]")
+        console.print(centered("[dim]未找到相关记忆。[/dim]") if center else "[dim]未找到相关记忆。[/dim]")
         return
     table = styled_table(f"检索：{query}")
     table.add_column("ID")
@@ -76,7 +101,7 @@ def print_hits(query: str, hits) -> None:
     table.add_column("内容", overflow="fold")
     for hit in hits:
         table.add_row(hit.id, hit.topic, f"{hit.score:.2f}", hit.text)
-    console.print(table)
+    console.print(centered(table) if center else table)
 
 
 def slash_completer():

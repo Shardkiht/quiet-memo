@@ -18,8 +18,10 @@ from .ui import (
     PROMPT_STYLE,
     SLASH_COMMANDS,
     WARNING,
+    centered,
     console,
     fail,
+    indent,
     print_hits,
     styled_table,
 )
@@ -51,12 +53,14 @@ def print_transcript(session, limit: int = 40) -> None:
     summary = session.summary_text()
     if summary:
         console.print(
-            Panel(
-                Markdown(summary),
-                title="此前摘要",
-                border_style=MUTED,
-                box=box.ROUNDED,
-                padding=(0, 2),
+            centered(
+                Panel(
+                    Markdown(summary),
+                    title="此前摘要",
+                    border_style=MUTED,
+                    box=box.ROUNDED,
+                    padding=(0, 2),
+                )
             )
         )
     records = [
@@ -68,14 +72,14 @@ def print_transcript(session, limit: int = 40) -> None:
     if not records:
         return
     if len(records) > limit:
-        console.print(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]")
+        console.print(centered(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]"))
         records = records[-limit:]
     for record in records:
         content = str(record.get("content"))
         if record.get("type") == "message" and record.get("role") == "user":
-            console.print(f"[bold]❯[/] {content}")
+            console.print(centered(f"[bold]❯[/] {content}"))
         else:
-            console.print(Markdown(content))
+            console.print(centered(Markdown(content)))
             console.print()
 
 
@@ -110,21 +114,23 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
         session_label = f"[{MUTED}]新会话[/]"
         session_title = "发送第一条消息后创建"
     console.print(
-        Panel(
-            f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
-            f"[bold]{session_title}[/]\n"
-            f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
-            f"[{MUTED}]上下文[/] {service.config.chat.context_window}\n"
-            f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
-            border_style=ACCENT,
-            box=box.ROUNDED,
-            padding=(0, 2),
+        centered(
+            Panel(
+                f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
+                f"[bold]{session_title}[/]\n"
+                f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
+                f"[{MUTED}]上下文[/] {service.config.chat.context_window}\n"
+                f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
+                border_style=ACCENT,
+                box=box.ROUNDED,
+                padding=(0, 2),
+            )
         )
     )
 
     try:
         while True:
-            prompt_text = [("class:prompt", "❯ ")]
+            prompt_text = [("class:prompt", f"{indent()}❯ ")]
             try:
                 line = prompt.prompt(prompt_text)
             except (EOFError, KeyboardInterrupt):
@@ -138,18 +144,18 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 break
             started = time.monotonic()
             try:
-                with console.status(f"[{ACCENT}]思考中…[/]", spinner="dots"):
+                with console.status(f"{indent()}思考中…", spinner="dots"):
                     reply = runtime.ask(line)
             except KeyboardInterrupt:
-                console.print(f"[{WARNING}]已中断当前请求。[/]")
+                console.print(centered(f"[{WARNING}]已中断当前请求。[/]"))
                 continue
             except ChatModelError as exc:
-                console.print(f"[red]{exc}[/red]")
+                console.print(centered(f"[red]{exc}[/red]"))
                 continue
             elapsed = time.monotonic() - started
             for event in reply.events:
-                console.print(f"[{MUTED}]  ↳ {event}[/]")
-            console.print(Markdown(reply.content or "(空回复)"))
+                console.print(centered(f"[{MUTED}]  ↳ {event}[/]"))
+            console.print(centered(Markdown(reply.content or "(空回复)")))
             meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
             percent = reply.estimated_tokens / max(service.config.chat.context_window, 1)
             if percent >= 0.5:
@@ -157,19 +163,21 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             if reply.usage.cost_usd:
                 meta.append(f"${reply.usage.cost_usd:.4f}")
             meta.append(f"{elapsed:.1f}s")
-            console.print(f"[{MUTED}]  {' · '.join(meta)}[/]")
+            console.print(centered(f"[{MUTED}]  {' · '.join(meta)}[/]"))
     finally:
         stats = runtime.close()
         if runtime.has_session:
-            console.print(f"[dim]会话已保存：{runtime.current.id}[/dim]")
+            console.print(centered(f"[dim]会话已保存：{runtime.current.id}[/dim]"))
         else:
-            console.print("[dim]未发送消息，没有创建会话。[/dim]")
+            console.print(centered("[dim]未发送消息，没有创建会话。[/dim]"))
         if stats.get("error"):
-            console.print(f"[dim]退出抽取失败：{stats['error']}[/dim]")
+            console.print(centered(f"[dim]退出抽取失败：{stats['error']}[/dim]"))
         elif any(stats.get(key) for key in ("admitted", "queued", "blocked")):
             console.print(
-                f"[dim]退出时沉淀记忆：写入 {stats['admitted']} 条，"
-                f"待确认 {stats['queued']} 条，拦截 {stats['blocked']} 条[/dim]"
+                centered(
+                    f"[dim]退出时沉淀记忆：写入 {stats['admitted']} 条，"
+                    f"待确认 {stats['queued']} 条，拦截 {stats['blocked']} 条[/dim]"
+                )
             )
 
 
@@ -188,11 +196,15 @@ def handle_command(
         return False
     if command == "/help":
         console.print(
-            Panel(
-                "\n".join(f"{usage:<22} {description}" for _, usage, description in SLASH_COMMANDS),
-                title="命令",
-                border_style=ACCENT,
-                box=box.ROUNDED,
+            centered(
+                Panel(
+                    "\n".join(
+                        f"{usage:<22} {description}" for _, usage, description in SLASH_COMMANDS
+                    ),
+                    title="命令",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                )
             )
         )
         return True
@@ -219,7 +231,7 @@ def handle_command(
         runtime.start()
         console.print("[bold]新会话[/] [dim]发送第一条消息后创建[/]")
         if stats.get("admitted"):
-            console.print(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]")
+            console.print(centered(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]"))
         return True
     if command == "/sessions":
         current_id = runtime.current.id if runtime.has_session else None
@@ -232,7 +244,7 @@ def handle_command(
         except KeyError as exc:
             console.print(f"[red]{exc}[/red]")
             return True
-        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
+        console.print(centered(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
         print_transcript(runtime.current)
         return True
     if command == "/resume":
@@ -257,37 +269,43 @@ def handle_command(
         except KeyError as exc:
             console.print(f"[red]{exc}[/red]")
             return True
-        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
+        console.print(centered(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
         print_transcript(runtime.current)
         return True
     if command == "/compact":
         for event in runtime.force_compact():
-            console.print(f"[dim]· {event}[/dim]")
+            console.print(centered(f"[dim]· {event}[/dim]"))
         return True
     if command == "/summary":
         if not runtime.has_session:
-            console.print("[dim]新会话还没有摘要。[/dim]")
+            console.print(centered("[dim]新会话还没有摘要。[/dim]"))
             return True
         summary = runtime.summary_text()
-        console.print(Markdown(summary) if summary else "[dim]当前会话还没有摘要。[/dim]")
+        console.print(
+            centered(Markdown(summary))
+            if summary
+            else centered("[dim]当前会话还没有摘要。[/dim]")
+        )
         return True
     if command == "/status":
         if not runtime.has_session:
-            console.print("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]")
+            console.print(centered("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]"))
             return True
         info = runtime.status()
         percent = info["estimated_tokens"] / max(info["context_window"], 1)
         console.print(
-            Panel(
-                f"会话：{info['session_id']} · {info['title']}\n"
-                f"模型：{info['model']}\n"
-                f"上下文：{info['estimated_tokens']}/{info['context_window']}（{percent:.0%}）\n"
-                f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
-                f"已覆盖 {info['covered_records']} 条记录\n"
-                f"待确认：{info['pending']} 条",
-                title="状态",
-                border_style=ACCENT,
-                box=box.ROUNDED,
+            centered(
+                Panel(
+                    f"会话：{info['session_id']} · {info['title']}\n"
+                    f"模型：{info['model']}\n"
+                    f"上下文：{info['estimated_tokens']}/{info['context_window']}（{percent:.0%}）\n"
+                    f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
+                    f"已覆盖 {info['covered_records']} 条记录\n"
+                    f"待确认：{info['pending']} 条",
+                    title="状态",
+                    border_style=ACCENT,
+                    box=box.ROUNDED,
+                )
             )
         )
         return True
@@ -299,29 +317,31 @@ def handle_command(
             console.print("[dim]新会话尚未创建，发送第一条消息后再重命名。[/dim]")
             return True
         runtime.rename(argument)
-        console.print(f"[bold]已重命名为：{argument}[/]")
+        console.print(centered(f"[bold]已重命名为：{argument}[/]"))
         return True
     if command == "/recall":
         if not argument:
-            console.print("[#b8b8b8]用法：/recall <query>[/]")
+            console.print(centered("[#b8b8b8]用法：/recall <query>[/]"))
             return True
-        print_hits(argument, service.recall(argument, 10))
+        print_hits(argument, service.recall(argument, 10), center=True)
         return True
     if command == "/remember":
         if not argument:
-            console.print("[#b8b8b8]用法：/remember <text>[/]")
+            console.print(centered("[#b8b8b8]用法：/remember <text>[/]"))
             return True
         source = f"session:{runtime.current.id}:manual" if runtime.has_session else "manual"
         result = service.memorize(argument, source=source)
         console.print(
-            f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
-            f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"
+            centered(
+                f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
+                f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"
+            )
         )
         return True
     if command == "/pending":
         items = service.pending()
         if not items:
-            console.print("[dim]没有待确认项。[/dim]")
+            console.print(centered("[dim]没有待确认项。[/dim]"))
             return True
         table = styled_table("待确认")
         table.add_column("ID")
@@ -330,7 +350,7 @@ def handle_command(
         table.add_column("内容", overflow="fold")
         for item in items:
             table.add_row(item.id, item.topic, item.reason, item.text)
-        console.print(table)
+        console.print(centered(table))
         return True
-    console.print(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]")
+    console.print(centered(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]"))
     return True
