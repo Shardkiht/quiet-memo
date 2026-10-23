@@ -46,16 +46,11 @@ async def test_mcp_memorize_recall_pending(tmp_path):
         assert pending_after.data == []
 
 
-async def test_mcp_history_and_topics(tmp_path):
+async def test_mcp_topics_and_status(tmp_path):
     server = make_server(tmp_path, [Candidate(text="用 手冲滤纸", topic="devices", confidence=0.95)])
 
     async with Client(server) as client:
         await client.call_tool("memorize", {"text": "对话"})
-        committed = await client.call_tool("commit", {"push": False})
-        assert committed.data["committed"]
-
-        history = await client.call_tool("history", {"limit": 5})
-        assert history.data[0]["subject"].startswith("memory:")
 
         topics = await client.call_tool("list_topics", {})
         assert topics.data[0]["topic"] == "devices"

@@ -189,15 +189,6 @@ def build_tools(service: MemoryService, session: Session, timeout: float = 60.0)
             data={"pending": payload},
         )
 
-    def list_topics(_: dict) -> ToolOutcome:
-        topics = service.topics()
-        return ToolOutcome(
-            ok=True,
-            content=json.dumps({"topics": topics}, ensure_ascii=False),
-            display=f"主题 {len(topics)} 个",
-            data={"topics": topics},
-        )
-
     registry.register(
         ToolSpec(
             name="recall",
@@ -268,15 +259,6 @@ def build_tools(service: MemoryService, session: Session, timeout: float = 60.0)
             description="查看等待人工确认的记忆候选。用户问“有什么待确认”时调用。",
             parameters={"type": "object", "properties": {}},
             handler=review_pending,
-            timeout=timeout,
-        )
-    )
-    registry.register(
-        ToolSpec(
-            name="list_topics",
-            description="列出记忆主题和条目数，用于了解记忆库结构。",
-            parameters={"type": "object", "properties": {}},
-            handler=list_topics,
             timeout=timeout,
         )
     )

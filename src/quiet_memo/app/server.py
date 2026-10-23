@@ -61,16 +61,6 @@ def build_server(config: Config | None = None, service: MemoryService | None = N
         return svc.topics()
 
     @mcp.tool
-    def history(limit: int = 10) -> list[dict]:
-        """查看记忆库最近的 Git 提交历史。"""
-        return svc.history(limit)
-
-    @mcp.tool
-    def commit(push: bool = False) -> dict:
-        """生成总结并提交当前变更；push=true 时推送到 remote。默认不推送。"""
-        return svc.commit(push=push)
-
-    @mcp.tool
     def status() -> dict:
         """查看记忆库状态：主题数、条目数、待确认数、未提交变更。"""
         return svc.status()
