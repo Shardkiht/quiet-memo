@@ -88,6 +88,8 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | `/pending` | 查看待确认候选 |
 | `/exit` | 退出 |
 
+`/help` 查看命令说明；`/quit` 同 `/exit`；`/model` 同 `/models`。
+
 ### 上下文压缩
 
 当估算 token 超过预算的 `compact_threshold` 时：
@@ -107,6 +109,10 @@ uv run qm memorize "我最近在找市区的房子，预算 4000 以内，不接
 
 # 直接记录（不调用 LLM）
 uv run qm note "喝咖啡偏好清淡、像茶的风味" --topic preferences --title 偏好
+
+# 初始化 / 查看主题
+uv run qm init
+uv run qm topics
 
 # 检索 / 查看待确认 / 确认或拒绝
 uv run qm recall "市区"
@@ -165,7 +171,8 @@ MCP 客户端配置：
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py              # 入口：Typer CLI / FastMCP
+├── app/          cli.py, server.py, tui.py, ui.py, model_ui.py,
+│                 session_ui.py                    # CLI / TUI / FastMCP 入口
 ├── agent/        runtime.py, context.py, tools.py, session.py
 │                                                   # Agent 循环、压缩、工具、会话
 ├── memory/       service.py, store.py, models.py, queue.py,
@@ -174,11 +181,13 @@ src/quiet_memo/
 ├── retrieval/    base.py, keyword.py             # Retriever 接口 + BM25
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM 适配、会话/提交摘要
-└── infra/        config.py, providers.py, gitops.py, tokens.py
-                                                   # 配置、供应商、Git、token
+└── infra/        config.py, providers.py, gitops.py, tokens.py,
+                  layout.py, prompts.py             # 配置、供应商、Git、token、终端
 ```
 
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。
+`retrieval/keyword.py` 读取 `memory/store.py` 的条目，是 `memory ↔ retrieval` 之间唯一的跨层回读。
+开发约定（代码风格、存储不变量、测试与文档同步）见 [AGENTS.md](AGENTS.md)。
 
 - 检索当前是 jieba 分词 + rank-bm25；`Retriever` 是接口，后续可接向量/混合检索。
 - token 预算用 tiktoken 估算，离线失败时回退字符估算。
@@ -190,7 +199,7 @@ src/quiet_memo/
 uv run pytest
 ```
 
-当前 59 个测试，覆盖存储、队列、冲突检测、检索、抽取解析、会话、上下文压缩、Agent 工具循环、MCP 和 CLI。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
+测试覆盖存储、队列、冲突检测、检索、抽取解析、会话、上下文压缩、Agent 工具循环、MCP 和 CLI。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
 
 ## Roadmap
 
