@@ -65,7 +65,8 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 - 每轮自动检索相关长期记忆，注入上下文。
 - 模型可调用 `recall / memorize / correct / forget / review_pending`。
-- 会话持久化为 `sessions/<id>.jsonl`，可 `qm chat --resume <id>` 恢复。
+- 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
+- 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。
 - 退出时抽取本轮尚未沉淀的用户陈述。
 - 记忆条目记录 `session` 和 `message` 来源，可追溯到原始对话。
 
@@ -73,7 +74,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 | 命令 | 作用 |
 | --- | --- |
-| `/new` | 结束当前会话并新建 |
+| `/new` | 结束当前会话，进入新会话（发送首条消息后创建） |
 | `/sessions` | 会话管理：搜索、选择恢复、删除 |
 | `/resume [id|query]` | 恢复会话；无参数打开排序后的会话选择器，带关键词则先过滤 |
 | `/compact` | 立即压缩上下文 |

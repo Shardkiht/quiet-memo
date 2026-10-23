@@ -274,12 +274,48 @@ def _run_chat(service: MemoryService, resume: str | None = None) -> None:
         service.init_vault()
     sessions = SessionStore(service.config.vault)
     runtime = AgentRuntime(service, LiteLLMChatModel(service.config.llm), sessions)
-    try:
-        runtime.resume(resume) if resume else runtime.start()
-    except KeyError as exc:
-        _fail(str(exc))
-        return
+    if resume:
+        try:
+            runtime.resume(resume)
+        except KeyError as exc:
+            _fail(str(exc))
+            return
+        _print_transcript(runtime.current)
+    else:
+        runtime.start()
     _chat_loop(runtime, service, sessions)
+
+
+def _print_transcript(session, limit: int = 40) -> None:
+    summary = session.summary_text()
+    if summary:
+        console.print(
+            Panel(
+                Markdown(summary),
+                title="此前摘要",
+                border_style=MUTED,
+                box=box.ROUNDED,
+                padding=(0, 2),
+            )
+        )
+    records = [
+        record
+        for record in session.records_after_summary()
+        if record.get("type") in ("message", "assistant")
+        and str(record.get("content") or "").strip()
+    ]
+    if not records:
+        return
+    if len(records) > limit:
+        console.print(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]")
+        records = records[-limit:]
+    for record in records:
+        content = str(record.get("content"))
+        if record.get("type") == "message" and record.get("role") == "user":
+            console.print(f"[bold]❯[/] {content}")
+        else:
+            console.print(Markdown(content))
+            console.print()
 
 
 def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionStore) -> None:
@@ -304,10 +340,16 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
             "请在 Windows Terminal / PowerShell 中运行，Git Bash 可尝试 winpty。"
         )
         return
+    if runtime.has_session:
+        session_label = f"[{MUTED}]{runtime.current.id[:2]}…[/]"
+        session_title = runtime.current.title()
+    else:
+        session_label = f"[{MUTED}]新会话[/]"
+        session_title = "发送第一条消息后创建"
     console.print(
         Panel(
-            f"[bold {ACCENT}]quiet-memo[/]  [{MUTED}]{runtime.current.id[:2]}…[/]\n"
-            f"[bold]{runtime.current.title()}[/]\n"
+            f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
+            f"[bold]{session_title}[/]\n"
             f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
             f"[{MUTED}]上下文[/] {service.config.chat.context_window}\n"
             f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
@@ -355,7 +397,10 @@ def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionS
             console.print(f"[{MUTED}]  {' · '.join(meta)}[/]")
     finally:
         stats = runtime.close()
-        console.print(f"[dim]会话已保存：{runtime.current.id}[/dim]")
+        if runtime.has_session:
+            console.print(f"[dim]会话已保存：{runtime.current.id}[/dim]")
+        else:
+            console.print("[dim]未发送消息，没有创建会话。[/dim]")
         if stats.get("error"):
             console.print(f"[dim]退出抽取失败：{stats['error']}[/dim]")
         elif any(stats.get(key) for key in ("admitted", "queued", "blocked")):
@@ -550,13 +595,14 @@ def _handle_command(
     if command == "/new":
         stats = runtime.close()
         runtime.start()
-        console.print(f"[bold]新会话：{runtime.current.id}[/]")
+        console.print("[bold]新会话[/] [dim]发送第一条消息后创建[/]")
         if stats.get("admitted"):
             console.print(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]")
         return True
     if command == "/sessions":
-        target = _session_manager(sessions, runtime.current.id)
-        if target is None or target == runtime.current.id:
+        current_id = runtime.current.id if runtime.has_session else None
+        target = _session_manager(sessions, current_id)
+        if target is None or target == current_id:
             return True
         runtime.close()
         try:
@@ -565,8 +611,10 @@ def _handle_command(
             console.print(f"[red]{exc}[/red]")
             return True
         console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
+        _print_transcript(runtime.current)
         return True
     if command == "/resume":
+        current_id = runtime.current.id if runtime.has_session else None
         target = None
         if argument:
             try:
@@ -575,10 +623,10 @@ def _handle_command(
             except KeyError:
                 pass
         if target is None:
-            target = _pick_session(sessions, argument, runtime.current.id)
+            target = _pick_session(sessions, argument, current_id)
         if target is None:
             return True
-        if target == runtime.current.id:
+        if target == current_id:
             console.print("[dim]已经是当前会话。[/dim]")
             return True
         runtime.close()
@@ -588,16 +636,23 @@ def _handle_command(
             console.print(f"[red]{exc}[/red]")
             return True
         console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
+        _print_transcript(runtime.current)
         return True
     if command == "/compact":
         for event in runtime.force_compact():
             console.print(f"[dim]· {event}[/dim]")
         return True
     if command == "/summary":
+        if not runtime.has_session:
+            console.print("[dim]新会话还没有摘要。[/dim]")
+            return True
         summary = runtime.summary_text()
         console.print(Markdown(summary) if summary else "[dim]当前会话还没有摘要。[/dim]")
         return True
     if command == "/status":
+        if not runtime.has_session:
+            console.print("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]")
+            return True
         info = runtime.status()
         percent = info["estimated_tokens"] / max(info["context_window"], 1)
         console.print(
@@ -618,6 +673,9 @@ def _handle_command(
         if not argument:
             console.print("[#b8b8b8]用法：/rename <title>[/]")
             return True
+        if not runtime.has_session:
+            console.print("[dim]新会话尚未创建，发送第一条消息后再重命名。[/dim]")
+            return True
         runtime.rename(argument)
         console.print(f"[bold]已重命名为：{argument}[/]")
         return True
@@ -631,7 +689,8 @@ def _handle_command(
         if not argument:
             console.print("[#b8b8b8]用法：/remember <text>[/]")
             return True
-        result = service.memorize(argument, source=f"session:{runtime.current.id}:manual")
+        source = f"session:{runtime.current.id}:manual" if runtime.has_session else "manual"
+        result = service.memorize(argument, source=source)
         console.print(
             f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
             f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"

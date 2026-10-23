@@ -72,10 +72,20 @@ class AgentRuntime:
         self.last_plan = None
         self._closed = False
 
-    def start(self) -> Session:
-        self.session = self.sessions.create()
+    def start(self) -> None:
+        """进入新对话。会话文件在第一条消息发送时才创建。"""
+        self.session = None
         self._closed = False
+
+    def ensure_session(self) -> Session:
+        if self.session is None:
+            self.session = self.sessions.create()
+            self._closed = False
         return self.session
+
+    @property
+    def has_session(self) -> bool:
+        return self.session is not None
 
     def resume(self, session_id: str) -> Session:
         self.session = self.sessions.load(session_id)
@@ -112,7 +122,7 @@ class AgentRuntime:
         text = text.strip()
         if not text:
             raise ValueError("消息为空。")
-        session = self.current
+        session = self.ensure_session()
         message_id = new_message_id()
         self.sessions.append(
             session,
@@ -201,6 +211,8 @@ class AgentRuntime:
         )
 
     def force_compact(self) -> list[str]:
+        if self.session is None:
+            return ["新会话还没有记录，无需压缩。"]
         plan = self.context.prepare(
             self.current,
             SYSTEM_PROMPT,
@@ -218,11 +230,12 @@ class AgentRuntime:
         return events
 
     def close(self) -> dict:
-        session = self.current
-        if self._closed:
-            return {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0, "error": None}
+        empty = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0, "error": None}
+        if self.session is None or self._closed:
+            return empty
+        session = self.session
         self._closed = True
-        stats = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0, "error": None}
+        stats = dict(empty)
         user_texts = session.user_texts_after_summary()
         if self.config.extract_on_exit and user_texts:
             joined = "\n---\n".join(user_texts)[-12000:]

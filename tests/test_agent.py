@@ -54,6 +54,52 @@ def build_runtime(tmp_path, model, candidates=None, *, extract_on_exit=False, ma
     return runtime, service
 
 
+def test_start_defers_session_creation(tmp_path):
+    runtime, service = build_runtime(
+        tmp_path, FakeChatModel([AssistantTurn(content="收到")])
+    )
+
+    assert runtime.session is None
+    store = SessionStore(service.config.vault)
+    assert store.list() == []
+
+    runtime.ask("你好")
+
+    assert runtime.has_session
+    assert len(store.list()) == 1
+
+
+def test_close_without_session_is_noop(tmp_path):
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([]))
+
+    assert runtime.close()["admitted"] == 0
+
+
+def test_resume_restores_prior_messages_for_model(tmp_path):
+    runtime, service = build_runtime(
+        tmp_path, FakeChatModel([AssistantTurn(content="第一次回答")])
+    )
+    runtime.ask("第一问")
+    session_id = runtime.current.id
+    runtime.close()
+
+    model = FakeChatModel([AssistantTurn(content="第二次回答")])
+    resumed = AgentRuntime(
+        service,
+        model,
+        SessionStore(service.config.vault),
+        summarizer=FakeSummarizer(),
+        config=service.config.chat,
+    )
+    resumed.resume(session_id)
+    resumed.ask("第二问")
+
+    contents = [message.get("content") for message in model.calls[0][0]]
+    assert "第一问" in contents
+    assert "第一次回答" in contents
+    assert "第二问" in contents
+
+
 def test_memorize_tool_writes_with_session_provenance(tmp_path):
     model = FakeChatModel(
         [
