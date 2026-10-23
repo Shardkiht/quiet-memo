@@ -37,6 +37,44 @@ console = Console()
 CONFIG_OPTION = typer.Option(None, "--config", "-c", help="配置文件路径")
 VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库路径")
 
+SLASH_COMMANDS = [
+    ("new", "/new", "新建会话"),
+    ("sessions", "/sessions", "列出历史会话"),
+    ("resume", "/resume <id>", "恢复会话"),
+    ("compact", "/compact", "立即压缩上下文"),
+    ("summary", "/summary", "查看当前会话摘要"),
+    ("status", "/status", "会话与记忆状态"),
+    ("models", "/models [refresh]", "切换模型，refresh 强制刷新列表"),
+    ("setup", "/setup", "完整配置模型 / API Key"),
+    ("rename", "/rename <title>", "重命名当前会话"),
+    ("recall", "/recall <query>", "直接检索记忆"),
+    ("remember", "/remember <text>", "直接写入记忆"),
+    ("pending", "/pending", "查看待确认候选"),
+    ("help", "/help", "查看命令帮助"),
+    ("exit", "/exit", "退出"),
+]
+
+
+def _make_slash_completer():
+    from prompt_toolkit.completion import Completer, Completion
+
+    class SlashCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            if not text.startswith("/") or " " in text:
+                return
+            prefix = text[1:].lower()
+            for command, usage, description in SLASH_COMMANDS:
+                if command.startswith(prefix):
+                    yield Completion(
+                        f"/{command}",
+                        start_position=-len(text),
+                        display=f"/{command}",
+                        display_meta=description,
+                    )
+
+    return SlashCompleter()
+
 
 @app.callback()
 def _root(ctx: typer.Context) -> None:
@@ -196,11 +234,18 @@ def _run_chat(service: MemoryService, resume: str | None = None) -> None:
 def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionStore) -> None:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.shortcuts import CompleteStyle
 
     history_path = service.config.vault / ".quiet-memo" / "chat_history"
     history_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        prompt = PromptSession(history=FileHistory(str(history_path)))
+        prompt = PromptSession(
+            history=FileHistory(str(history_path)),
+            completer=_make_slash_completer(),
+            complete_while_typing=True,
+            complete_style=CompleteStyle.READLINE_LIKE,
+            reserve_space_for_menu=10,
+        )
     except Exception as exc:
         console.print(
             f"[yellow]当前终端不支持交互输入：{exc}[/yellow]\n"
@@ -415,23 +460,7 @@ def _handle_command(
     if command == "/help":
         console.print(
             Panel(
-                "\n".join(
-                    [
-                        "/new              新建会话",
-                        "/sessions         列出历史会话",
-                        "/resume <id>      恢复会话",
-                        "/compact          立即压缩上下文",
-                        "/summary          查看当前会话摘要",
-                        "/status           会话与记忆状态",
-                        "/models           切换模型（/models refresh 强制刷新）",
-                        "/setup            完整配置模型 / API Key",
-                        "/rename <title>   重命名当前会话",
-                        "/recall <query>   直接检索记忆",
-                        "/remember <text>  直接写入记忆",
-                        "/pending          查看待确认候选",
-                        "/exit             退出",
-                    ]
-                ),
+                "\n".join(f"{usage:<22} {description}" for _, usage, description in SLASH_COMMANDS),
                 title="命令",
             )
         )

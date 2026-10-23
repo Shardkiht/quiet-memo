@@ -17,6 +17,23 @@ def test_bare_invocation_falls_back_to_help_without_tty():
     assert "Usage:" in result.output
 
 
+def test_slash_completer_lists_and_filters_commands():
+    from prompt_toolkit.document import Document
+
+    from quiet_memo.app.cli import SLASH_COMMANDS, _make_slash_completer
+
+    completer = _make_slash_completer()
+    completions = list(completer.get_completions(Document("/", 1), None))
+    assert {item.text for item in completions} == {f"/{name}" for name, _, _ in SLASH_COMMANDS}
+
+    filtered = list(completer.get_completions(Document("/mo", 3), None))
+    assert [item.text for item in filtered] == ["/models"]
+
+    assert list(completer.get_completions(Document("/models re", 10), None)) == []
+    models = next(item for item in completions if item.text == "/models")
+    assert "切换模型" in models.display_meta_text
+
+
 def test_init_note_recall_commit(tmp_path):
     config = tmp_path / "quiet-memo.toml"
     vault = tmp_path / "vault"

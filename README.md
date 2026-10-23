@@ -61,7 +61,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 ## 对话 Agent
 
-直接运行 `qm` 或 `quietmemo` 进入主菜单；选择“开始对话”后进入多轮 Agent。也可以 `qm chat` 直接进入。
+直接运行 `qm` 或 `quietmemo` 进入主菜单；选择“开始对话”后进入多轮 Agent。也可以 `qm chat` 直接进入。输入 `/` 会弹出命令菜单和说明。
 
 - 每轮自动检索相关长期记忆，注入上下文。
 - 模型可调用 `recall / memorize / correct / forget / review_pending / list_topics`。
