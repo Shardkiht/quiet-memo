@@ -247,7 +247,7 @@ def test_reload_llm_updates_model_and_extractor(tmp_path, monkeypatch):
 
 
 def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
-    from quiet_memo.app import cli
+    from quiet_memo.app import model_ui
 
     runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
     config_path = tmp_path / "quiet-memo.toml"
@@ -260,7 +260,7 @@ def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
             return self.value
 
     monkeypatch.setattr(
-        cli.questionary,
+        model_ui.questionary,
         "select",
         lambda *args, **kwargs: Answer(("deepseek", "deepseek-v4-pro")),
     )
@@ -273,7 +273,7 @@ def test_switch_model_updates_config_and_runtime(tmp_path, monkeypatch):
         lambda *args, **kwargs: service.config,
     )
 
-    cli._switch_model(runtime, service)
+    model_ui.switch_model(runtime, service)
 
     assert service.config.llm.model == "deepseek-v4-pro"
     assert runtime.model_label == "deepseek/deepseek-v4-pro"

@@ -20,9 +20,9 @@ def test_bare_invocation_falls_back_to_help_without_tty():
 def test_slash_completer_lists_and_filters_commands():
     from prompt_toolkit.document import Document
 
-    from quiet_memo.app.cli import SLASH_COMMANDS, _make_slash_completer
+    from quiet_memo.app.ui import SLASH_COMMANDS, slash_completer
 
-    completer = _make_slash_completer()
+    completer = slash_completer()
     completions = list(completer.get_completions(Document("/", 1), None))
     assert {item.text for item in completions} == {f"/{name}" for name, _, _ in SLASH_COMMANDS}
 
@@ -37,7 +37,7 @@ def test_slash_completer_lists_and_filters_commands():
 def test_session_choices_are_grouped_by_date():
     import questionary
 
-    from quiet_memo.app.cli import _session_choices, _visible_sessions
+    from quiet_memo.app.session_ui import session_choices, visible_sessions
 
     rows = [
         {
@@ -63,8 +63,8 @@ def test_session_choices_are_grouped_by_date():
         },
     ]
 
-    visible = _visible_sessions(rows)
-    choices = _session_choices(visible, current_id="s-2")
+    visible = visible_sessions(rows)
+    choices = session_choices(visible, current_id="s-2")
     separators = [item for item in choices if isinstance(item, questionary.Separator)]
     values = [
         item.value
@@ -84,7 +84,7 @@ def test_session_choices_are_grouped_by_date():
 
 def test_session_manager_returns_session_id_not_first_character(tmp_path, monkeypatch):
     from quiet_memo.agent.session import SessionStore, new_message_id
-    from quiet_memo.app import cli
+    from quiet_memo.app import session_ui
 
     store = SessionStore(tmp_path)
     session = store.create()
@@ -102,12 +102,12 @@ def test_session_manager_returns_session_id_not_first_character(tmp_path, monkey
 
     answers = [session.id, "resume"]
     monkeypatch.setattr(
-        cli.questionary,
+        session_ui.questionary,
         "select",
         lambda *args, **kwargs: Answer(answers.pop(0)),
     )
 
-    assert cli._session_manager(store, current_id=None) == session.id
+    assert session_ui.session_manager(store, current_id=None) == session.id
 
 
 def test_init_note_recall_commit(tmp_path):

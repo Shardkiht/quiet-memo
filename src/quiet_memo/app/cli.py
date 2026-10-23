@@ -1,19 +1,9 @@
 from __future__ import annotations
 
-import time
-from dataclasses import replace
 from pathlib import Path
 
-import questionary
 import typer
-from prompt_toolkit.styles import Style
-from rich import box
-from rich.console import Console
-from rich.markdown import Markdown
-from rich.panel import Panel
-from rich.table import Table
 
-from ..agent.runtime import AgentRuntime
 from ..agent.session import SessionStore
 from ..infra.config import (
     Config,
@@ -23,9 +13,12 @@ from ..infra.config import (
     write_example_config,
 )
 from ..infra.gitops import GitError
-from ..llm import ChatModelError, LiteLLMChatModel
 from ..memory.extractor import ExtractorError
 from ..memory.service import MemoryService, get_service
+from .menu import main_menu
+from .session_ui import print_sessions
+from .tui import run_chat
+from .ui import console, fail, print_hits, styled_table
 
 app = typer.Typer(
     help="quiet-memo — 安静的个人记忆库：默认无感写入本地 Markdown，Git 可回滚，MCP 可调用。",
@@ -33,87 +26,9 @@ app = typer.Typer(
     invoke_without_command=True,
     add_completion=False,
 )
-console = Console()
-
-ACCENT = "#d0d0d0"
-MUTED = "#808080"
-SUCCESS = "#d0d0d0"
-WARNING = "#b8b8b8"
-
-MENU_STYLE = Style.from_dict(
-    {
-        "qmark": f"bold {ACCENT}",
-        "question": "bold #e0e0e0",
-        "pointer": f"bold {ACCENT}",
-        "highlighted": "bg:#3a3a3a #ffffff",
-        "selected": SUCCESS,
-        "separator": MUTED,
-        "instruction": MUTED,
-        "text": "#d8d8d8",
-    }
-)
-
-PROMPT_STYLE = Style.from_dict(
-    {
-        "prompt": f"bold {ACCENT}",
-        "completion-menu.completion": "bg:#262626 #d8d8d8",
-        "completion-menu.completion.current": "bg:#3a3a3a #ffffff",
-        "completion-menu.meta.completion": "bg:#262626 #808080",
-        "completion-menu.meta.completion.current": "bg:#3a3a3a #d0d0d0",
-    }
-)
-
-
-def _styled_table(title: str) -> Table:
-    return Table(
-        title=title,
-        box=box.ROUNDED,
-        border_style=MUTED,
-        title_style=f"bold {ACCENT}",
-        header_style=f"bold {ACCENT}",
-        expand=False,
-    )
 
 CONFIG_OPTION = typer.Option(None, "--config", "-c", help="配置文件路径")
 VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库路径")
-
-SLASH_COMMANDS = [
-    ("new", "/new", "新建会话"),
-    ("sessions", "/sessions", "会话管理（选择、搜索、删除）"),
-    ("resume", "/resume [id|query]", "恢复会话，无参数打开选择器"),
-    ("compact", "/compact", "立即压缩上下文"),
-    ("summary", "/summary", "查看当前会话摘要"),
-    ("status", "/status", "会话与记忆状态"),
-    ("models", "/models [refresh]", "切换模型，refresh 强制刷新列表"),
-    ("setup", "/setup", "完整配置模型 / API Key"),
-    ("rename", "/rename <title>", "重命名当前会话"),
-    ("recall", "/recall <query>", "直接检索记忆"),
-    ("remember", "/remember <text>", "直接写入记忆"),
-    ("pending", "/pending", "查看待确认候选"),
-    ("help", "/help", "查看命令帮助"),
-    ("exit", "/exit", "退出"),
-]
-
-
-def _make_slash_completer():
-    from prompt_toolkit.completion import Completer, Completion
-
-    class SlashCompleter(Completer):
-        def get_completions(self, document, complete_event):
-            text = document.text_before_cursor
-            if not text.startswith("/") or " " in text:
-                return
-            prefix = text[1:].lower()
-            for command, usage, description in SLASH_COMMANDS:
-                if command.startswith(prefix):
-                    yield Completion(
-                        f"/{command}",
-                        start_position=-len(text),
-                        display=f"/{command}",
-                        display_meta=description,
-                    )
-
-    return SlashCompleter()
 
 
 @app.callback()
@@ -122,7 +37,7 @@ def _root(ctx: typer.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     try:
-        _main_menu()
+        main_menu()
     except Exception as exc:
         console.print(f"[#b8b8b8]无法启动交互菜单：{exc}[/]")
         console.print(ctx.get_help())
@@ -130,11 +45,6 @@ def _root(ctx: typer.Context) -> None:
 
 def _service(config: Path | None, vault: Path | None) -> MemoryService:
     return get_service(config, vault)
-
-
-def _fail(message: str) -> None:
-    console.print(f"[red]{message}[/red]")
-    raise typer.Exit(code=1)
 
 
 @app.command()
@@ -146,7 +56,7 @@ def init(
     """初始化记忆库与 Git 仓库。"""
     vault = vault.expanduser().resolve()
     if vault.exists() and any(vault.iterdir()) and not (vault / ".git").exists() and not force:
-        _fail(f"{vault} 非空且不是 quiet-memo 记忆库；确认无误后加 --force。")
+        fail(f"{vault} 非空且不是 quiet-memo 记忆库；确认无误后加 --force。")
     config_path = config.expanduser() if config else default_config_path()
     cfg = load_config(config_path) if config_path.exists() else Config(vault=vault)
     cfg.vault = vault
@@ -170,7 +80,7 @@ def setup(
     try:
         result = run_setup(config, vault)
     except KeyboardInterrupt:
-        _fail("已取消。")
+        fail("已取消。")
         return
     console.print(f"配置已保存：{result['config_path']}")
     console.print(
@@ -200,665 +110,7 @@ def chat(
     vault: Path | None = VAULT_OPTION,
 ) -> None:
     """启动交互式记忆 Agent。支持 /new /sessions /compact 等命令。"""
-    _run_chat(_service(config, vault), resume)
-
-
-def _main_menu() -> None:
-    from ..infra.providers import run_setup
-
-    while True:
-        service = _service(None, None)
-        if not (service.config.vault / ".git").exists():
-            service.init_vault()
-        has_key = bool(service.config.llm.api_key())
-        model = f"{service.config.llm.provider}/{service.config.llm.model}"
-        choices = [
-            questionary.Choice("开始对话", value="chat"),
-            questionary.Choice("配置模型 / API Key", value="setup"),
-            questionary.Choice("查看会话", value="sessions"),
-            questionary.Choice("检索记忆", value="recall"),
-            questionary.Choice("退出", value="exit"),
-        ]
-        if not has_key:
-            choices.insert(0, choices.pop(1))
-        key_status = "已配置 API Key" if has_key else "未配置 API Key"
-        key_color = SUCCESS if has_key else WARNING
-        console.print(
-            Panel.fit(
-                f"[bold {ACCENT}]quiet-memo[/]  [{MUTED}]personal memory agent[/]\n"
-                f"[{MUTED}]{model} · {service.config.vault}[/]\n"
-                f"[{key_color}]{key_status}[/]",
-                border_style=ACCENT,
-                box=box.ROUNDED,
-                padding=(0, 2),
-            )
-        )
-        choice = questionary.select(
-            "选择操作",
-            choices=choices,
-            style=MENU_STYLE,
-            qmark="›",
-            pointer="❯",
-            instruction="↑↓ 选择 · Enter 确认",
-        ).ask()
-        if choice in (None, "exit"):
-            return
-        if choice == "setup":
-            try:
-                run_setup()
-            except KeyboardInterrupt:
-                console.print("[#b8b8b8]已取消配置。[/]")
-            continue
-        if choice == "sessions":
-            _print_sessions(SessionStore(service.config.vault).list(20))
-            continue
-        if choice == "recall":
-            query = questionary.text("检索关键词").ask()
-            if query:
-                _print_hits(query, service.recall(query, 10))
-            continue
-        if choice == "chat":
-            if not has_key:
-                console.print("[#b8b8b8]先配置 API Key，再开始对话。[/]")
-                continue
-            _run_chat(service)
-
-
-def _run_chat(service: MemoryService, resume: str | None = None) -> None:
-    if not service.config.llm.api_key():
-        _fail(
-            f"未配置 LLM API Key，请设置环境变量 {service.config.llm.api_key_env}，"
-            "或在聊天里输入 /setup 配置。"
-        )
-    if not (service.config.vault / ".git").exists():
-        service.init_vault()
-    sessions = SessionStore(service.config.vault)
-    runtime = AgentRuntime(service, LiteLLMChatModel(service.config.llm), sessions)
-    if resume:
-        try:
-            runtime.resume(resume)
-        except KeyError as exc:
-            _fail(str(exc))
-            return
-        _print_transcript(runtime.current)
-    else:
-        runtime.start()
-    _chat_loop(runtime, service, sessions)
-
-
-def _print_transcript(session, limit: int = 40) -> None:
-    summary = session.summary_text()
-    if summary:
-        console.print(
-            Panel(
-                Markdown(summary),
-                title="此前摘要",
-                border_style=MUTED,
-                box=box.ROUNDED,
-                padding=(0, 2),
-            )
-        )
-    records = [
-        record
-        for record in session.records_after_summary()
-        if record.get("type") in ("message", "assistant")
-        and str(record.get("content") or "").strip()
-    ]
-    if not records:
-        return
-    if len(records) > limit:
-        console.print(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]")
-        records = records[-limit:]
-    for record in records:
-        content = str(record.get("content"))
-        if record.get("type") == "message" and record.get("role") == "user":
-            console.print(f"[bold]❯[/] {content}")
-        else:
-            console.print(Markdown(content))
-            console.print()
-
-
-def _chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionStore) -> None:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import FileHistory
-    from prompt_toolkit.shortcuts import CompleteStyle
-
-    history_path = service.config.vault / ".quiet-memo" / "chat_history"
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        prompt = PromptSession(
-            history=FileHistory(str(history_path)),
-            completer=_make_slash_completer(),
-            complete_while_typing=True,
-            complete_style=CompleteStyle.COLUMN,
-            reserve_space_for_menu=10,
-            style=PROMPT_STYLE,
-        )
-    except Exception as exc:
-        console.print(
-            f"[#b8b8b8]当前终端不支持交互输入：{exc}[/]\n"
-            "请在 Windows Terminal / PowerShell 中运行，Git Bash 可尝试 winpty。"
-        )
-        return
-    if runtime.has_session:
-        session_label = f"[{MUTED}]{runtime.current.id[:2]}…[/]"
-        session_title = runtime.current.title()
-    else:
-        session_label = f"[{MUTED}]新会话[/]"
-        session_title = "发送第一条消息后创建"
-    console.print(
-        Panel(
-            f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
-            f"[bold]{session_title}[/]\n"
-            f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
-            f"[{MUTED}]上下文[/] {service.config.chat.context_window}\n"
-            f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
-            border_style=ACCENT,
-            box=box.ROUNDED,
-            padding=(0, 2),
-        )
-    )
-
-    try:
-        while True:
-            prompt_text = [("class:prompt", "❯ ")]
-            try:
-                line = prompt.prompt(prompt_text)
-            except (EOFError, KeyboardInterrupt):
-                break
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("/"):
-                if _handle_command(runtime, service, sessions, line):
-                    continue
-                break
-            started = time.monotonic()
-            try:
-                with console.status(f"[{ACCENT}]思考中…[/]", spinner="dots"):
-                    reply = runtime.ask(line)
-            except KeyboardInterrupt:
-                console.print(f"[{WARNING}]已中断当前请求。[/]")
-                continue
-            except ChatModelError as exc:
-                console.print(f"[red]{exc}[/red]")
-                continue
-            elapsed = time.monotonic() - started
-            for event in reply.events:
-                console.print(f"[{MUTED}]  ↳ {event}[/]")
-            console.print(Markdown(reply.content or "(空回复)"))
-            meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
-            percent = reply.estimated_tokens / max(service.config.chat.context_window, 1)
-            if percent >= 0.5:
-                meta.append(f"上下文 {percent:.0%}")
-            if reply.usage.cost_usd:
-                meta.append(f"${reply.usage.cost_usd:.4f}")
-            meta.append(f"{elapsed:.1f}s")
-            console.print(f"[{MUTED}]  {' · '.join(meta)}[/]")
-    finally:
-        stats = runtime.close()
-        if runtime.has_session:
-            console.print(f"[dim]会话已保存：{runtime.current.id}[/dim]")
-        else:
-            console.print("[dim]未发送消息，没有创建会话。[/dim]")
-        if stats.get("error"):
-            console.print(f"[dim]退出抽取失败：{stats['error']}[/dim]")
-        elif any(stats.get(key) for key in ("admitted", "queued", "blocked")):
-            console.print(
-                f"[dim]退出时沉淀记忆：写入 {stats['admitted']} 条，"
-                f"待确认 {stats['queued']} 条，拦截 {stats['blocked']} 条[/dim]"
-            )
-
-
-def _print_hits(query: str, hits) -> None:
-    if not hits:
-        console.print("[dim]未找到相关记忆。[/dim]")
-        return
-    table = _styled_table(f"检索：{query}")
-    table.add_column("ID")
-    table.add_column("主题")
-    table.add_column("分数")
-    table.add_column("内容", overflow="fold")
-    for hit in hits:
-        table.add_row(hit.id, hit.topic, f"{hit.score:.2f}", hit.text)
-    console.print(table)
-
-
-def _switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = False) -> None:
-    from ..infra.providers import (
-        PRESETS,
-        display_model,
-        has_api_key,
-        provider_label,
-        resolve_config_path,
-        write_config,
-    )
-    from ..llm import fetch_provider_models, model_metadata, supported_params
-
-    current = service.config.llm
-    fetched_models = fetch_provider_models(current, refresh=refresh)
-    entries: list[tuple[str, str, object | None]] = []
-    seen: set[tuple[str, str]] = set()
-    for preset in PRESETS:
-        if preset.key == "custom":
-            continue
-        # 只展示当前供应商和已配置 API Key 的其他供应商
-        if preset.key != current.provider and not has_api_key(preset):
-            continue
-        models = fetched_models if preset.key == current.provider and fetched_models else list(preset.models)
-        for model in models:
-            entries.append((preset.key, model, preset))
-            seen.add((preset.key, model))
-    if current.provider not in {preset.key for preset in PRESETS} or current.provider == "custom":
-        for model in (fetched_models or [current.model]):
-            entries.insert(0, (current.provider, model, None))
-            seen.add((current.provider, model))
-    if (current.provider, current.model) not in seen:
-        entries.insert(0, (current.provider, current.model, None))
-    entries.sort(
-        key=lambda item: 0
-        if (item[0], item[1]) == (current.provider, current.model)
-        else 1
-    )
-
-    choices = []
-    for provider, model, preset in entries:
-        candidate = replace(
-            current,
-            provider=provider,
-            model=model,
-            base_url=preset.base_url if preset else current.base_url,
-            api_key_env=preset.api_key_env if preset else current.api_key_env,
-        )
-        key = candidate.litellm_model()
-        info = model_metadata(key)
-        caps = []
-        max_input = info.get("max_input_tokens")
-        if max_input:
-            try:
-                caps.append(f"{int(max_input) // 1000}k")
-            except (TypeError, ValueError):
-                pass
-        if "reasoning_effort" in supported_params(key):
-            caps.append("reasoning")
-        label = f"{provider_label(provider)} · {display_model(model)}"
-        if caps:
-            label += f"  ({', '.join(caps)})"
-        if (provider, model) == (current.provider, current.model):
-            label += "  ← 当前"
-        choices.append(questionary.Choice(label, value=(provider, model)))
-    choices.append(questionary.Choice("↻ 刷新模型列表", value=("__refresh__", "")))
-    choices.append(questionary.Choice("自定义模型…", value=("__custom__", "")))
-
-    selected = questionary.select(
-        f"当前模型：{runtime.model_label}",
-        choices=choices,
-        style=MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
-    if selected is None:
-        return
-    if selected[0] == "__refresh__":
-        console.print("[dim]正在刷新模型列表…[/dim]")
-        _switch_model(runtime, service, refresh=True)
-        return
-
-    if selected[0] == "__custom__":
-        value = questionary.text("模型名称", default=current.model).ask()
-        if value is None or not value.strip():
-            return
-        new_llm = replace(current, model=value.strip())
-    else:
-        provider, model = selected
-        preset = next((item for item in PRESETS if item.key == provider), None)
-        new_llm = replace(
-            current,
-            provider=provider,
-            model=model,
-            base_url=preset.base_url if preset else current.base_url,
-            api_key_env=preset.api_key_env if preset else current.api_key_env,
-        )
-        if new_llm.provider != current.provider and not new_llm.api_key():
-            console.print(
-                f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]"
-            )
-            return
-
-    key = new_llm.litellm_model()
-    info = model_metadata(key)
-    params = supported_params(key)
-    if new_llm.reasoning_effort and "reasoning_effort" not in params:
-        new_llm.reasoning_effort = None
-    max_input = info.get("max_input_tokens")
-    if max_input is not None:
-        try:
-            max_input = int(max_input)
-        except (TypeError, ValueError):
-            max_input = None
-    context_window = service.config.chat.context_window
-    if max_input and context_window > max_input:
-        context_window = max_input
-
-    service.config.llm = new_llm
-    service.config.chat.context_window = context_window
-    write_config(resolve_config_path(None), service.config)
-    runtime.reload_llm()
-    console.print(
-        f"[bold]模型已切换：{runtime.model_label}[/] "
-        f"[dim]上下文 {context_window} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
-    )
-
-
-def _handle_command(
-    runtime: AgentRuntime,
-    service: MemoryService,
-    sessions: SessionStore,
-    line: str,
-) -> bool:
-    """返回 False 表示退出聊天。"""
-    command, _, argument = line.partition(" ")
-    command = command.lower()
-    argument = argument.strip()
-
-    if command in ("/exit", "/quit"):
-        return False
-    if command == "/help":
-        console.print(
-            Panel(
-                "\n".join(f"{usage:<22} {description}" for _, usage, description in SLASH_COMMANDS),
-                title="命令",
-                border_style=ACCENT,
-                box=box.ROUNDED,
-            )
-        )
-        return True
-    if command in ("/models", "/model"):
-        _switch_model(
-            runtime,
-            service,
-            refresh=argument.lower() in ("refresh", "--refresh", "-r"),
-        )
-        return True
-    if command == "/setup":
-        from ..infra.providers import run_setup
-
-        try:
-            run_setup()
-        except KeyboardInterrupt:
-            console.print("[#b8b8b8]已取消配置。[/]")
-            return True
-        runtime.reload_llm()
-        console.print(f"[bold]模型已切换：{runtime.model_label}[/]")
-        return True
-    if command == "/new":
-        stats = runtime.close()
-        runtime.start()
-        console.print("[bold]新会话[/] [dim]发送第一条消息后创建[/]")
-        if stats.get("admitted"):
-            console.print(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]")
-        return True
-    if command == "/sessions":
-        current_id = runtime.current.id if runtime.has_session else None
-        target = _session_manager(sessions, current_id)
-        if target is None or target == current_id:
-            return True
-        runtime.close()
-        try:
-            runtime.resume(target)
-        except KeyError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return True
-        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
-        _print_transcript(runtime.current)
-        return True
-    if command == "/resume":
-        current_id = runtime.current.id if runtime.has_session else None
-        target = None
-        if argument:
-            try:
-                if sessions.exists(argument):
-                    target = argument
-            except KeyError:
-                pass
-        if target is None:
-            target = _pick_session(sessions, argument, current_id)
-        if target is None:
-            return True
-        if target == current_id:
-            console.print("[dim]已经是当前会话。[/dim]")
-            return True
-        runtime.close()
-        try:
-            runtime.resume(target)
-        except KeyError as exc:
-            console.print(f"[red]{exc}[/red]")
-            return True
-        console.print(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]")
-        _print_transcript(runtime.current)
-        return True
-    if command == "/compact":
-        for event in runtime.force_compact():
-            console.print(f"[dim]· {event}[/dim]")
-        return True
-    if command == "/summary":
-        if not runtime.has_session:
-            console.print("[dim]新会话还没有摘要。[/dim]")
-            return True
-        summary = runtime.summary_text()
-        console.print(Markdown(summary) if summary else "[dim]当前会话还没有摘要。[/dim]")
-        return True
-    if command == "/status":
-        if not runtime.has_session:
-            console.print("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]")
-            return True
-        info = runtime.status()
-        percent = info["estimated_tokens"] / max(info["context_window"], 1)
-        console.print(
-            Panel(
-                f"会话：{info['session_id']} · {info['title']}\n"
-                f"模型：{info['model']}\n"
-                f"上下文：{info['estimated_tokens']}/{info['context_window']}（{percent:.0%}）\n"
-                f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
-                f"已覆盖 {info['covered_records']} 条记录\n"
-                f"待确认：{info['pending']} 条",
-                title="状态",
-                border_style=ACCENT,
-                box=box.ROUNDED,
-            )
-        )
-        return True
-    if command == "/rename":
-        if not argument:
-            console.print("[#b8b8b8]用法：/rename <title>[/]")
-            return True
-        if not runtime.has_session:
-            console.print("[dim]新会话尚未创建，发送第一条消息后再重命名。[/dim]")
-            return True
-        runtime.rename(argument)
-        console.print(f"[bold]已重命名为：{argument}[/]")
-        return True
-    if command == "/recall":
-        if not argument:
-            console.print("[#b8b8b8]用法：/recall <query>[/]")
-            return True
-        _print_hits(argument, service.recall(argument, 10))
-        return True
-    if command == "/remember":
-        if not argument:
-            console.print("[#b8b8b8]用法：/remember <text>[/]")
-            return True
-        source = f"session:{runtime.current.id}:manual" if runtime.has_session else "manual"
-        result = service.memorize(argument, source=source)
-        console.print(
-            f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
-            f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"
-        )
-        return True
-    if command == "/pending":
-        items = service.pending()
-        if not items:
-            console.print("[dim]没有待确认项。[/dim]")
-            return True
-        table = _styled_table("待确认")
-        table.add_column("ID")
-        table.add_column("主题")
-        table.add_column("原因")
-        table.add_column("内容", overflow="fold")
-        for item in items:
-            table.add_row(item.id, item.topic, item.reason, item.text)
-        console.print(table)
-        return True
-    console.print(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]")
-    return True
-
-
-def _visible_sessions(rows: list[dict]) -> list[dict]:
-    return [row for row in rows if int(row.get("messages", 0) or 0) > 0]
-
-
-def _session_choices(rows: list[dict], current_id: str | None = None):
-    choices = []
-    last_date = None
-    for row in rows:
-        stamp = row.get("updated_at") or row.get("started_at") or ""
-        date = stamp[:10]
-        if date != last_date:
-            choices.append(questionary.Separator(date or "未知日期"))
-            last_date = date
-        time_text = stamp[11:16] if len(stamp) >= 16 else ""
-        label = f"{time_text}  {row['title']}"
-        label += f"  · {row['messages']} 条"
-        if row.get("summaries"):
-            label += f" · 摘要 {row['summaries']}"
-        if row.get("id") == current_id:
-            label += "  ← 当前"
-        choices.append(questionary.Choice(label, value=row["id"]))
-    return choices
-
-
-def _session_manager(sessions: SessionStore, current_id: str | None = None) -> str | None:
-    query = ""
-    while True:
-        rows = _visible_sessions(sessions.list(100))
-        if query:
-            needle = query.lower()
-            rows = [
-                row
-                for row in rows
-                if needle in row["title"].lower() or needle in row["id"].lower()
-            ]
-        if not rows:
-            console.print("[dim]没有匹配的会话。[/dim]")
-        choices = [
-            questionary.Choice(
-                f"搜索…（{query}）" if query else "搜索…",
-                value="__search__",
-            )
-        ]
-        choices.extend(_session_choices(rows, current_id))
-        choices.append(questionary.Choice("返回", value="__back__"))
-
-        selected = questionary.select(
-            "会话管理",
-            choices=choices,
-            style=MENU_STYLE,
-            qmark="›",
-            pointer="❯",
-            instruction="↑↓ 选择 · Enter 确认",
-        ).ask()
-        if selected is None or selected == "__back__":
-            return None
-        if selected == "__search__":
-            value = questionary.text("搜索标题或 ID（留空显示全部）", default=query).ask()
-            if value is not None:
-                query = value.strip()
-            continue
-
-        target = selected
-        if target == current_id:
-            console.print("[dim]当前会话不能删除，先 /new 再处理。[/dim]")
-            continue
-        title = sessions.load(target).title()
-        action = questionary.select(
-            f"会话：{title}",
-            choices=[
-                questionary.Choice("恢复会话", value="resume"),
-                questionary.Choice("删除会话", value="delete"),
-                questionary.Choice("返回", value="back"),
-            ],
-            style=MENU_STYLE,
-            qmark="›",
-            pointer="❯",
-            instruction="↑↓ 选择 · Enter 确认",
-        ).ask()
-        if action == "resume":
-            return target
-        if action == "delete":
-            confirmed = questionary.confirm(
-                f"删除会话「{title}」？不可恢复",
-                default=False,
-            ).ask()
-            if confirmed:
-                sessions.delete(target)
-                console.print(f"[{SUCCESS}]已删除会话 {target}[/]")
-
-
-def _pick_session(
-    sessions: SessionStore,
-    query: str = "",
-    current_id: str | None = None,
-    *,
-    include_empty: bool = False,
-    exclude_current: bool = False,
-) -> str | None:
-    rows = sessions.list(100) if include_empty else _visible_sessions(sessions.list(100))
-    if exclude_current and current_id:
-        rows = [row for row in rows if row["id"] != current_id]
-    if query:
-        needle = query.lower()
-        rows = [
-            row
-            for row in rows
-            if needle in row["title"].lower() or needle in row["id"].lower()
-        ]
-    if not rows:
-        console.print("[dim]没有可选择的会话。[/dim]")
-        return None
-    choices = _session_choices(rows, current_id)
-    return questionary.select(
-        "选择会话（↑↓ 选择，Enter 确认）",
-        choices=choices,
-        style=MENU_STYLE,
-        qmark="›",
-        pointer="❯",
-        instruction="↑↓ 选择 · Enter 确认",
-    ).ask()
-
-
-def _print_sessions(rows: list[dict]) -> None:
-    rows = _visible_sessions(rows)
-    if not rows:
-        console.print("[dim]暂无会话。[/dim]")
-        return
-    table = _styled_table("会话")
-    table.add_column("ID")
-    table.add_column("更新时间")
-    table.add_column("消息")
-    table.add_column("tokens")
-    table.add_column("摘要")
-    table.add_column("标题", overflow="fold")
-    for row in rows:
-        table.add_row(
-            row["id"],
-            row["updated_at"].replace("T", " "),
-            str(row["messages"]),
-            str(row["tokens"]),
-            str(row["summaries"]),
-            row["title"],
-        )
-    console.print(table)
+    run_chat(_service(config, vault), resume)
 
 
 @app.command("sessions")
@@ -869,7 +121,7 @@ def list_sessions(
 ) -> None:
     """列出历史会话。"""
     service = _service(config, vault)
-    _print_sessions(SessionStore(service.config.vault).list(limit))
+    print_sessions(SessionStore(service.config.vault).list(limit))
 
 
 @app.command()
@@ -884,7 +136,7 @@ def memorize(
     try:
         result = service.memorize(text, source)
     except ExtractorError as exc:
-        _fail(str(exc))
+        fail(str(exc))
         return
     for entry in result.admitted:
         console.print(f"[bold]已写入[/] [{entry.topic}] {entry.text}")
@@ -909,7 +161,7 @@ def note(
     try:
         entry = service.note(text, topic=topic, title=title)
     except ValueError as exc:
-        _fail(str(exc))
+        fail(str(exc))
         return
     console.print(f"[bold]已记录[/] [{entry.topic}] {entry.text}")
 
@@ -923,17 +175,7 @@ def recall(
 ) -> None:
     """检索记忆。"""
     hits = _service(config, vault).recall(query, limit)
-    if not hits:
-        console.print("[dim]未找到相关记忆。[/dim]")
-        return
-    table = _styled_table(f"检索：{query}")
-    table.add_column("ID")
-    table.add_column("主题")
-    table.add_column("分数")
-    table.add_column("内容", overflow="fold")
-    for hit in hits:
-        table.add_row(hit.id, hit.topic, f"{hit.score:.2f}", hit.text)
-    console.print(table)
+    print_hits(query, hits)
 
 
 @app.command()
@@ -946,7 +188,7 @@ def pending(
     if not items:
         console.print("[dim]没有待确认项。[/dim]")
         return
-    table = _styled_table("待确认")
+    table = styled_table("待确认")
     table.add_column("ID")
     table.add_column("主题")
     table.add_column("置信度")
@@ -967,7 +209,7 @@ def approve(
     try:
         entry = _service(config, vault).approve(item_id)
     except KeyError as exc:
-        _fail(str(exc))
+        fail(str(exc))
         return
     console.print(f"[bold]已写入[/] [{entry.topic}] {entry.text}")
 
@@ -982,7 +224,7 @@ def reject(
     try:
         item = _service(config, vault).reject(item_id)
     except KeyError as exc:
-        _fail(str(exc))
+        fail(str(exc))
         return
     console.print(f"[dim]已拒绝[/dim] {item.id} {item.text}")
 
@@ -997,7 +239,7 @@ def list_topics(
     if not topics:
         console.print("[dim]记忆库为空。[/dim]")
         return
-    table = _styled_table("记忆主题")
+    table = styled_table("记忆主题")
     table.add_column("主题")
     table.add_column("标题")
     table.add_column("条目")
@@ -1018,7 +260,7 @@ def history(
     if not commits:
         console.print("[dim]暂无提交。[/dim]")
         return
-    table = _styled_table("提交历史")
+    table = styled_table("提交历史")
     table.add_column("提交")
     table.add_column("时间")
     table.add_column("摘要", overflow="fold")
@@ -1038,7 +280,7 @@ def commit(
     try:
         result = service.commit(push=push)
     except GitError as exc:
-        _fail(str(exc))
+        fail(str(exc))
         return
     if not result["committed"]:
         console.print(f"[dim]{result['summary']}[/dim]")
