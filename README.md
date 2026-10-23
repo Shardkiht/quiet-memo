@@ -79,7 +79,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、上下文和待确认状态 |
-| `/models` | 在 TUI 内切换模型（显示上下文上限与 reasoning 支持） |
+| `/models` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读模型名、上下文上限与 reasoning 支持） |
 | `/setup` | 完整配置模型 / API Key（含供应商、思考强度、上下文长度） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |

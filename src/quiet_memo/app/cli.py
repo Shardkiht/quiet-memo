@@ -281,7 +281,14 @@ def _print_hits(query: str, hits) -> None:
 
 
 def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
-    from ..infra.providers import PRESETS, resolve_config_path, write_config
+    from ..infra.providers import (
+        PRESETS,
+        display_model,
+        has_api_key,
+        provider_label,
+        resolve_config_path,
+        write_config,
+    )
     from ..llm import model_metadata, supported_params
 
     current = service.config.llm
@@ -289,6 +296,9 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
     seen: set[tuple[str, str]] = set()
     for preset in PRESETS:
         if preset.key == "custom":
+            continue
+        # 只展示当前供应商和已配置 API Key 的其他供应商
+        if preset.key != current.provider and not has_api_key(preset):
             continue
         for model in preset.models:
             entries.append((preset.key, model, preset))
@@ -316,7 +326,7 @@ def _switch_model(runtime: AgentRuntime, service: MemoryService) -> None:
                 pass
         if "reasoning_effort" in supported_params(key):
             caps.append("reasoning")
-        label = f"[{provider}] {model}"
+        label = f"{provider_label(provider)} · {display_model(model)}"
         if caps:
             label += f"  ({', '.join(caps)})"
         if (provider, model) == (current.provider, current.model):

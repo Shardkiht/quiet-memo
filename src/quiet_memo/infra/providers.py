@@ -75,6 +75,53 @@ PRESETS: tuple[ProviderPreset, ...] = (
 )
 
 
+MODEL_LABELS = {
+    "deepseek-chat": "DeepSeek V3",
+    "deepseek-reasoner": "DeepSeek R1",
+    "deepseek-ai/DeepSeek-V3": "DeepSeek V3",
+    "Qwen/Qwen2.5-72B-Instruct": "Qwen 2.5 72B",
+    "Qwen/Qwen3-32B": "Qwen3 32B",
+    "qwen-plus": "Qwen Plus",
+    "qwen-max": "Qwen Max",
+    "qwen-turbo": "Qwen Turbo",
+    "gpt-4o-mini": "GPT-4o mini",
+    "gpt-4o": "GPT-4o",
+    "o3-mini": "o3 mini",
+    "openai/gpt-4o-mini": "GPT-4o mini",
+    "anthropic/claude-sonnet-4.5": "Claude Sonnet 4.5",
+    "google/gemini-2.5-flash": "Gemini 2.5 Flash",
+}
+
+PROVIDER_LABELS = {
+    "deepseek": "DeepSeek",
+    "siliconflow": "SiliconFlow",
+    "dashscope": "百炼",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "custom": "自定义",
+}
+
+
+def display_model(model: str) -> str:
+    return MODEL_LABELS.get(model, model)
+
+
+def provider_label(provider: str) -> str:
+    return PROVIDER_LABELS.get(provider, provider)
+
+
+def has_api_key(preset: ProviderPreset) -> bool:
+    if preset.key == "custom":
+        return False
+    llm = LLMConfig(
+        provider=preset.key,
+        base_url=preset.base_url,
+        model=preset.model,
+        api_key_env=preset.api_key_env,
+    )
+    return bool(llm.api_key())
+
+
 EFFORT_CHOICES = (
     ("默认", "default"),
     ("低", "low"),
@@ -94,7 +141,17 @@ def _choose_model(preset: ProviderPreset, current: str) -> str:
         return value.strip()
     options.append("自定义模型")
     default = current if current in options else preset.model
-    selected = questionary.select("选择模型", choices=options, default=default).ask()
+    selected = questionary.select(
+        "选择模型",
+        choices=[
+            questionary.Choice(
+                (display_model(model) + ("  ← 当前" if model == current else "")),
+                value=model,
+            )
+            for model in options
+        ],
+        default=default,
+    ).ask()
     if selected is None:
         raise KeyboardInterrupt
     if selected == "自定义模型":
