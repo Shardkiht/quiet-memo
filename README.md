@@ -15,12 +15,12 @@
 ```bash
 uv sync
 
-# 进入主菜单（新建会话、配置模型、检索记忆）
+# 直接进入对话（发送第一条消息时才创建会话）
 uv run qm
 uv run quietmemo        # 同上，等价别名
 ```
 
-主菜单里可以选择“配置模型 / API Key”，不需要先记命令。也可以直接运行 `uv run qm setup` 做同样的配置。
+首次使用先运行 `uv run qm setup` 配置模型和 API Key，也可以在对话里输入 `/setup`。
 
 `qm setup` 会写入配置文件（默认 `quiet-memo.toml`），初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
 
@@ -61,7 +61,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 ## 对话 Agent
 
-直接运行 `qm` 或 `quietmemo` 进入主菜单；选择“开始对话”后进入多轮 Agent。也可以 `qm chat` 直接进入。输入 `/` 会弹出命令菜单和说明。
+直接运行 `qm` 或 `quietmemo` 进入对话界面；会话在发送第一条消息时创建。`qm chat` 等价。输入 `/` 会弹出命令菜单和说明。
 
 - 每轮自动检索相关长期记忆，注入上下文。
 - 模型可调用 `recall / memorize / correct / forget / review_pending`。

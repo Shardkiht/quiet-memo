@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
@@ -15,7 +16,6 @@ from ..infra.config import (
 from ..infra.gitops import GitError
 from ..memory.extractor import ExtractorError
 from ..memory.service import MemoryService, get_service
-from .menu import main_menu
 from .session_ui import print_sessions
 from .tui import run_chat
 from .ui import console, fail, print_hits, styled_table
@@ -33,13 +33,20 @@ VAULT_OPTION = typer.Option(None, "--vault", help="覆盖配置中的记忆库�
 
 @app.callback()
 def _root(ctx: typer.Context) -> None:
-    """无子命令时进入主操作界面。"""
+    """无子命令时直接进入对话；非交互环境回退到帮助。"""
     if ctx.invoked_subcommand is not None:
         return
+    if not sys.stdin.isatty():
+        console.print(ctx.get_help())
+        return
+    service = _service(None, None)
+    if not service.config.llm.api_key():
+        console.print("[#b8b8b8]未配置 API Key，先运行 qm setup。[/]")
+        return
     try:
-        main_menu()
+        run_chat(service)
     except Exception as exc:
-        console.print(f"[#b8b8b8]无法启动交互菜单：{exc}[/]")
+        console.print(f"[#b8b8b8]无法启动对话界面：{exc}[/]")
         console.print(ctx.get_help())
 
 
