@@ -74,6 +74,23 @@ def test_input_echo_rows():
     assert input_echo_rows(4, "", 80) == 1
 
 
+def test_padded_leaves_right_slack():
+    # 对话列不铺满终端：整行恰好占满时，窗口拉伸/收窄会让行尾回绕。
+    from rich.console import Console
+    from rich.text import Text
+
+    from quiet_memo.app.ui import padded
+
+    console = Console(width=100)
+    with console.capture() as capture:
+        console.print(padded(Text("─" * 90), 100))
+        console.print(padded("长" * 120, 100))
+    lines = capture.get().splitlines()
+    assert lines
+    assert all(len(line) <= 98 for line in lines)
+    assert max(len(line) for line in lines) >= 90  # 内容仍占宽幅主列
+
+
 def test_escape_cancels_questionary_prompt():
     import questionary
     from prompt_toolkit.input import create_pipe_input
