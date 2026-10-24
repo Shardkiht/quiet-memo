@@ -383,3 +383,22 @@ def test_switch_context_caps_custom_value_to_model_limit(
 
     assert service.config.chat.context_window == 64000
     assert "context_window = 64000" in config_path.read_text(encoding="utf-8")
+
+
+def test_ask_streams_events_to_callback(tmp_path):
+    model = FakeChatModel(
+        [
+            AssistantTurn(
+                tool_calls=[ToolCall(id="c1", name="recall", arguments={"query": "清淡"})]
+            ),
+            AssistantTurn(content="你喜欢清淡风味。"),
+        ]
+    )
+    runtime, service = build_runtime(tmp_path, model)
+    service.note("喜欢清淡风味", topic="preferences")
+
+    received = []
+    reply = runtime.ask("我喜欢什么风味？", on_event=received.append)
+
+    assert any("检索" in event for event in received)
+    assert received == reply.events

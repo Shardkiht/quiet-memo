@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from ..infra.config import ChatConfig
@@ -129,7 +130,7 @@ class AgentRuntime:
             raise RuntimeError("会话尚未开始")
         return self.session
 
-    def ask(self, text: str) -> AgentReply:
+    def ask(self, text: str, on_event: Callable[[str], None] | None = None) -> AgentReply:
         text = text.strip()
         if not text:
             raise ValueError("消息为空。")
@@ -149,13 +150,22 @@ class AgentRuntime:
             memory_context=memory_context,
         )
         self.last_plan = plan
-        events = list(plan.events)
+        events: list[str] = []
+
+        def emit(event: str) -> None:
+            # 事件实时通知界面，同时保留在 reply.events 里供测试与调用方复用。
+            events.append(event)
+            if on_event is not None:
+                on_event(event)
+
+        for event in plan.events:
+            emit(event)
         if plan.flushed:
             flushed = plan.flushed
             if flushed.get("error"):
-                events.append(f"记忆沉淀失败：{flushed['error']}")
+                emit(f"记忆沉淀失败：{flushed['error']}")
             elif flushed.get("admitted") or flushed.get("queued"):
-                events.append(
+                emit(
                     f"压缩前沉淀记忆：写入 {flushed.get('admitted', 0)} 条，"
                     f"待确认 {flushed.get('queued', 0)} 条"
                 )
@@ -195,7 +205,7 @@ class AgentRuntime:
                 messages.append(
                     {"role": "tool", "tool_call_id": call.id, "content": content}
                 )
-                events.append(outcome.display)
+                emit(outcome.display)
             compact_tool_outputs(messages)
 
         if not completed:
@@ -210,7 +220,7 @@ class AgentRuntime:
             steps += 1
             record = self._append_assistant(session, turn)
             final = turn.content or "（未能生成回答）"
-            events.append("达到工具调用上限，已强制收敛")
+            emit("达到工具调用上限，已强制收敛")
 
         return AgentReply(
             content=final,
