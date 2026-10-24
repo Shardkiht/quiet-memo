@@ -156,22 +156,17 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
     else:
         session_label = f"[{MUTED}]新会话[/]"
         session_title = "发送第一条消息后创建"
+    # 入口标头：扁平左对齐，与对话列同宽，替代旧的圆角面板盒；分隔线隔开会话区。
     console.print(
         padded(
-            Panel(
-                f"[{MUTED}]安静的个人记忆库[/]\n"
-                f"[bold]{session_title}[/]  [{MUTED}]{session_label}[/]\n"
-                f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
-                f"[{MUTED}]上下文[/] {format_tokens(service.config.chat.context_window)}\n"
-                f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
-                title=f"[bold {ACCENT}]quiet-memo[/]",
-                title_align="left",
-                border_style=ACCENT_DIM,
-                box=box.ROUNDED,
-                padding=(0, 2),
-            )
+            f"[bold {ACCENT}]quiet-memo[/]  [{MUTED}]安静的个人记忆库[/]\n"
+            f"[bold]{session_title}[/]  {session_label}\n"
+            f"[{ACCENT}]◆[/] {runtime.model_label} · {service.retrieval_mode}"
+            f"  [{MUTED}]·[/]  [{MUTED}]上下文[/] {format_tokens(service.config.chat.context_window)}\n"
+            f"[{MUTED}]/help 命令 · /models 模型 · /sessions 会话 · /exit 退出[/]"
         )
     )
+    turn_divider()
 
     try:
         while True:
