@@ -202,7 +202,9 @@ class ChatApp(App):
     #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
     #sessions { height: 1fr; }
-    #sessions > ListItem { padding: 0 1; }
+    /* ListItem 默认高度跟随子容器（Vertical 是 1fr 会撑满列表），必须钉死 auto */
+    #sessions > ListItem { padding: 0 1; height: auto; }
+    #sessions > ListItem > Vertical { height: auto; }
     .session-title { color: #c8ccd6; width: 1fr; overflow-x: hidden; text-overflow: ellipsis; }
     .session-meta { color: $faint; }
     /* 覆写主题默认的整行亮色高亮：用克制的主题色，避免空白区域像误选 */
