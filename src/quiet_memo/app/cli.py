@@ -18,7 +18,7 @@ from ..memory.extractor import ExtractorError, split_chunks
 from ..memory.service import MemoryService, get_service
 from .session_ui import print_sessions
 from .tui import run_chat
-from .ui import centered, console, fail, print_hits, styled_table
+from .ui import padded, console, fail, print_hits, styled_table
 
 app = typer.Typer(
     help="quiet-memo — 安静的个人记忆库：默认无感写入本地 Markdown，Git 可回滚，MCP 可调用。",
@@ -41,12 +41,12 @@ def _root(ctx: typer.Context) -> None:
         return
     service = _service(None, None)
     if not service.config.llm.api_key():
-        console.print(centered("[#b8b8b8]未配置 API Key，先运行 qm setup。[/]"))
+        console.print(padded("[#b8b8b8]未配置 API Key，先运行 qm setup。[/]"))
         return
     try:
         run_chat(service)
     except Exception as exc:
-        console.print(centered(f"[#b8b8b8]无法启动对话界面：{exc}[/]"))
+        console.print(padded(f"[#b8b8b8]无法启动对话界面：{exc}[/]"))
         console.print(ctx.get_help())
 
 

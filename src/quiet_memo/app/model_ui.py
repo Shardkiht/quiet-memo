@@ -9,7 +9,7 @@ from ..infra.prompts import ask
 from ..infra.tokens import format_tokens
 from ..llm import fetch_provider_models, model_metadata, supported_params
 from ..memory.service import MemoryService
-from .ui import MENU_STYLE, centered, console
+from .ui import MENU_STYLE, padded, console
 
 
 def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = False) -> None:
@@ -90,7 +90,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     if selected is None:
         return
     if selected[0] == "__refresh__":
-        console.print(centered("[dim]正在刷新模型列表…[/dim]"))
+        console.print(padded("[dim]正在刷新模型列表…[/dim]"))
         switch_model(runtime, service, refresh=True)
         return
 
@@ -111,7 +111,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
         )
         if new_llm.provider != current.provider and not new_llm.api_key():
             console.print(
-                centered(f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]")
+                padded(f"[#b8b8b8]{provider} 还没有 API Key，请先用 /setup 配置该供应商。[/]")
             )
             return
 
@@ -135,7 +135,7 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
     write_config(resolve_config_path(None), service.config)
     runtime.reload_llm()
     console.print(
-        centered(
+        padded(
             f"[bold]模型已切换：{runtime.model_label}[/] "
             f"[dim]上下文 {format_tokens(context_window)} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
         )
@@ -149,7 +149,7 @@ def switch_reasoning(runtime: AgentRuntime, service: MemoryService) -> None:
     llm = service.config.llm
     if "reasoning_effort" not in supported_params(llm.litellm_model()):
         console.print(
-            centered(
+            padded(
                 f"[#b8b8b8]{runtime.model_label} 不支持思考强度参数，可用 /models 换支持 reasoning 的模型。[/]"
             )
         )
@@ -174,7 +174,7 @@ def switch_reasoning(runtime: AgentRuntime, service: MemoryService) -> None:
         return
     llm.reasoning_effort = selected or None
     write_config(resolve_config_path(None), service.config)
-    console.print(centered(f"[bold]思考强度已切换：{selected or '默认'}[/]"))
+    console.print(padded(f"[bold]思考强度已切换：{selected or '默认'}[/]"))
 
 
 def _model_max_input(llm) -> int | None:
@@ -227,19 +227,19 @@ def switch_context(runtime: AgentRuntime, service: MemoryService) -> None:
         try:
             selected = int(value.strip())
         except ValueError:
-            console.print(centered("[#b8b8b8]无效的数字。[/]"))
+            console.print(padded("[#b8b8b8]无效的数字。[/]"))
             return
         if selected < 2000:
-            console.print(centered("[#b8b8b8]上下文至少需要 2000 token。[/]"))
+            console.print(padded("[#b8b8b8]上下文至少需要 2000 token。[/]"))
             return
     if max_input and selected > max_input:
-        console.print(centered(f"[#b8b8b8]超过模型上限，已压到 {format_tokens(max_input)}。[/]"))
+        console.print(padded(f"[#b8b8b8]超过模型上限，已压到 {format_tokens(max_input)}。[/]"))
         selected = max_input
     if selected == current:
-        console.print(centered("[dim]上下文长度未变化。[/dim]"))
+        console.print(padded("[dim]上下文长度未变化。[/dim]"))
         return
     chat.context_window = selected
     write_config(resolve_config_path(None), service.config)
     console.print(
-        centered(f"[bold]上下文已切换：{format_tokens(selected)}[/] [dim]下一轮生效[/dim]")
+        padded(f"[bold]上下文已切换：{format_tokens(selected)}[/] [dim]下一轮生效[/dim]")
     )

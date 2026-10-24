@@ -44,14 +44,34 @@ def test_format_tokens_uses_km_units():
     assert format_tokens(1500000) == "1.5M"
 
 
-def test_layout_widths_center_content():
+def test_layout_widths_wide_left():
     from quiet_memo.infra.layout import widths
 
     for cols in (80, 120, 200):
         left, width, right = widths(cols)
         assert left + width + right == cols
-        assert width == max(40, min(cols - 4, round(cols * 0.36)))
-        assert abs(left - right) <= 1
+        # 宽幅左对齐：固定小左边距，内容约占 90%，超宽封顶 120。
+        assert left == 2
+        assert width == max(40, min(cols - 4, round(cols * 0.9), 120))
+
+
+def test_bubble_lines_uniform_block():
+    from quiet_memo.app.ui import bubble_lines
+
+    lines = bubble_lines("今天下午三点去图书馆自习，顺便把 Java 并发的笔记看完", 24)
+    assert lines
+    # 气泡各行补齐成等宽块，且都落在限定宽度内。
+    assert len({line.cell_len for line in lines}) == 1
+    assert lines[0].cell_len <= 24
+    assert all(line.plain.strip() for line in lines)
+
+
+def test_input_echo_rows():
+    from quiet_memo.app.ui import input_echo_rows
+
+    assert input_echo_rows(4, "abc", 80) == 1
+    assert input_echo_rows(4, "a" * 100, 80) == 2  # ceil(104/80)
+    assert input_echo_rows(4, "", 80) == 1
 
 
 def test_escape_cancels_questionary_prompt():

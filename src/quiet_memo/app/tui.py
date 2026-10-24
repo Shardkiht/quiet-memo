@@ -20,12 +20,17 @@ from .ui import (
     PROMPT_STYLE,
     SLASH_COMMANDS,
     WARNING,
-    centered,
     console,
+    erase_input_rows,
     fail,
     indent,
+    input_echo_rows,
+    padded,
+    print_event,
     print_hits,
+    print_user_turn,
     styled_table,
+    turn_divider,
 )
 
 
@@ -56,7 +61,7 @@ def print_transcript(session, limit: int = 40) -> None:
     summary = session.summary_text()
     if summary:
         console.print(
-            centered(
+            padded(
                 Panel(
                     Markdown(summary),
                     title="此前摘要",
@@ -75,19 +80,23 @@ def print_transcript(session, limit: int = 40) -> None:
     if not records:
         return
     if len(records) > limit:
-        console.print(centered(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]"))
+        console.print(padded(f"[{MUTED}]更早的 {len(records) - limit} 条记录已省略[/]"))
         records = records[-limit:]
     for record in records:
         content = str(record.get("content"))
+        at = str(record.get("at") or "")
+        stamp = at[11:16] if len(at) >= 16 else None
         if record.get("type") == "message" and record.get("role") == "user":
-            console.print(centered(f"[bold]❯[/] {content}"))
+            print_user_turn(content, stamp)
         else:
-            console.print(centered(Markdown(content)))
+            if stamp:
+                console.print(padded(f"[bold {ACCENT}]quiet-memo[/] [dim]· {stamp}[/]"))
+            console.print(padded(Markdown(content)))
             console.print()
 
 
 def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionStore) -> None:
-    from prompt_toolkit import PromptSession
+    from prompt_toolkit import HTML, PromptSession
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.shortcuts import CompleteStyle
 
@@ -96,21 +105,33 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
     history_path = service.config.vault / ".quiet-memo" / "chat_history"
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def status_bar() -> str:
-        # 底部状态栏：模型 + 本轮实际占用的上下文，随每轮刷新；超压缩线加警示。
+    # 待确认数量只在回合边界刷新，避免状态栏每次重绘都读 pending.jsonl。
+    live = {"pending": 0}
+
+    def refresh_pending() -> None:
+        live["pending"] = len(service.pending())
+
+    def status_bar():
+        # 底部状态栏三段：模型+检索模式 ｜ 上下文进度条 ｜ 待确认；超压缩线加琥珀警示。
         total = service.config.chat.context_window
         plan = runtime.last_plan
         used = plan.estimated_tokens if plan is not None else 0
         percent = used / max(total, 1)
-        if percent >= runtime.config.compact_threshold:
-            return (
-                f"{indent()} ⚠ {runtime.model_label} · "
-                f"上下文 {format_tokens(used)}/{format_tokens(total)} · {percent:.0%}（超压缩线，下轮将压缩）"
-            )
-        return (
-            f"{indent()} {runtime.model_label} · "
-            f"上下文 {format_tokens(used)}/{format_tokens(total)} · {percent:.0%}"
+        blocks = min(10, max(0, round(percent * 10)))
+        bar_on = "▊" * blocks
+        bar_off = "▏" * (10 - blocks)
+        html = (
+            f"{indent()}<sb_model>◆ {runtime.model_label}</sb_model>"
+            f"<sb_dim> · </sb_dim><sb_mode>{service.retrieval_mode}</sb_mode>"
+            f"   <sb_label>上下文 </sb_label>"
+            f"<sb_on>{bar_on}</sb_on><sb_off>{bar_off}</sb_off>"
+            f"<sb_label> {percent:.0%}</sb_label>"
         )
+        if live["pending"]:
+            html += f"   <sb_inbox>待确认 {live['pending']}</sb_inbox>"
+        if percent >= runtime.config.compact_threshold:
+            html += " <sb_warn>⚠ 下轮压缩</sb_warn>"
+        return HTML(html)
 
     try:
         prompt = PromptSession(
@@ -128,6 +149,7 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             "请在 Windows Terminal / PowerShell 中运行，Git Bash 可尝试 winpty。"
         )
         return
+    refresh_pending()
     if runtime.has_session:
         session_label = f"[{MUTED}]{runtime.current.id[:2]}…[/]"
         session_title = runtime.current.title()
@@ -135,7 +157,7 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
         session_label = f"[{MUTED}]新会话[/]"
         session_title = "发送第一条消息后创建"
     console.print(
-        centered(
+        padded(
             Panel(
                 f"[{MUTED}]安静的个人记忆库[/]\n"
                 f"[bold]{session_title}[/]  [{MUTED}]{session_label}[/]\n"
@@ -163,26 +185,28 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 continue
             if line.startswith("/"):
                 if handle_command(runtime, service, sessions, line):
+                    refresh_pending()
                     continue
                 break
             started = time.monotonic()
+            stamp = time.strftime("%H:%M")
+            # 清掉 prompt 的输入回显，改由右对齐气泡渲染同一条消息。
+            erase_input_rows(input_echo_rows(len(indent()) + 2, line))
+            print_user_turn(line, stamp)
             try:
                 with console.status(f"{indent()}思考中…", spinner="dots"):
                     # 工具与检索事件实时打印，不再等整轮回复结束。
-                    reply = runtime.ask(
-                        line,
-                        on_event=lambda event: console.print(
-                            centered(f"[{MUTED}]  ↳ {event}[/]")
-                        ),
-                    )
+                    reply = runtime.ask(line, on_event=print_event)
             except KeyboardInterrupt:
-                console.print(centered(f"[{WARNING}]已中断当前请求。[/]"))
+                console.print(padded(f"[{WARNING}]已中断当前请求。[/]"))
                 continue
             except ChatModelError as exc:
-                console.print(centered(f"[red]{exc}[/red]"))
+                console.print(padded(f"[red]{exc}[/red]"))
                 continue
+            refresh_pending()
             elapsed = time.monotonic() - started
-            console.print(centered(Markdown(reply.content or "(空回复)")))
+            console.print(padded(f"[bold {ACCENT}]quiet-memo[/] [dim]· {stamp}[/]"))
+            console.print(padded(Markdown(reply.content or "(空回复)")))
             meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
             percent = reply.estimated_tokens / max(service.config.chat.context_window, 1)
             if percent >= 0.5:
@@ -190,28 +214,28 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             if reply.usage.cost_usd:
                 meta.append(f"${reply.usage.cost_usd:.4f}")
             meta.append(f"{elapsed:.1f}s")
-            console.print(centered(f"[{MUTED}]  {' · '.join(meta)}[/]"))
+            console.print(padded(f"[{MUTED}]{' · '.join(meta)}[/]"))
             # 回合分隔线：把每轮问答划成独立区块。
-            console.print(centered(f"[{ACCENT_DIM}]{'─' * 28}[/]"))
+            turn_divider()
     finally:
         if runtime.has_session and runtime.config.extract_on_exit:
-            console.print(centered(f"[{MUTED}]正在沉淀本轮记忆…[/]"))
+            console.print(padded(f"[{MUTED}]正在沉淀本轮记忆…[/]"))
         stats = runtime.close()
         if runtime.has_session:
-            console.print(centered(f"[dim]会话已保存：{runtime.current.id}[/dim]"))
+            console.print(padded(f"[dim]会话已保存：{runtime.current.id}[/dim]"))
         else:
-            console.print(centered("[dim]未发送消息，没有创建会话。[/dim]"))
+            console.print(padded("[dim]未发送消息，没有创建会话。[/dim]"))
         if stats.get("admitted") or stats.get("queued"):
             console.print(
-                centered(
+                padded(
                     f"[dim]退出时沉淀：写入 {stats['admitted']} 条，待确认 {stats['queued']} 条[/dim]"
                 )
             )
         if stats.get("error"):
-            console.print(centered(f"[dim]退出抽取失败：{stats['error']}[/dim]"))
+            console.print(padded(f"[dim]退出抽取失败：{stats['error']}[/dim]"))
         elif any(stats.get(key) for key in ("admitted", "queued", "blocked")):
             console.print(
-                centered(
+                padded(
                     f"[dim]退出时沉淀记忆：写入 {stats['admitted']} 条，"
                     f"待确认 {stats['queued']} 条，拦截 {stats['blocked']} 条[/dim]"
                 )
@@ -233,7 +257,7 @@ def handle_command(
         return False
     if command == "/help":
         console.print(
-            centered(
+            padded(
                 Panel(
                     "\n".join(
                         f"{usage:<22} {description}" for _, usage, description in SLASH_COMMANDS
@@ -264,17 +288,17 @@ def handle_command(
         try:
             run_setup()
         except KeyboardInterrupt:
-            console.print("[#b8b8b8]已取消配置。[/]")
+            console.print(padded("[#b8b8b8]已取消配置。[/]"))
             return True
         runtime.reload_llm()
-        console.print(f"[bold]模型已切换：{runtime.model_label}[/]")
+        console.print(padded(f"[bold]模型已切换：{runtime.model_label}[/]"))
         return True
     if command == "/new":
         stats = runtime.close()
         runtime.start()
-        console.print("[bold]新会话[/] [dim]发送第一条消息后创建[/]")
+        console.print(padded("[bold]新会话[/] [dim]发送第一条消息后创建[/]"))
         if stats.get("admitted"):
-            console.print(centered(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]"))
+            console.print(padded(f"[dim]上一会话退出时写入 {stats['admitted']} 条记忆[/dim]"))
         return True
     if command == "/sessions":
         current_id = runtime.current.id if runtime.has_session else None
@@ -285,9 +309,9 @@ def handle_command(
         try:
             runtime.resume(target)
         except KeyError as exc:
-            console.print(f"[red]{exc}[/red]")
+            console.print(padded(f"[red]{exc}[/red]"))
             return True
-        console.print(centered(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
+        console.print(padded(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
         print_transcript(runtime.current)
         return True
     if command == "/resume":
@@ -304,40 +328,40 @@ def handle_command(
         if target is None:
             return True
         if target == current_id:
-            console.print("[dim]已经是当前会话。[/dim]")
+            console.print(padded("[dim]已经是当前会话。[/dim]"))
             return True
         runtime.close()
         try:
             runtime.resume(target)
         except KeyError as exc:
-            console.print(f"[red]{exc}[/red]")
+            console.print(padded(f"[red]{exc}[/red]"))
             return True
-        console.print(centered(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
+        console.print(padded(f"[bold]已恢复 {runtime.current.id} · {runtime.current.title()}[/]"))
         print_transcript(runtime.current)
         return True
     if command == "/compact":
         for event in runtime.force_compact():
-            console.print(centered(f"[dim]· {event}[/dim]"))
+            console.print(padded(f"[dim]· {event}[/dim]"))
         return True
     if command == "/summary":
         if not runtime.has_session:
-            console.print(centered("[dim]新会话还没有摘要。[/dim]"))
+            console.print(padded("[dim]新会话还没有摘要。[/dim]"))
             return True
         summary = runtime.summary_text()
         console.print(
-            centered(Markdown(summary))
+            padded(Markdown(summary))
             if summary
-            else centered("[dim]当前会话还没有摘要。[/dim]")
+            else padded("[dim]当前会话还没有摘要。[/dim]")
         )
         return True
     if command == "/status":
         if not runtime.has_session:
-            console.print(centered("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]"))
+            console.print(padded("[dim]新会话尚未创建，发送第一条消息后生成。[/dim]"))
             return True
         info = runtime.status()
         percent = info["estimated_tokens"] / max(info["context_window"], 1)
         console.print(
-            centered(
+            padded(
                 Panel(
                     f"会话：{info['session_id']} · {info['title']}\n"
                     f"模型：{info['model']}\n"
@@ -355,28 +379,28 @@ def handle_command(
         return True
     if command == "/rename":
         if not argument:
-            console.print("[#b8b8b8]用法：/rename <title>[/]")
+            console.print(padded("[#b8b8b8]用法：/rename <title>[/]"))
             return True
         if not runtime.has_session:
-            console.print("[dim]新会话尚未创建，发送第一条消息后再重命名。[/dim]")
+            console.print(padded("[dim]新会话尚未创建，发送第一条消息后再重命名。[/dim]"))
             return True
         runtime.rename(argument)
-        console.print(centered(f"[bold]已重命名为：{argument}[/]"))
+        console.print(padded(f"[bold]已重命名为：{argument}[/]"))
         return True
     if command == "/recall":
         if not argument:
-            console.print(centered("[#b8b8b8]用法：/recall <query>[/]"))
+            console.print(padded("[#b8b8b8]用法：/recall <query>[/]"))
             return True
         print_hits(argument, service.recall(argument, 10), center=True)
         return True
     if command == "/remember":
         if not argument:
-            console.print(centered("[#b8b8b8]用法：/remember <text>[/]"))
+            console.print(padded("[#b8b8b8]用法：/remember <text>[/]"))
             return True
         source = f"session:{runtime.current.id}:manual" if runtime.has_session else "manual"
         result = service.memorize(argument, source=source)
         console.print(
-            centered(
+            padded(
                 f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
                 f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"
             )
@@ -385,7 +409,7 @@ def handle_command(
     if command == "/pending":
         items = service.pending()
         if not items:
-            console.print(centered("[dim]没有待确认项。[/dim]"))
+            console.print(padded("[dim]没有待确认项。[/dim]"))
             return True
         table = styled_table("待确认")
         table.add_column("ID")
@@ -394,7 +418,7 @@ def handle_command(
         table.add_column("内容", overflow="fold")
         for item in items:
             table.add_row(item.id, item.topic, item.reason, item.text)
-        console.print(centered(table))
+        console.print(padded(table))
         return True
-    console.print(centered(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]"))
+    console.print(padded(f"[#b8b8b8]未知命令：{command}，输入 /help 查看帮助。[/]"))
     return True
