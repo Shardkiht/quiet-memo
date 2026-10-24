@@ -227,8 +227,24 @@ uv run pytest
 
 Tests cover storage, queue, conflict detection, retrieval, extraction parsing, sessions, context compaction, the agent tool loop, MCP, and the CLI. LLM paths are tested with a static extractor and fake models; no claim of live verification is made without a real API key.
 
+## Retrieval evaluation
+
+`evals/` ships a reproducible synthetic-corpus benchmark (456 entries / 27 cases, no personal data):
+
+```bash
+uv run python evals/retrieval_eval.py
+```
+
+| Retrieval | Recall@3 | Recall@5 | MRR@10 |
+| --- | --- | --- | --- |
+| keyword | 67% | 67% | 0.667 |
+| vector | **89%** | **89%** | 0.815 |
+| hybrid | 85% | 85% | 0.815 |
+
+On a real 797-entry personal vault (anonymized, aggregate metrics only), after fixing a vector-matrix misalignment caused by duplicate entry IDs from bulk import, hybrid's MRR@10 rose from 0.569 to 0.745 — the best of the three. Methodology, fix details, and known weaknesses are in [evals/README.md](evals/README.md).
+
 ## Roadmap
 
-- 20+ extraction/conflict/retrieval evaluation cases and metrics
+- 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon

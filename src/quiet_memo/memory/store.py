@@ -112,7 +112,7 @@ class MemoryStore:
     @staticmethod
     def new_entry_id(stamp: datetime | None = None) -> str:
         stamp = stamp or datetime.now()
-        return f"mem-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+        return f"mem-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(4)}"
 
     def append(
         self,
@@ -134,7 +134,10 @@ class MemoryStore:
         if not text:
             raise ValueError("条目内容为空。")
         stamp = when or datetime.now()
+        # ID 必须全局唯一：批量导入可能挤在同一秒，只靠随机数会生日碰撞。
         entry_id = entry_id or self.new_entry_id(stamp)
+        while any(entry.id == entry_id for entry in self.entries(include_inactive=True)):
+            entry_id = self.new_entry_id(stamp)
         path = self.topic_path(topic)
         meta, body = self._read(path, slugify(topic))
         if title and not path.exists():

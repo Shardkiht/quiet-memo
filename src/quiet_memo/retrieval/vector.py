@@ -64,6 +64,11 @@ class VectorRetriever:
     def sync(self) -> None:
         """与记忆条目对齐：复用未变更向量，只为新增/变更条目计算 embedding。"""
         entries = self.store.entries()
+        # 同 ID 条目只保留首个：历史数据若存在重复 ID，去重避免矩阵行错位。
+        unique: dict[str, Entry] = {}
+        for entry in entries:
+            unique.setdefault(entry.id, entry)
+        entries = list(unique.values())
         ids, hashes, cached = self._load_cache()
         known = {entry_id: index for index, entry_id in enumerate(ids)}
         keep: list[int] = []

@@ -139,3 +139,19 @@ def test_legacy_comment_line_still_parses(tmp_path):
 
     assert store.set_status("mem-old", "deleted")
     assert "status=deleted -->" in path.read_text(encoding="utf-8")
+
+
+def test_append_retries_duplicate_entry_id(tmp_path, monkeypatch):
+    from quiet_memo.memory import store as store_module
+
+    store = MemoryStore(tmp_path)
+    stamp = datetime(2026, 10, 24, 12, 53, 48)
+    tokens = iter(["175a", "175a", "beef"])
+    monkeypatch.setattr(store_module.secrets, "token_hex", lambda _: next(tokens))
+
+    first = store.append("a", "第一条", when=stamp)
+    second = store.append("b", "第二条", when=stamp)
+
+    assert first.id.endswith("175a")
+    assert second.id.endswith("beef")
+    assert len({entry.id for entry in store.entries()}) == 2
