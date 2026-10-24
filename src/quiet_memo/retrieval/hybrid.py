@@ -25,9 +25,14 @@ class HybridRetriever:
         for hits in (keyword_hits, vector_hits):
             for rank, hit in enumerate(hits):
                 scores[hit.id] = scores.get(hit.id, 0.0) + 1.0 / (RRF_K + rank)
+        vector_rank = {hit.id: rank for rank, hit in enumerate(vector_hits)}
+        # RRF 完全平局（如 BM25 只剩虚词噪声时）按向量名次决胜；展示取向量侧命中，分数更有语义。
+        ordered = sorted(
+            scores.items(),
+            key=lambda item: (-item[1], vector_rank.get(item[0], len(vector_rank))),
+        )[:limit]
         by_id: dict[str, SearchHit] = {}
-        for hits in (keyword_hits, vector_hits):
+        for hits in (vector_hits, keyword_hits):
             for hit in hits:
                 by_id.setdefault(hit.id, hit)
-        ordered = sorted(scores.items(), key=lambda item: item[1], reverse=True)[:limit]
         return [by_id[entry_id] for entry_id, _ in ordered]

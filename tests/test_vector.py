@@ -133,6 +133,16 @@ def test_hybrid_ranks_hits_in_both_paths_first():
     assert len(hits) == 3
 
 
+def test_hybrid_breaks_rrf_ties_toward_vector_rank():
+    # BM25 噪声把 a 排第一、c 排第三；向量把 c 排第一、a 排第三 → RRF 完全平局，
+    # 决胜应信任向量名次（c 第一）。
+    keyword = StubRetriever(["a", "b", "c"])
+    vector = StubRetriever(["c", "b", "a"])
+    hits = HybridRetriever(keyword, vector).search("q", limit=3)
+
+    assert [hit.id for hit in hits[:2]] == ["c", "a"]
+
+
 def test_hybrid_falls_back_to_keyword_when_vector_fails(tmp_path):
     store = seeded_store(tmp_path)
     hybrid = HybridRetriever(
