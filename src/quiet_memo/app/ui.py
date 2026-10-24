@@ -6,15 +6,28 @@ from rich import box
 from rich.console import Console
 from rich.padding import Padding
 from rich.table import Table
+from rich.theme import Theme
 
 from ..infra.layout import widths
 
-console = Console()
-
-ACCENT = "#d0d0d0"
+# 主题色：石板蓝（与个人主页 slate-blue 同族）；警告用暖琥珀，区别于灰色与错误红。
+ACCENT = "#8FAECB"
+ACCENT_DIM = "#46586B"
 MUTED = "#808080"
 SUCCESS = "#d0d0d0"
-WARNING = "#b8b8b8"
+WARNING = "#D9A66C"
+
+console = Console(
+    theme=Theme(
+        {
+            "markdown.h1": f"bold {ACCENT}",
+            "markdown.h1.border": ACCENT_DIM,
+            "markdown.h2": "bold #d0d0d0",
+            "markdown.h2.border": ACCENT_DIM,
+            "markdown.code": "#C9D4E0",
+        }
+    )
+)
 
 
 def layout_widths(cols: int | None = None) -> tuple[int, int, int]:

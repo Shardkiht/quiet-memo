@@ -15,6 +15,7 @@ from .model_ui import switch_context, switch_model, switch_reasoning
 from .session_ui import pick_session, session_manager
 from .ui import (
     ACCENT,
+    ACCENT_DIM,
     MUTED,
     PROMPT_STYLE,
     SLASH_COMMANDS,
@@ -136,12 +137,14 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
     console.print(
         centered(
             Panel(
-                f"[bold {ACCENT}]quiet-memo[/]  {session_label}\n"
-                f"[bold]{session_title}[/]\n"
+                f"[{MUTED}]安静的个人记忆库[/]\n"
+                f"[bold]{session_title}[/]  [{MUTED}]{session_label}[/]\n"
                 f"[{MUTED}]模型[/] {runtime.model_label}  [{MUTED}]·[/]  "
                 f"[{MUTED}]上下文[/] {format_tokens(service.config.chat.context_window)}\n"
                 f"[{MUTED}]/help 命令 · /models 模型 · /exit 退出[/]",
-                border_style=ACCENT,
+                title=f"[bold {ACCENT}]quiet-memo[/]",
+                title_align="left",
+                border_style=ACCENT_DIM,
                 box=box.ROUNDED,
                 padding=(0, 2),
             )
@@ -189,7 +192,7 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             meta.append(f"{elapsed:.1f}s")
             console.print(centered(f"[{MUTED}]  {' · '.join(meta)}[/]"))
             # 回合分隔线：把每轮问答划成独立区块。
-            console.print(centered(f"[#3a3a3a]{'─' * 28}[/]"))
+            console.print(centered(f"[{ACCENT_DIM}]{'─' * 28}[/]"))
     finally:
         if runtime.has_session and runtime.config.extract_on_exit:
             console.print(centered(f"[{MUTED}]正在沉淀本轮记忆…[/]"))
