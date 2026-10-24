@@ -96,7 +96,7 @@ def turn_divider(cols: int | None = None) -> None:
 
 def input_echo_rows(prompt_cells: int, line: str, cols: int | None = None) -> int:
     """估算 prompt 输入回显占用的终端行数（含折行），用于擦除后改绘为气泡。"""
-    width = console.width if cols is None else cols
+    width = max(1, console.width if cols is None else cols)
     cells = prompt_cells + cell_len(line)
     return max(1, -(-cells // width))
 

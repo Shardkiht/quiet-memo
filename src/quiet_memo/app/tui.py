@@ -185,8 +185,10 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 break
             started = time.monotonic()
             stamp = time.strftime("%H:%M")
-            # 清掉 prompt 的输入回显，改由右对齐气泡渲染同一条消息。
-            erase_input_rows(input_echo_rows(len(indent()) + 2, line))
+            # 拉伸窗口后 rich 探测的宽度可能与 PT 实际渲染宽度不一致，
+            # 擦除行数以 PT 的渲染宽度为准，避免擦多吞掉上一轮或擦少留残行。
+            echo_cols = prompt.output.get_size().columns
+            erase_input_rows(input_echo_rows(len(indent()) + 2, line, echo_cols))
             print_user_turn(line, stamp)
             try:
                 with console.status(f"{indent()}思考中…", spinner="dots"):
