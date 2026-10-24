@@ -136,3 +136,33 @@ async def test_ctrl_b_toggles_sidebar(tmp_path):
         await pilot.press("ctrl+b")
         await pilot.pause()
         assert sidebar.display
+
+
+async def test_sidebar_items_are_compact_and_clickable(tmp_path):
+    from quiet_memo.agent.session import new_message_id
+    from quiet_memo.app.chat_app import SessionItem
+
+    app = build_app(tmp_path, [])
+    ids = []
+    for title in ("会话甲", "会话乙"):
+        session = app.sessions.create()
+        app.sessions.rename(session, title)
+        app.sessions.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": title},
+        )
+        ids.append(session.id)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        items = list(app.query(SessionItem))
+        assert len(items) >= 2
+        # 回归：ListItem 内的 Vertical 默认 1fr 会把条目撑满列表导致命中错乱
+        assert all(item.region.height <= 3 for item in items)
+
+        second = items[1]
+        await pilot.click(second)
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy and app.runtime.has_session:
+                break
+        assert app.runtime.current.id == second.row["id"]
