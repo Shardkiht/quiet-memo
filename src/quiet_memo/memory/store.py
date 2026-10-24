@@ -129,6 +129,10 @@ class MemoryStore:
         supersedes: str | None = None,
     ) -> Entry:
         self.ensure()
+        # 条目格式是单行 bullet；多行文本压成一行，避免正文行在解析时被静默丢弃。
+        text = re.sub(r"\s*\n\s*", " ", text).strip()
+        if not text:
+            raise ValueError("条目内容为空。")
         stamp = when or datetime.now()
         entry_id = entry_id or self.new_entry_id(stamp)
         path = self.topic_path(topic)

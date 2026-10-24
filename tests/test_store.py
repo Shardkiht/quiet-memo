@@ -53,6 +53,16 @@ def test_has_text_normalizes_whitespace(tmp_path):
     assert not store.has_text("喜欢浓郁风味")
 
 
+def test_append_flattens_multiline_text(tmp_path):
+    store = MemoryStore(tmp_path)
+    store.append("preferences", "标题行\n正文第一行\n正文第二行")
+
+    entries = store.entries()
+    assert len(entries) == 1
+    assert "\n" not in entries[0].text
+    assert "标题行" in entries[0].text and "正文第二行" in entries[0].text
+
+
 def test_recent_context_is_limited(tmp_path):
     store = MemoryStore(tmp_path)
     for index in range(5):
