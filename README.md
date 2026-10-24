@@ -1,5 +1,7 @@
 **中文** | [English](README.en.md)
 
+[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml) [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+
 # quiet-memo
 
 安静的个人记忆库：从日常对话中抽取**你本人**的事实、偏好和计划，默认无感写入本地 Markdown；低置信、冲突或敏感内容才进入待确认队列。

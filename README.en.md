@@ -1,5 +1,7 @@
 **English** | [中文](README.md)
 
+[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml) [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+
 # quiet-memo
 
 A quiet personal memory store: it extracts facts, preferences, and plans about **you** from everyday conversations and silently writes them to local Markdown by default. Only low-confidence, conflicting, or sensitive content goes to a confirmation queue.
