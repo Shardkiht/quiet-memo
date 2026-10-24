@@ -200,12 +200,12 @@ class ChatApp(App):
     #sidebar { width: 30; background: #181a21; border-right: solid #262933; }
     #sidebar-head { height: 3; align: left middle; }
     #brand { color: $accent; text-style: bold; padding: 0 1; width: 1fr; }
-    /* 折叠按钮：侧栏右上角、主题色描边，保持显眼 */
-    #hide-sidebar { width: 3; height: 3; min-width: 3; background: #232630; color: $accent; border: round $accent; }
-    #hide-sidebar:hover { background: #2b3444; }
-    /* 侧栏隐藏后：对话区左上角的展开按钮，与 « 折叠按钮同款样式 */
-    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; background: #232630; color: $accent; border: round $accent; display: none; }
-    #show-sidebar:hover { background: #2b3444; }
+    /* 折叠按钮：朴素方框、不贴分割线（右侧留 1 格），避免凸出感 */
+    #hide-sidebar { width: 3; height: 3; min-width: 3; background: #181a21; color: $accent; border: solid #4a4f5a; margin-right: 1; }
+    #hide-sidebar:hover { border: solid $accent; }
+    /* 侧栏隐藏后：对话区左上角的展开按钮，同款方框 */
+    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; background: #181a21; color: $accent; border: solid #4a4f5a; display: none; }
+    #show-sidebar:hover { border: solid $accent; }
     #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
     #sessions { height: 1fr; }
