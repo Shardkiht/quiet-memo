@@ -309,3 +309,77 @@ def test_switch_model_updates_config_and_runtime(
     assert runtime.model_label == "deepseek/deepseek-v4-pro"
     assert config_path.exists()
     assert "deepseek-v4-pro" in config_path.read_text(encoding="utf-8")
+
+
+def test_switch_reasoning_updates_config_hot(tmp_path, monkeypatch, patch_questionary):
+    from quiet_memo.app import model_ui
+
+    patch_questionary(model_ui)
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    config_path = tmp_path / "quiet-memo.toml"
+    monkeypatch.setattr(model_ui, "supported_params", lambda model: ("reasoning_effort",))
+    monkeypatch.setattr(model_ui, "ask", lambda question: "high")
+    monkeypatch.setattr(
+        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
+    )
+
+    model_ui.switch_reasoning(runtime, service)
+
+    assert service.config.llm.reasoning_effort == "high"
+    assert service.config.llm is runtime.service.config.llm
+    assert 'reasoning_effort = "high"' in config_path.read_text(encoding="utf-8")
+
+
+def test_switch_reasoning_unsupported_model_skips_menu(tmp_path, monkeypatch):
+    from quiet_memo.app import model_ui
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    asked = []
+    monkeypatch.setattr(model_ui, "supported_params", lambda model: ())
+    monkeypatch.setattr(model_ui, "ask", lambda question: asked.append(question))
+
+    model_ui.switch_reasoning(runtime, service)
+
+    assert asked == []
+    assert service.config.llm.reasoning_effort is None
+
+
+def test_switch_context_updates_budget_and_config(tmp_path, monkeypatch, patch_questionary):
+    from quiet_memo.app import model_ui
+
+    patch_questionary(model_ui)
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    assert runtime.context.config is service.config.chat
+    config_path = tmp_path / "quiet-memo.toml"
+    monkeypatch.setattr(model_ui, "model_metadata", lambda model: {"max_input_tokens": 64000})
+    monkeypatch.setattr(model_ui, "ask", lambda question: 16000)
+    monkeypatch.setattr(
+        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
+    )
+
+    model_ui.switch_context(runtime, service)
+
+    assert service.config.chat.context_window == 16000
+    assert runtime.context.config.context_window == 16000
+    assert "context_window = 16000" in config_path.read_text(encoding="utf-8")
+
+
+def test_switch_context_caps_custom_value_to_model_limit(
+    tmp_path, monkeypatch, patch_questionary
+):
+    from quiet_memo.app import model_ui
+
+    patch_questionary(model_ui)
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    config_path = tmp_path / "quiet-memo.toml"
+    monkeypatch.setattr(model_ui, "model_metadata", lambda model: {"max_input_tokens": 64000})
+    answers = iter([0, "999999"])
+    monkeypatch.setattr(model_ui, "ask", lambda question: next(answers))
+    monkeypatch.setattr(
+        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
+    )
+
+    model_ui.switch_context(runtime, service)
+
+    assert service.config.chat.context_window == 64000
+    assert "context_window = 64000" in config_path.read_text(encoding="utf-8")

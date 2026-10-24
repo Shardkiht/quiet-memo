@@ -62,6 +62,8 @@ SLASH_COMMANDS = [
     ("summary", "/summary", "查看当前会话摘要"),
     ("status", "/status", "会话与记忆状态"),
     ("models", "/models [refresh]", "切换模型，refresh 强制刷新列表"),
+    ("think", "/think", "切换思考强度（low/medium/high，按模型支持）"),
+    ("context", "/context", "切换上下文长度（档位按模型上限生成）"),
     ("setup", "/setup", "完整配置模型 / API Key"),
     ("rename", "/rename <title>", "重命名当前会话"),
     ("recall", "/recall <query>", "直接检索记忆"),

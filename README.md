@@ -99,6 +99,8 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
 | `/models` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/models refresh` 强制刷新） |
+| `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
+| `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
 | `/setup` | 完整配置模型 / API Key（含供应商、思考强度、上下文长度） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |

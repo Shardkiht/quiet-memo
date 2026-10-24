@@ -11,7 +11,7 @@ from ..agent.session import SessionStore
 from ..infra.tokens import format_tokens
 from ..llm import ChatModelError, LiteLLMChatModel
 from ..memory.service import MemoryService
-from .model_ui import switch_model
+from .model_ui import switch_context, switch_model, switch_reasoning
 from .session_ui import pick_session, session_manager
 from .ui import (
     ACCENT,
@@ -229,6 +229,12 @@ def handle_command(
             service,
             refresh=argument.lower() in ("refresh", "--refresh", "-r"),
         )
+        return True
+    if command == "/think":
+        switch_reasoning(runtime, service)
+        return True
+    if command == "/context":
+        switch_context(runtime, service)
         return True
     if command == "/setup":
         from ..infra.providers import run_setup

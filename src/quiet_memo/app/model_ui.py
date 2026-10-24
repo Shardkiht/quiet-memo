@@ -140,3 +140,106 @@ def switch_model(runtime: AgentRuntime, service: MemoryService, refresh: bool = 
             f"[dim]上下文 {format_tokens(context_window)} · 思考强度 {new_llm.reasoning_effort or '默认'}[/dim]"
         )
     )
+
+
+def switch_reasoning(runtime: AgentRuntime, service: MemoryService) -> None:
+    """TUI /think：按模型支持情况切换思考强度；complete() 实时读取该值，热生效。"""
+    from ..infra.providers import resolve_config_path, write_config
+
+    llm = service.config.llm
+    if "reasoning_effort" not in supported_params(llm.litellm_model()):
+        console.print(
+            centered(
+                f"[#b8b8b8]{runtime.model_label} 不支持思考强度参数，可用 /models 换支持 reasoning 的模型。[/]"
+            )
+        )
+        return
+    current = llm.reasoning_effort or ""
+    options = [("", "默认"), ("low", "low"), ("medium", "medium"), ("high", "high")]
+    choices = [
+        questionary.Choice(f"{label}  ← 当前" if value == current else label, value=value)
+        for value, label in options
+    ]
+    selected = ask(
+        questionary.select(
+            f"当前思考强度：{current or '默认'}",
+            choices=choices,
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
+    if selected is None:
+        return
+    llm.reasoning_effort = selected or None
+    write_config(resolve_config_path(None), service.config)
+    console.print(centered(f"[bold]思考强度已切换：{selected or '默认'}[/]"))
+
+
+def _model_max_input(llm) -> int | None:
+    max_input = model_metadata(llm.litellm_model()).get("max_input_tokens")
+    try:
+        return int(max_input) if max_input else None
+    except (TypeError, ValueError):
+        return None
+
+
+def switch_context(runtime: AgentRuntime, service: MemoryService) -> None:
+    """TUI /context：按模型上下文上限生成档位；runtime 持同一配置对象，下一轮即生效。"""
+    from ..infra.providers import resolve_config_path, write_config
+
+    llm = service.config.llm
+    chat = service.config.chat
+    current = chat.context_window
+    max_input = _model_max_input(llm)
+    presets = [8_000, 16_000, 32_000, 64_000, 128_000, 200_000]
+    if max_input:
+        presets = [size for size in presets if size <= max_input]
+        if max_input not in presets:
+            presets.append(max_input)
+    choices = [
+        questionary.Choice(
+            f"{format_tokens(size)}" + ("  ← 当前" if size == current else ""), value=size
+        )
+        for size in presets
+    ]
+    if current not in presets:
+        choices.insert(0, questionary.Choice(f"{format_tokens(current)}  ← 当前", value=current))
+    choices.append(questionary.Choice("自定义…", value=0))
+
+    selected = ask(
+        questionary.select(
+            f"上下文上限：{format_tokens(max_input) if max_input else '未知'}",
+            choices=choices,
+            style=MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
+    if selected is None:
+        return
+    if selected == 0:
+        value = ask(questionary.text("上下文长度（token）", default=str(current)))
+        if value is None or not value.strip():
+            return
+        try:
+            selected = int(value.strip())
+        except ValueError:
+            console.print(centered("[#b8b8b8]无效的数字。[/]"))
+            return
+        if selected < 2000:
+            console.print(centered("[#b8b8b8]上下文至少需要 2000 token。[/]"))
+            return
+    if max_input and selected > max_input:
+        console.print(centered(f"[#b8b8b8]超过模型上限，已压到 {format_tokens(max_input)}。[/]"))
+        selected = max_input
+    if selected == current:
+        console.print(centered("[dim]上下文长度未变化。[/dim]"))
+        return
+    chat.context_window = selected
+    write_config(resolve_config_path(None), service.config)
+    console.print(
+        centered(f"[bold]上下文已切换：{format_tokens(selected)}[/] [dim]下一轮生效[/dim]")
+    )

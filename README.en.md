@@ -99,6 +99,8 @@ In-session commands:
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
 | `/models` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/models refresh` forces a refresh) |
+| `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
+| `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
 | `/setup` | Full model / API key setup (provider, reasoning effort, context length) |
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
