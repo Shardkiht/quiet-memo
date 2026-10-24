@@ -79,7 +79,7 @@ If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Int
 
 ## Chat agent
 
-Run `qm` or `quietmemo` to enter the chat UI; a session is created when you send the first message. `qm chat` is equivalent. Type `/` to open the command menu with descriptions. Selection, input, and confirmation screens can all be cancelled with `ESC`. Chat uses a wide two-pane layout: user messages appear as right-aligned bubbles while assistant replies span the left, each labelled with a speaker header and time. The bottom status bar has three zones — model with retrieval mode, a context-usage bar, and the pending count — and warns past the compaction threshold. Tool and retrieval events stream in as cards, turns are separated by a divider, and exiting distills the turn's statements with a summary.
+Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation, Ctrl+B to jump there from the input. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` shows live command hints above the input; the bottom status bar shows the model with retrieval mode, a context-usage bar, and the pending count, warning past the compaction threshold. Tool and retrieval events stream in as cards, turns are separated by a divider, and exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`.
@@ -93,15 +93,15 @@ In-session commands:
 | Command | Action |
 | --- | --- |
 | `/new` | End the current session and start a new one (created after the first message) |
-| `/sessions` | Session manager: Enter to resume, Delete to delete (with confirmation), ESC to go back, search supported |
-| `/resume [id|query]` | Resume a session; with no argument, opens a sorted session picker; with a keyword, filters first |
+| `/sessions` | Jump to the left session list (arrows to browse, Enter to resume, Del to delete) |
+| `/resume [id\|query]` | Resume a session; without arguments jumps to the session list, an id/keyword resumes the match directly |
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
 | `/models` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/models refresh` forces a refresh) |
 | `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
-| `/setup` | Full model / API key setup (provider, reasoning effort, context length) |
+| `/setup` | Reminds you to run `qm setup` in the terminal (the setup wizard is not in the chat UI) |
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |
@@ -196,8 +196,8 @@ Corrections use a "new entry + `supersedes`" pattern, and the old entry's status
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, ui.py, model_ui.py,
-│                 session_ui.py                    # CLI / TUI / FastMCP entry points
+├── app/          cli.py, server.py, tui.py, chat_app.py, actions.py,
+│                 ui.py, session_ui.py            # CLI / Textual TUI / FastMCP entry points
 ├── agent/        runtime.py, context.py, tools.py, session.py
 │                                                   # Agent loop, compaction, tools, sessions
 ├── memory/       service.py, store.py, models.py, queue.py,

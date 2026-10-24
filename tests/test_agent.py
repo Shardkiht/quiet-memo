@@ -280,109 +280,78 @@ def test_reload_llm_updates_model_and_extractor(tmp_path, monkeypatch):
     assert runtime.context.config is service.config.chat
 
 
-def test_switch_model_updates_config_and_runtime(
-    tmp_path, monkeypatch, patch_questionary
-):
-    from quiet_memo.app import model_ui
+def test_apply_model_updates_config_and_runtime(tmp_path, monkeypatch):
+    from quiet_memo.app import actions
 
-    patch_questionary(model_ui)
     runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
     config_path = tmp_path / "quiet-memo.toml"
-
     monkeypatch.setattr(
-        model_ui,
-        "ask",
-        lambda question: ("deepseek", "deepseek-v4-pro"),
+        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
     )
     monkeypatch.setattr(
-        "quiet_memo.infra.providers.resolve_config_path",
-        lambda path=None: config_path,
-    )
-    monkeypatch.setattr(
-        "quiet_memo.infra.config.load_config",
-        lambda *args, **kwargs: service.config,
+        "quiet_memo.infra.config.load_config", lambda *args, **kwargs: service.config
     )
 
-    model_ui.switch_model(runtime, service)
+    message = actions.apply_model(service, runtime, "deepseek", "deepseek-v4-pro")
 
+    assert "deepseek/deepseek-v4-pro" in message
     assert service.config.llm.model == "deepseek-v4-pro"
     assert runtime.model_label == "deepseek/deepseek-v4-pro"
-    assert config_path.exists()
     assert "deepseek-v4-pro" in config_path.read_text(encoding="utf-8")
 
 
-def test_switch_reasoning_updates_config_hot(tmp_path, monkeypatch, patch_questionary):
-    from quiet_memo.app import model_ui
+def test_model_options_lists_current_first(service, monkeypatch):
+    from quiet_memo.app import actions
 
-    patch_questionary(model_ui)
-    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    monkeypatch.setattr(actions, "fetch_provider_models", lambda config, refresh=False: [])
+    options = actions.model_options(service)
+
+    assert options
+    assert options[0].current
+    # 未配置其他供应商的 Key 时只展示当前供应商。
+    assert {option.provider for option in options} == {"deepseek"}
+
+
+def test_apply_reasoning_updates_config_hot(tmp_path, monkeypatch, service):
+    from quiet_memo.app import actions
+
     config_path = tmp_path / "quiet-memo.toml"
-    monkeypatch.setattr(model_ui, "supported_params", lambda model: ("reasoning_effort",))
-    monkeypatch.setattr(model_ui, "ask", lambda question: "high")
+    monkeypatch.setattr(actions, "supported_params", lambda model: ("reasoning_effort",))
     monkeypatch.setattr(
         "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
     )
 
-    model_ui.switch_reasoning(runtime, service)
+    assert actions.reasoning_options(service)
+    message = actions.apply_reasoning(service, "high")
 
+    assert "high" in message
     assert service.config.llm.reasoning_effort == "high"
-    assert service.config.llm is runtime.service.config.llm
     assert 'reasoning_effort = "high"' in config_path.read_text(encoding="utf-8")
 
 
-def test_switch_reasoning_unsupported_model_skips_menu(tmp_path, monkeypatch):
-    from quiet_memo.app import model_ui
+def test_reasoning_options_empty_when_unsupported(service, monkeypatch):
+    from quiet_memo.app import actions
 
-    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
-    asked = []
-    monkeypatch.setattr(model_ui, "supported_params", lambda model: ())
-    monkeypatch.setattr(model_ui, "ask", lambda question: asked.append(question))
-
-    model_ui.switch_reasoning(runtime, service)
-
-    assert asked == []
-    assert service.config.llm.reasoning_effort is None
+    monkeypatch.setattr(actions, "supported_params", lambda model: ())
+    assert actions.reasoning_options(service) == []
 
 
-def test_switch_context_updates_budget_and_config(tmp_path, monkeypatch, patch_questionary):
-    from quiet_memo.app import model_ui
+def test_context_options_and_apply(tmp_path, monkeypatch, service):
+    from quiet_memo.app import actions
 
-    patch_questionary(model_ui)
-    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
-    assert runtime.context.config is service.config.chat
     config_path = tmp_path / "quiet-memo.toml"
-    monkeypatch.setattr(model_ui, "model_metadata", lambda model: {"max_input_tokens": 64000})
-    monkeypatch.setattr(model_ui, "ask", lambda question: 16000)
     monkeypatch.setattr(
         "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
     )
 
-    model_ui.switch_context(runtime, service)
-
+    options = actions.context_options(service)
+    assert 16000 in options
+    assert "16K" in actions.apply_context(service, 16000)
     assert service.config.chat.context_window == 16000
-    assert runtime.context.config.context_window == 16000
-    assert "context_window = 16000" in config_path.read_text(encoding="utf-8")
+    assert (tmp_path / "quiet-memo.toml").exists()
+    assert "至少" in actions.apply_context(service, 1000)
 
 
-def test_switch_context_caps_custom_value_to_model_limit(
-    tmp_path, monkeypatch, patch_questionary
-):
-    from quiet_memo.app import model_ui
-
-    patch_questionary(model_ui)
-    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
-    config_path = tmp_path / "quiet-memo.toml"
-    monkeypatch.setattr(model_ui, "model_metadata", lambda model: {"max_input_tokens": 64000})
-    answers = iter([0, "999999"])
-    monkeypatch.setattr(model_ui, "ask", lambda question: next(answers))
-    monkeypatch.setattr(
-        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
-    )
-
-    model_ui.switch_context(runtime, service)
-
-    assert service.config.chat.context_window == 64000
-    assert "context_window = 64000" in config_path.read_text(encoding="utf-8")
 
 
 def test_ask_streams_events_to_callback(tmp_path):

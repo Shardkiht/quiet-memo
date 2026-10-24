@@ -79,7 +79,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 
 ## 对话 Agent
 
-直接运行 `qm` 或 `quietmemo` 进入对话界面；会话在发送第一条消息时创建。`qm chat` 等价。输入 `/` 会弹出命令菜单和说明。选择、输入和确认界面都可以按 `ESC` 取消。对话采用宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，两侧都带说话人标头和时间；底部状态栏分三段显示模型与检索模式、上下文进度条、待确认数量，超过压缩阈值会提示。工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；退出时自动沉淀本轮陈述并显示结果。
+直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是会话列表：↑↓ 选择、Enter 恢复、Del 删除（弹确认），Ctrl+B 从输入框跳转。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入框输入 `/` 实时提示命令，底部状态栏显示模型与检索模式、上下文进度条、待确认数量，超过压缩阈值会提示。工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果。
 
 - 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
 - 模型可调用 `recall / memorize / correct / forget / review_pending`。
@@ -93,22 +93,22 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | 命令 | 作用 |
 | --- | --- |
 | `/new` | 结束当前会话，进入新会话（发送首条消息后创建） |
-| `/sessions` | 会话管理：Enter 恢复、Delete 删除（弹确认）、ESC 返回、支持搜索 |
-| `/resume [id|query]` | 恢复会话；无参数打开排序后的会话选择器，带关键词则先过滤 |
+| `/sessions` | 跳到左侧会话列表（↑↓ 选择 · Enter 恢复 · Del 删除） |
+| `/resume [id\|query]` | 恢复会话；无参数跳到会话列表，带 id/关键词则直接匹配恢复 |
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
 | `/models` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/models refresh` 强制刷新） |
 | `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
-| `/setup` | 完整配置模型 / API Key（含供应商、思考强度、上下文长度） |
+| `/setup` | 提示在终端运行 `qm setup`（配置向导不在对话界面内） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |
 | `/pending` | 查看待确认候选 |
 | `/exit` | 退出 |
 
-`/help` 查看命令说明；`/quit` 同 `/exit`；`/model` 同 `/models`。
+`/help` 查看命令说明；`/quit` 同 `/exit`；`/model` 同 `/models`。选择类弹窗均可 `ESC` 取消；输入框 Ctrl+B 跳会话列表、Ctrl+Q 退出。
 
 ### 上下文压缩
 
@@ -195,8 +195,8 @@ MCP 客户端配置：
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, ui.py, model_ui.py,
-│                 session_ui.py                    # CLI / TUI / FastMCP 入口
+├── app/          cli.py, server.py, tui.py, chat_app.py, actions.py,
+│                 ui.py, session_ui.py            # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, context.py, tools.py, session.py
 │                                                   # Agent 循环、压缩、工具、会话
 ├── memory/       service.py, store.py, models.py, queue.py,
