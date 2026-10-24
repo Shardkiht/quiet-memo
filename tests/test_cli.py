@@ -50,9 +50,10 @@ def test_layout_widths_wide_left():
     for cols in (80, 120, 200):
         left, width, right = widths(cols)
         assert left + width + right == cols
-        # 宽幅左对齐：固定小左边距，内容约占 90%，超宽封顶 120。
+        # 宽幅左对齐：固定小左边距，内容约占 90% 且随窗口伸缩、不设上限。
         assert left == 2
-        assert width == max(40, min(cols - 4, round(cols * 0.9), 120))
+        assert width == max(40, min(cols - 4, round(cols * 0.9)))
+    assert widths(200)[1] == 180
 
 
 def test_bubble_lines_uniform_block():
