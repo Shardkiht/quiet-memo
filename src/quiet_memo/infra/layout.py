@@ -8,9 +8,9 @@ def terminal_width() -> int:
 
 
 def widths(cols: int | None = None) -> tuple[int, int, int]:
-    """返回（左边距, 内容宽度, 右边距）：宽幅左对齐，约占窗口 90%，超宽封顶 120 保持可读。"""
+    """返回（左边距, 内容宽度, 右边距）：宽幅左对齐，约占窗口 90%，随窗口伸缩。"""
     cols = cols or terminal_width()
-    width = max(40, min(cols - 4, round(cols * 0.9), 120))
+    width = max(40, min(cols - 4, round(cols * 0.9)))
     left = 2
     right = max(0, cols - left - width)
     return left, width, right
