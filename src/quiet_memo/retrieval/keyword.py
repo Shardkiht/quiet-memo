@@ -21,6 +21,13 @@ def _is_word(token: str) -> bool:
     return any(char.isalnum() or "\u4e00" <= char <= "\u9fff" for char in token)
 
 
+# 封闭的虚词表：这类词几乎无检索信号，却让任何查询都能虚匹配出低分结果，
+# 混合检索时这些噪声条目会被 RRF 当成"两路都出现"而放大（evals/ 有量化对比）。
+STOPWORDS = frozenset(
+    "的 了 着 是 在 我 你 他 她 它 我们 你们 他们 和 与 就 也 都 而 及 或 等 啊 呢 吧 吗 呀 嘛".split()
+)
+
+
 @lru_cache(maxsize=4096)
 def tokenize(text: str) -> tuple[str, ...]:
     if jieba is not None:
@@ -28,7 +35,9 @@ def tokenize(text: str) -> tuple[str, ...]:
     else:
         lowered = text.lower()
         tokens = [lowered[index : index + 2] for index in range(max(1, len(lowered) - 1))]
-    return tuple(token for token in tokens if token and _is_word(token))
+    return tuple(
+        token for token in tokens if token and _is_word(token) and token not in STOPWORDS
+    )
 
 
 class KeywordRetriever:

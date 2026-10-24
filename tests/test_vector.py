@@ -208,3 +208,22 @@ def test_init_vault_gitignores_vector_cache(tmp_path):
     service.init_vault()
 
     assert "vectors.npz" in (tmp_path / "vault" / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_sync_dedupes_duplicate_entry_ids(tmp_path):
+    store = MemoryStore(tmp_path)
+    # append 已有查重，重复 ID 只可能来自历史数据：手写文件模拟。
+    store.append("food", "喜欢清淡、像茶的风味", entry_id="mem-dup")
+    housing = tmp_path / "housing.md"
+    housing.write_text(
+        "---\ntopic: housing\n---\n\n# 住房\n\n"
+        "- 2026-10-24T12:00:00 — 在找市区的房子  `id=mem-dup` `status=active`\n",
+        encoding="utf-8",
+    )
+    retriever = VectorRetriever(store, FakeEmbedder(GROUPS))
+
+    retriever.sync()
+
+    assert len(retriever._entries) == 1
+    hits = retriever.search("房子", 3)
+    assert len({hit.id for hit in hits}) == len(hits)
