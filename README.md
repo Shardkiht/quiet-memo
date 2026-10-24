@@ -128,6 +128,10 @@ uv run qm memorize "我最近在找市区的房子，预算 4000 以内，不接
 # 直接记录（不调用 LLM）
 uv run qm note "喝咖啡偏好清淡、像茶的风味" --topic preferences --title 偏好
 
+# 导入已有 Markdown（AI 按契约整理成条目，程序裁决写入；默认 dry-run，--apply 落盘）
+uv run qm import ~/personal-memory/profile
+uv run qm import ~/personal-memory/profile --apply
+
 # 初始化 / 查看主题
 uv run qm init
 uv run qm topics

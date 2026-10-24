@@ -18,7 +18,7 @@ from ..retrieval import (
 )
 from .audit import AuditLog
 from .detect import contains_secret, find_conflicts
-from .extractor import LLMExtractor
+from .extractor import ImportExtractor, LLMExtractor
 from .models import Candidate, Entry, PendingItem
 from .policy import decide
 from .queue import PendingQueue
@@ -141,11 +141,36 @@ class MemoryService:
         if not text:
             raise ValueError("对话内容为空。")
         extraction = self.extractor.extract(text, self.store.recent_context())
+        return self._adjudicate(extraction.memories, source, session_id, message_id)
+
+    def import_text(
+        self,
+        text: str,
+        *,
+        source: str = "import",
+        dry_run: bool = False,
+        extractor=None,
+    ) -> MemorizeResult:
+        """导入已有文档：AI 按契约整理成候选，程序裁决；dry_run 只出计划不落盘。"""
+        text = text.strip()
+        if not text:
+            raise ValueError("导入内容为空。")
+        extractor = extractor or ImportExtractor(self.config.llm)
+        return self._adjudicate(extractor.extract(text).memories, source, dry_run=dry_run)
+
+    def _adjudicate(
+        self,
+        candidates: list[Candidate],
+        source: str,
+        session_id: str | None = None,
+        message_id: str | None = None,
+        dry_run: bool = False,
+    ) -> MemorizeResult:
         admitted: list[Entry] = []
         queued: list[PendingItem] = []
         duplicates: list[str] = []
         blocked: list[str] = []
-        for candidate in extraction.memories:
+        for candidate in candidates:
             if contains_secret(candidate.text):
                 blocked.append(candidate.text)
                 continue
@@ -161,16 +186,22 @@ class MemoryService:
                     session_id,
                     message_id,
                     conflict_with=conflicts[0].id,
+                    dry_run=dry_run,
                 )
                 queued.append(item)
                 continue
             decision = decide(candidate, self.config.confidence_threshold)
             if decision.admit:
-                admitted.append(self._append_candidate(candidate, source, session_id, message_id))
+                if dry_run:
+                    admitted.append(
+                        Entry(id="(dry-run)", topic=candidate.topic, text=candidate.text, timestamp="")
+                    )
+                else:
+                    admitted.append(self._append_candidate(candidate, source, session_id, message_id))
             else:
                 queued.append(
                     self._queue_candidate(
-                        candidate, source, decision.reason, session_id, message_id
+                        candidate, source, decision.reason, session_id, message_id, dry_run=dry_run
                     )
                 )
         return MemorizeResult(
@@ -204,6 +235,7 @@ class MemoryService:
         session_id: str | None = None,
         message_id: str | None = None,
         conflict_with: str | None = None,
+        dry_run: bool = False,
     ) -> PendingItem:
         item = PendingItem.from_candidate(
             candidate,
@@ -213,7 +245,8 @@ class MemoryService:
             message_id=message_id,
             conflict_with=conflict_with,
         )
-        self.queue.add(item)
+        if not dry_run:
+            self.queue.add(item)
         return item
 
     def note(self, text: str, topic: str = "uncategorized", title: str | None = None) -> Entry:

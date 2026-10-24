@@ -128,6 +128,11 @@ uv run qm memorize "I'm looking for an apartment downtown, budget under 4000, no
 # Record directly (no LLM call)
 uv run qm note "I prefer light, tea-like coffee" --topic preferences --title Preferences
 
+# Import existing Markdown (AI restructures into entries under a strict contract,
+# the program adjudicates and writes; dry-run by default, --apply to write)
+uv run qm import ~/personal-memory/profile
+uv run qm import ~/personal-memory/profile --apply
+
 # Initialize / list topics
 uv run qm init
 uv run qm topics

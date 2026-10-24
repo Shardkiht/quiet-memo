@@ -14,7 +14,7 @@ from ..infra.config import (
     write_example_config,
 )
 from ..infra.gitops import GitError
-from ..memory.extractor import ExtractorError
+from ..memory.extractor import ExtractorError, split_chunks
 from ..memory.service import MemoryService, get_service
 from .session_ui import print_sessions
 from .tui import run_chat
@@ -171,6 +171,54 @@ def note(
         fail(str(exc))
         return
     console.print(f"[bold]已记录[/] [{entry.topic}] {entry.text}")
+
+
+@app.command("import")
+def import_memories(
+    path: Path = typer.Argument(..., help="要导入的 Markdown 文件或目录", exists=True),
+    apply: bool = typer.Option(False, "--apply", help="实际写入；默认只打印计划"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """导入已有 Markdown：AI 整理成条目，程序裁决写入；默认 dry-run。"""
+    files = sorted(path.glob("*.md")) if path.is_dir() else [path]
+    if not files:
+        fail("没有找到 Markdown 文件。")
+        return
+    service = _service(config, vault)
+    totals = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0}
+    failed_chunks = 0
+    total_chunks = 0
+    for file in files:
+        chunks = split_chunks(file.read_text(encoding="utf-8"))
+        file_failed = 0
+        for chunk in chunks:
+            total_chunks += 1
+            try:
+                result = service.import_text(
+                    chunk, source=f"import:{file.name}", dry_run=not apply
+                )
+            except ExtractorError as exc:
+                file_failed += 1
+                console.print(f"[#b8b8b8]块抽取失败：{exc}[/]")
+                continue
+            totals["admitted"] += len(result.admitted)
+            totals["queued"] += len(result.queued)
+            totals["duplicates"] += len(result.duplicates)
+            totals["blocked"] += len(result.blocked)
+        failed_chunks += file_failed
+        note = f"，失败 {file_failed} 块" if file_failed else ""
+        console.print(f"[dim]{file.name}：{len(chunks)} 块{note}[/dim]")
+    if total_chunks and failed_chunks == total_chunks:
+        fail("所有块抽取失败，未写入任何内容。")
+        return
+    mode = "已写入" if apply else "计划写入（dry-run，确认无误后加 --apply 落盘）"
+    console.print(
+        f"[bold]{mode}[/]：直写 {totals['admitted']} · 待确认 {totals['queued']} · "
+        f"重复 {totals['duplicates']} · 拦截 {totals['blocked']}"
+    )
+    if apply and totals["queued"]:
+        console.print("运行 qm pending 查看待确认条目。")
 
 
 @app.command()

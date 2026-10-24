@@ -4,6 +4,8 @@ import json
 import re
 from typing import Protocol
 
+from pydantic import ValidationError
+
 from ..infra.config import LLMConfig
 from ..llm.client import complete
 from .models import Candidate, ExtractionResult
@@ -115,3 +117,112 @@ class StaticExtractor:
 
     def extract(self, text: str, context: str = "") -> ExtractionResult:
         return self.result
+
+
+IMPORT_PROMPT = """你是个人记忆导入器。把给定的档案或笔记内容整理成规范的记忆条目。
+
+规则：
+1. 一条 = 一个原子事实，改写成自包含短句，脱离原文也能读懂；不保留“本节”“上文”这类指代。
+2. 保留全部数字、日期、型号、价格、预算原文，不改写、不四舍五入。
+3. 保留确定性边界：原文的“当时记录、未验证”“两条口径矛盾都保留”“未形成决定”“仅询问过”等标注必须体现在条目中，不得抹掉或合并。
+4. 相互矛盾的记录各自成条，不合并、不替档案主人裁决。
+5. 只整理档案主人本人的事实、偏好、计划、经历、设备、健康等；维护说明、导航索引、拆分注记、纯标题行不要输出。
+6. topic 用英文小写 kebab-case 规范名，如 preferences、career、health、devices、housing、food、people、schedule、learning、projects、identity。
+7. 明确事实 confidence 给 0.9 左右；带“未验证、存疑、矛盾、仅提及”边界的给 0.5—0.7，留给人工确认。
+
+输出 JSON，格式：
+{"memories":[{"text":"...","topic":"preferences","title":"中文主题名","confidence":0.9}]}
+
+没有可整理内容返回 {"memories":[]}。"""
+
+
+def parse_import(content: str) -> ExtractionResult:
+    """严格校验导入输出：任一条目不合法即抛错，由上层回传 AI 重出。"""
+    payload = json.loads(_extract_json_block(content))
+    if isinstance(payload, list):
+        payload = {"memories": payload}
+    items = payload.get("memories") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        raise ExtractorError("顶层缺少 memories 数组")
+    candidates = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict) or not str(item.get("text", "")).strip():
+            raise ExtractorError(f"第 {index + 1} 条缺少 text")
+        item.setdefault("topic", "uncategorized")
+        try:
+            candidates.append(Candidate.model_validate(item))
+        except ValidationError as exc:
+            reason = exc.errors()[0]["msg"]
+            raise ExtractorError(f"第 {index + 1} 条字段不合法：{reason}") from exc
+    return ExtractionResult(memories=candidates)
+
+
+class ImportExtractor:
+    """导入抽取：输出必须通过严格校验，失败带着错误回传重出，连续失败整块放弃。"""
+
+    def __init__(self, config: LLMConfig, completer=complete, max_attempts: int = 3):
+        self.config = config
+        self.completer = completer
+        self.max_attempts = max_attempts
+
+    def extract(self, text: str) -> ExtractionResult:
+        if self.config.requires_api_key() and not self.config.api_key():
+            raise ExtractorError(
+                f"未配置 LLM API Key，请设置环境变量 {self.config.api_key_env}，"
+                "或运行 qm setup 保存到系统凭据。"
+            )
+        user_content = f"待整理内容：\n{text}"
+        feedback = ""
+        for _ in range(self.max_attempts):
+            content = user_content if not feedback else f"{user_content}\n\n上一轮输出被拒绝：{feedback}\n请修正后重新输出完整 JSON。"
+            response = self._complete(content)
+            try:
+                return parse_import(response.choices[0].message.content or "")
+            except (ExtractorError, json.JSONDecodeError) as exc:
+                feedback = str(exc)[:300]
+        raise ExtractorError(f"导入抽取连续 {self.max_attempts} 次未通过格式校验：{feedback}")
+
+    def _complete(self, content: str):
+        messages = [
+            {"role": "system", "content": IMPORT_PROMPT},
+            {"role": "user", "content": content},
+        ]
+        try:
+            return self.completer(
+                self.config,
+                messages,
+                temperature=self.config.temperature,
+                response_format={"type": "json_object"},
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if not any(
+                token in message
+                for token in ("response_format", "json_object", "json mode", "unsupported", "invalid parameter")
+            ):
+                raise ExtractorError(f"LLM 调用失败：{exc}") from exc
+            # 部分 OpenAI 兼容服务不支持 JSON mode，退回普通对话。
+            return self.completer(self.config, messages, temperature=self.config.temperature)
+
+
+def split_chunks(text: str, max_chars: int = 6000) -> list[str]:
+    """按空行段落切块；只控制大小，语义整理交给导入抽取器。"""
+    chunks: list[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        while len(paragraph) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(paragraph[:max_chars])
+            paragraph = paragraph[max_chars:]
+        if not paragraph.strip():
+            continue
+        if current and len(current) + len(paragraph) + 2 > max_chars:
+            chunks.append(current)
+            current = paragraph
+        else:
+            current = f"{current}\n\n{paragraph}" if current else paragraph
+    if current.strip():
+        chunks.append(current)
+    return chunks
