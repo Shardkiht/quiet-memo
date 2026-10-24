@@ -203,8 +203,8 @@ class ChatApp(App):
     /* 折叠按钮：侧栏右上角、主题色描边，保持显眼 */
     #hide-sidebar { width: 3; height: 3; min-width: 3; background: #232630; color: $accent; border: round $accent; }
     #hide-sidebar:hover { background: #2b3444; }
-    /* 侧栏隐藏后：对话区左上角的展开按钮 */
-    #show-sidebar { layer: overlay; dock: top; width: 4; height: 1; min-width: 4; border: none; padding: 0; background: #232630; color: $accent; display: none; }
+    /* 侧栏隐藏后：对话区左上角的展开按钮，与 « 折叠按钮同款样式 */
+    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; background: #232630; color: $accent; border: round $accent; display: none; }
     #show-sidebar:hover { background: #2b3444; }
     #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
