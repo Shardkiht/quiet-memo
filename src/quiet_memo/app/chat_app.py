@@ -95,6 +95,14 @@ class PickScreen(ModalScreen):
         self.app.call_later(on_result, value)
 
 
+class SidebarToggle(Static):
+    """«/» 折叠切换按钮：Button 的标签渲染会溢出窄按钮，Static 按内容框精确渲染。"""
+
+    def on_click(self) -> None:
+        self.app.action_toggle_sidebar()
+        self.app.query_one("#input", Input).focus()
+
+
 class CommandRow(Static):
     """命令面板的一行：命令用法 + 说明；点击即执行。"""
 
@@ -201,10 +209,10 @@ class ChatApp(App):
     #sidebar-head { height: 3; align: left middle; }
     #brand { color: $accent; text-style: bold; padding: 0 1; width: 1fr; }
     /* 折叠按钮：朴素方框、不贴分割线（右侧留 1 格），避免凸出感 */
-    #hide-sidebar { width: 3; height: 3; min-width: 3; background: #181a21; color: $accent; border: solid #4a4f5a; margin-right: 1; }
+    #hide-sidebar { width: 3; height: 3; min-width: 3; padding: 0; background: #181a21; color: $accent; border: solid #4a4f5a; margin-right: 1; content-align: center middle; }
     #hide-sidebar:hover { border: solid $accent; }
     /* 侧栏隐藏后：对话区左上角的展开按钮，同款方框 */
-    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; background: #181a21; color: $accent; border: solid #4a4f5a; display: none; }
+    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; padding: 0; background: #181a21; color: $accent; border: solid #4a4f5a; content-align: center middle; display: none; }
     #show-sidebar:hover { border: solid $accent; }
     #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
@@ -275,11 +283,11 @@ class ChatApp(App):
             with Vertical(id="sidebar"):
                 with Horizontal(id="sidebar-head"):
                     yield Static("quiet-memo", id="brand")
-                    yield Button("«", id="hide-sidebar")
+                    yield SidebarToggle("«", id="hide-sidebar")
                 yield Button("＋ 新会话", id="new-session")
                 yield ListView(id="sessions")
             with Vertical(id="main"):
-                yield Button("»", id="show-sidebar")
+                yield SidebarToggle("»", id="show-sidebar")
                 yield VerticalScroll(id="chat")
                 yield CommandPalette()
                 yield Input(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
@@ -300,7 +308,7 @@ class ChatApp(App):
 
     def _set_sidebar_visible(self, visible: bool) -> None:
         self.query_one("#sidebar", Vertical).display = visible
-        self.query_one("#show-sidebar", Button).display = not visible
+        self.query_one("#show-sidebar", SidebarToggle).display = not visible
 
     def show_sidebar(self) -> None:
         self._set_sidebar_visible(True)
@@ -344,9 +352,6 @@ class ChatApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-session" and not self.busy:
             self._new_session()
-        elif event.button.id in ("hide-sidebar", "show-sidebar"):
-            self.action_toggle_sidebar()
-            self.query_one("#input", Input).focus()
 
     def on_key(self, event) -> None:
         palette = self.query_one("#cmd-palette", CommandPalette)

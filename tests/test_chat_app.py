@@ -4,7 +4,7 @@ from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore
-from quiet_memo.app.chat_app import SLASH_COMMANDS, ChatApp
+from quiet_memo.app.chat_app import SLASH_COMMANDS, ChatApp, SidebarToggle
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
@@ -130,7 +130,7 @@ async def test_ctrl_b_toggles_sidebar(tmp_path):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         sidebar = app.query_one("#sidebar", Vertical)
-        expand = app.query_one("#show-sidebar", Button)
+        expand = app.query_one("#show-sidebar", SidebarToggle)
         assert sidebar.display and not expand.display
         await pilot.press("ctrl+b")
         await pilot.pause()
