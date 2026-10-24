@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from quiet_memo.infra.config import Config, LLMConfig
+from quiet_memo.infra.config import Config, LLMConfig, RetrievalConfig
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import Candidate, ExtractionResult
 from quiet_memo.memory.service import MemoryService
@@ -62,7 +62,12 @@ def isolate_llm_credentials(monkeypatch):
 
 @pytest.fixture
 def config(tmp_path):
-    return Config(vault=tmp_path / "vault", llm=LLMConfig())
+    # 测试默认 keyword，避免依赖 fastembed 是否安装。
+    return Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        retrieval=RetrievalConfig(method="keyword"),
+    )
 
 
 @pytest.fixture

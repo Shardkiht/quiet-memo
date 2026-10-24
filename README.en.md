@@ -17,6 +17,9 @@ Requires Python 3.12+, uv, and git.
 ```bash
 uv sync
 
+# Optional: enable local vector retrieval (fastembed + bge-small-zh; ~100MB model download on first run)
+uv sync --extra local-embed
+
 # Enter chat directly (a session is created when you send the first message)
 uv run qm
 uv run quietmemo        # Same as above; equivalent alias
@@ -59,6 +62,17 @@ auto_recall = 3
 recall_rewrite = true         # Rewrite follow-up queries with the LLM; falls back without a key
 recall_context_turns = 2      # Recent user turns used for follow-up queries
 extract_on_exit = true
+
+[retrieval]
+method = "hybrid"             # keyword / vector / hybrid; falls back to keyword when the embedding backend is unavailable
+
+[retrieval.embedding]
+backend = "local"             # local: offline fastembed inference; api: sends memory text to a provider (privacy note)
+model = "BAAI/bge-small-zh-v1.5"
+# Example for backend = "api":
+# provider = "siliconflow"
+# base_url = "https://api.siliconflow.cn/v1"
+# api_key_env = "SILICONFLOW_API_KEY"
 ```
 
 If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Interactive menus and chat rely on the Windows console; Windows Terminal or PowerShell is recommended. Git Bash users can try `winpty`.
@@ -83,7 +97,7 @@ In-session commands:
 | `/resume [id|query]` | Resume a session; with no argument, opens a sorted session picker; with a keyword, filters first |
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
-| `/status` | Session, model, context, and pending status |
+| `/status` | Session, model, retrieval mode, context, and pending status |
 | `/models` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/models refresh` forces a refresh) |
 | `/setup` | Full model / API key setup (provider, reasoning effort, context length) |
 | `/rename <title>` | Rename the session |
@@ -182,7 +196,8 @@ src/quiet_memo/
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py
 │                                                   # Memory domain and write decisions
-├── retrieval/    base.py, keyword.py             # Retriever interface + BM25
+├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
+│                                                   # Retriever interface + BM25/vector/hybrid
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM adapter, session/commit summaries
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
@@ -193,7 +208,7 @@ Dependency direction: `app → agent → memory → retrieval → infra`, `memor
 `retrieval/keyword.py` reads entries from `memory/store.py`; this is the only back-reference across `memory ↔ retrieval`.
 Development conventions (code style, storage invariants, testing, and docs sync) are in [AGENTS.md](AGENTS.md).
 
-- Retrieval currently uses jieba tokenization + rank-bm25; `Retriever` is an interface, so vector or hybrid retrieval can be added later.
+- Retrieval defaults to hybrid: jieba + rank-bm25 and vector cosine runs are fused with RRF. Vectors come from local fastembed inference (optional extra) or an embedding API, cached as derived data in `.quiet-memo/vectors.npz` (gitignored inside the vault; delete it to force a rebuild; switching the embedding model invalidates it automatically). When the embedding backend is unavailable it falls back to plain BM25; `/status` and `qm status` show the active retrieval mode.
 - Token budgets are estimated with tiktoken, falling back to character estimation when offline.
 - Session compaction, memory decisions, and source chains are custom-built; model adapters are delegated to LiteLLM, provider selection and password input use questionary, and keys use keyring.
 
@@ -209,5 +224,4 @@ Tests cover storage, queue, conflict detection, retrieval, extraction parsing, s
 
 - 20+ extraction/conflict/retrieval evaluation cases and metrics
 - Real-model dogfooding and cost tracking
-- Vector/hybrid retrieval implementation (replacing `Retriever`)
 - Daily scheduled commit daemon

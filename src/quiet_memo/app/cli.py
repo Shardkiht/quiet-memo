@@ -308,6 +308,7 @@ def status(
     info = _service(config, vault).status()
     console.print(f"记忆库：{info['vault']}")
     console.print(f"主题 {info['topics']} · 条目 {info['entries']} · 待确认 {info['pending']} · 未提交 {info['dirty']}")
+    console.print(f"检索 {info['retrieval']}")
 
 
 @app.command()

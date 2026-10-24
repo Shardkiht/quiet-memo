@@ -17,6 +17,9 @@
 ```bash
 uv sync
 
+# 可选：启用本地向量检索（fastembed + bge-small-zh，首次运行下载约 100MB 模型）
+uv sync --extra local-embed
+
 # 直接进入对话（发送第一条消息时才创建会话）
 uv run qm
 uv run quietmemo        # 同上，等价别名
@@ -59,6 +62,17 @@ auto_recall = 3
 recall_rewrite = true         # 用 LLM 改写追问；无 Key 自动回退到拼接
 recall_context_turns = 2      # 追问时参考最近几轮用户消息
 extract_on_exit = true
+
+[retrieval]
+method = "hybrid"             # keyword / vector / hybrid；向量后端不可用时自动回退 keyword
+
+[retrieval.embedding]
+backend = "local"             # local：fastembed 离线推理；api：发送记忆文本给供应商（注意隐私）
+model = "BAAI/bge-small-zh-v1.5"
+# backend = "api" 时的示例：
+# provider = "siliconflow"
+# base_url = "https://api.siliconflow.cn/v1"
+# api_key_env = "SILICONFLOW_API_KEY"
 ```
 
 Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，建议用 Windows Terminal / PowerShell；Git Bash 可尝试 `winpty`。
@@ -83,7 +97,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | `/resume [id|query]` | 恢复会话；无参数打开排序后的会话选择器，带关键词则先过滤 |
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
-| `/status` | 会话、模型、上下文和待确认状态 |
+| `/status` | 会话、模型、检索模式、上下文和待确认状态 |
 | `/models` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/models refresh` 强制刷新） |
 | `/setup` | 完整配置模型 / API Key（含供应商、思考强度、上下文长度） |
 | `/rename <title>` | 重命名会话 |
@@ -182,7 +196,8 @@ src/quiet_memo/
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py
 │                                                   # 记忆领域与写入裁决
-├── retrieval/    base.py, keyword.py             # Retriever 接口 + BM25
+├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
+│                                                   # Retriever 接口 + BM25/向量/混合
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM 适配、会话/提交摘要
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
@@ -193,7 +208,7 @@ src/quiet_memo/
 `retrieval/keyword.py` 读取 `memory/store.py` 的条目，是 `memory ↔ retrieval` 之间唯一的跨层回读。
 开发约定（代码风格、存储不变量、测试与文档同步）见 [AGENTS.md](AGENTS.md)。
 
-- 检索当前是 jieba 分词 + rank-bm25；`Retriever` 是接口，后续可接向量/混合检索。
+- 检索默认 hybrid：jieba + rank-bm25 与向量余弦两路结果做 RRF 融合；向量由 fastembed 本地推理（可选 extra）或 embedding API 计算，缓存为 `.quiet-memo/vectors.npz` 派生数据（vault 内已 gitignore，删除后自动重建；换 embedding 模型自动失效）。向量后端不可用时回退纯 BM25，`/status` 和 `qm status` 显示当前检索模式。
 - token 预算用 tiktoken 估算，离线失败时回退字符估算。
 - 会话压缩、记忆裁决、来源链是自研核心；模型适配交给 LiteLLM，供应商选择与密码输入用 questionary，Key 用 keyring。
 
@@ -209,5 +224,4 @@ uv run pytest
 
 - 20+ 条抽取/冲突/检索评测用例与指标
 - 真实模型 dogfood 与成本统计
-- 向量/混合检索实现（替换 `Retriever`）
 - 每日定时提交守护进程

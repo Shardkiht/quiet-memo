@@ -3,10 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..infra.config import Config, load_config
+from ..infra.config import Config, LLMConfig, RetrievalConfig, load_config
 from ..infra.gitops import GitRepo
+from ..llm import LiteLLMEmbedder
 from ..llm.commit_summary import summarize_diff
-from ..retrieval import KeywordRetriever, Retriever, SearchHit
+from ..retrieval import (
+    Embedder,
+    HybridRetriever,
+    KeywordRetriever,
+    LocalEmbedder,
+    Retriever,
+    SearchHit,
+    VectorRetriever,
+)
 from .audit import AuditLog
 from .detect import contains_secret, find_conflicts
 from .extractor import LLMExtractor
@@ -32,7 +41,41 @@ VAULT_GITIGNORE = """__pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+.quiet-memo/vectors.npz
 """
+
+
+def _build_embedder(config: RetrievalConfig) -> Embedder | None:
+    """按配置构造 Embedder；后端不可用返回 None，由调用方回退 keyword。"""
+    embedding = config.embedding
+    if embedding.backend == "api":
+        llm = LLMConfig(
+            provider=embedding.provider,
+            base_url=embedding.base_url,
+            model=embedding.model,
+            api_key_env=embedding.api_key_env,
+        )
+        if llm.requires_api_key() and not llm.api_key():
+            return None
+        return LiteLLMEmbedder(llm)
+    if not LocalEmbedder.available():
+        return None
+    return LocalEmbedder(embedding.model)
+
+
+def build_retriever(config: Config, store: MemoryStore) -> tuple[Retriever, str]:
+    """按 [retrieval] 装配检索器；返回检索器和模式标签，回退时标签注明。"""
+    method = (config.retrieval.method or "hybrid").strip().lower()
+    keyword = KeywordRetriever(store)
+    if method == "keyword":
+        return keyword, "keyword"
+    embedder = _build_embedder(config.retrieval)
+    if embedder is None:
+        return keyword, f"{method}-fallback-keyword"
+    vector = VectorRetriever(store, embedder)
+    if method == "vector":
+        return vector, "vector"
+    return HybridRetriever(keyword, vector), "hybrid"
 
 
 @dataclass(slots=True)
@@ -62,7 +105,11 @@ class MemoryService:
         self.repo = GitRepo(config.vault)
         self.audit = AuditLog(config.vault)
         self.extractor = extractor or LLMExtractor(config.llm)
-        self.retriever: Retriever = retriever or KeywordRetriever(self.store)
+        if retriever is not None:
+            self.retriever: Retriever = retriever
+            self.retrieval_mode = "custom"
+        else:
+            self.retriever, self.retrieval_mode = build_retriever(config, self.store)
 
     def init_vault(self) -> dict:
         self.store.ensure()
@@ -74,6 +121,10 @@ class MemoryService:
         gitignore = self.config.vault / ".gitignore"
         if not gitignore.exists():
             gitignore.write_text(VAULT_GITIGNORE, encoding="utf-8")
+        elif "vectors.npz" not in gitignore.read_text(encoding="utf-8"):
+            # 老记忆库补一行忽略规则；向量缓存是派生数据，不进 Git 历史。
+            with open(gitignore, "a", encoding="utf-8") as handle:
+                handle.write(".quiet-memo/vectors.npz\n")
         created = self.repo.ensure_init()
         self.repo.stage_all()
         commit_hash = self.repo.commit("memory: 初始化记忆库")
@@ -256,6 +307,7 @@ class MemoryService:
             "entries": len(self.store.entries()),
             "pending": len(self.pending()),
             "dirty": self.repo.has_changes() if self.repo.is_repo else False,
+            "retrieval": self.retrieval_mode,
         }
 
     def commit(self, push: bool | None = None) -> dict:

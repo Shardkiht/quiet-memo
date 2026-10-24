@@ -3,7 +3,14 @@ from __future__ import annotations
 import sys
 import types
 
-from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, load_config
+from quiet_memo.infra.config import (
+    ChatConfig,
+    Config,
+    EmbeddingConfig,
+    LLMConfig,
+    RetrievalConfig,
+    load_config,
+)
 from quiet_memo.infra.providers import PRESETS, write_config
 
 
@@ -41,6 +48,16 @@ def test_write_config_roundtrip(tmp_path):
             recall_rewrite=False,
             recall_context_turns=4,
         ),
+        retrieval=RetrievalConfig(
+            method="vector",
+            embedding=EmbeddingConfig(
+                backend="api",
+                model="BAAI/bge-m3",
+                provider="dashscope",
+                base_url="https://dashscope.example/v1",
+                api_key_env="DASHSCOPE_API_KEY",
+            ),
+        ),
     )
 
     write_config(path, config)
@@ -53,7 +70,19 @@ def test_write_config_roundtrip(tmp_path):
     assert loaded.chat.context_window == 16000
     assert loaded.chat.recall_rewrite is False
     assert loaded.chat.recall_context_turns == 4
+    assert loaded.retrieval.method == "vector"
+    assert loaded.retrieval.embedding.backend == "api"
+    assert loaded.retrieval.embedding.model == "BAAI/bge-m3"
+    assert loaded.retrieval.embedding.api_key_env == "DASHSCOPE_API_KEY"
     assert loaded.vault == config.vault
+
+
+def test_load_config_defaults_to_hybrid_local(tmp_path):
+    loaded = load_config(tmp_path / "not-exist.toml")
+
+    assert loaded.retrieval.method == "hybrid"
+    assert loaded.retrieval.embedding.backend == "local"
+    assert loaded.retrieval.embedding.model == "BAAI/bge-small-zh-v1.5"
 
 
 def test_env_key_takes_precedence_over_keyring(monkeypatch):

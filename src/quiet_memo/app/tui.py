@@ -313,6 +313,7 @@ def handle_command(
                 Panel(
                     f"会话：{info['session_id']} · {info['title']}\n"
                     f"模型：{info['model']}\n"
+                    f"检索：{info['retrieval']}\n"
                     f"上下文：{format_tokens(info['estimated_tokens'])}/{format_tokens(info['context_window'])}（{percent:.0%}）\n"
                     f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · "
                     f"已覆盖 {info['covered_records']} 条记录\n"

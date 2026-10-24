@@ -275,6 +275,7 @@ class AgentRuntime:
             "session_id": session.id,
             "title": session.title(),
             "model": self.model_label,
+            "retrieval": self.service.retrieval_mode,
             "messages": len(session.messages),
             "records": len(session.records),
             "summaries": sum(1 for record in session.records if record.get("type") == "summary"),

@@ -9,6 +9,8 @@ from pathlib import Path
 DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-flash"
 DEFAULT_API_KEY_ENV = "DEEPSEEK_API_KEY"
+DEFAULT_EMBEDDING_MODEL = "BAAI/bge-small-zh-v1.5"
+DEFAULT_EMBEDDING_BASE_URL = "https://api.siliconflow.cn/v1"
 CONFIG_FILENAME = "quiet-memo.toml"
 
 
@@ -67,10 +69,26 @@ class ChatConfig:
 
 
 @dataclass(slots=True)
+class EmbeddingConfig:
+    backend: str = "local"  # local：fastembed 离线推理；api：embedding 供应商
+    model: str = DEFAULT_EMBEDDING_MODEL
+    provider: str = "siliconflow"
+    base_url: str = DEFAULT_EMBEDDING_BASE_URL
+    api_key_env: str = "SILICONFLOW_API_KEY"
+
+
+@dataclass(slots=True)
+class RetrievalConfig:
+    method: str = "hybrid"  # keyword / vector / hybrid
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+
+
+@dataclass(slots=True)
 class Config:
     vault: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     confidence_threshold: float = 0.8
     auto_push: bool = False
 
@@ -143,10 +161,23 @@ def load_config(path: Path | str | None = None) -> Config:
         recall_context_turns=int(chat_raw.get("recall_context_turns", 2)),
         extract_on_exit=bool(chat_raw.get("extract_on_exit", True)),
     )
+    retrieval_raw = data.get("retrieval", {})
+    embedding_raw = retrieval_raw.get("embedding", {})
+    retrieval = RetrievalConfig(
+        method=str(retrieval_raw.get("method", "hybrid")),
+        embedding=EmbeddingConfig(
+            backend=str(embedding_raw.get("backend", "local")),
+            model=str(embedding_raw.get("model", DEFAULT_EMBEDDING_MODEL)),
+            provider=str(embedding_raw.get("provider", "siliconflow")),
+            base_url=str(embedding_raw.get("base_url", DEFAULT_EMBEDDING_BASE_URL)),
+            api_key_env=str(embedding_raw.get("api_key_env", "SILICONFLOW_API_KEY")),
+        ),
+    )
     return Config(
         vault=Path(vault_raw).expanduser(),
         llm=llm,
         chat=chat,
+        retrieval=retrieval,
         confidence_threshold=float(data.get("confidence_threshold", 0.8)),
         auto_push=bool(data.get("auto_push", False)),
     )
@@ -181,6 +212,20 @@ auto_recall = 3
 recall_rewrite = true
 recall_context_turns = 2
 extract_on_exit = true
+
+[retrieval]
+# keyword / vector / hybrid；hybrid 在向量后端不可用时自动回退 keyword
+method = "hybrid"
+
+[retrieval.embedding]
+# local：fastembed 本地离线推理（uv sync --extra local-embed 安装）
+# api：把记忆文本发给 embedding 供应商换取向量（注意隐私）
+backend = "local"
+model = "{DEFAULT_EMBEDDING_MODEL}"
+# backend = "api" 时的示例：
+# provider = "siliconflow"
+# base_url = "{DEFAULT_EMBEDDING_BASE_URL}"
+# api_key_env = "SILICONFLOW_API_KEY"
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

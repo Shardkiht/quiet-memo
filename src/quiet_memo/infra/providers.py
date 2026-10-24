@@ -298,6 +298,16 @@ auto_recall = {config.chat.auto_recall}
 recall_rewrite = {str(config.chat.recall_rewrite).lower()}
 recall_context_turns = {config.chat.recall_context_turns}
 extract_on_exit = {str(config.chat.extract_on_exit).lower()}
+
+[retrieval]
+method = "{config.retrieval.method}"
+
+[retrieval.embedding]
+backend = "{config.retrieval.embedding.backend}"
+model = "{config.retrieval.embedding.model}"
+provider = "{config.retrieval.embedding.provider}"
+base_url = "{config.retrieval.embedding.base_url}"
+api_key_env = "{config.retrieval.embedding.api_key_env}"
 '''
     path.write_text(content, encoding="utf-8")
 

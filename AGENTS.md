@@ -17,7 +17,7 @@ uv run qm setup      # 配置模型与 API Key
 
 ## 技术栈
 
-Python 3.12+、uv、hatchling、Typer、FastMCP、LiteLLM、Pydantic v2、pytest + pytest-asyncio（`asyncio_mode = "auto"`）、jieba + rank-bm25、prompt-toolkit / rich / questionary、keyring、tiktoken。
+Python 3.12+、uv、hatchling、Typer、FastMCP、LiteLLM、Pydantic v2、pytest + pytest-asyncio（`asyncio_mode = "auto"`）、jieba + rank-bm25 + numpy（BM25 与向量余弦、RRF 混合检索）、fastembed（本地 embedding，可选 extra `local-embed`）、prompt-toolkit / rich / questionary、keyring、tiktoken。
 
 非核心能力优先复用现成库（分词、检索、CLI、密钥、模型适配）；自研只保留核心差异：记忆裁决、上下文压缩、来源链。
 
@@ -53,6 +53,7 @@ memory/agent → llm → infra
 - 条目是 Markdown bullet 行加行尾反引号标签；条目 ID 必须稳定。
 - 更正采用“新条目 + `supersedes`”，旧条目置为 `superseded`；删除是软删除 `deleted`，不物理移除。
 - 待确认候选写 `.quiet-memo/pending.jsonl`，处理结果追加到 `resolved.jsonl`；更正、删除等操作写 `audit.jsonl`。
+- `.quiet-memo/vectors.npz` 是向量检索的派生缓存（含 `model_id`，换模型自动失效），vault 内 gitignore，可删除重建，不进 Git 历史。
 - `sessions/<id>.jsonl` 是追加写的事件流，不重写旧行；上下文压缩只追加 `summary` 记录，不删除原文。
 - 密钥、验证码、API Key 在写入前拦截；不把密钥写入 vault、配置示例或测试。
 - `quiet-memo.toml`、`vault/`、`sessions/`、`.env`、密钥文件都不提交。

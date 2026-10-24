@@ -26,3 +26,17 @@ timeout = 60.0
 recall_context_turns = 2
 # 允许用 LLM 把追问改写成检索 query（需要 API Key）
 recall_rewrite = true
+
+[retrieval]
+# keyword / vector / hybrid；hybrid 在向量后端不可用时自动回退 keyword
+method = "hybrid"
+
+[retrieval.embedding]
+# local：fastembed 本地离线推理（uv sync --extra local-embed 安装，默认模型约 100MB）
+# api：把记忆文本发给 embedding 供应商换取向量（注意隐私）
+backend = "local"
+model = "BAAI/bge-small-zh-v1.5"
+# backend = "api" 时的示例：
+# provider = "siliconflow"
+# base_url = "https://api.siliconflow.cn/v1"
+# api_key_env = "SILICONFLOW_API_KEY"

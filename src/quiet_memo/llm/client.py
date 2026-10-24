@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Protocol
@@ -86,6 +87,47 @@ def complete(
     if config.fallbacks:
         kwargs["fallbacks"] = config.fallbacks
     return litellm.completion(**kwargs)
+
+
+def embed_texts(config: LLMConfig, texts: list[str], batch_size: int = 32) -> list[list[float]]:
+    """调用 embedding 接口；返回顺序与输入一致。"""
+    litellm = _litellm()
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start : start + batch_size]
+        kwargs: dict = {
+            "model": config.litellm_model(),
+            "input": batch,
+            "api_key": config.api_key(),
+            "timeout": config.timeout,
+            "num_retries": config.num_retries,
+        }
+        if config.base_url:
+            kwargs["api_base"] = config.base_url
+        response = litellm.embedding(**kwargs)
+        items = _field(response, "data") or []
+        vectors.extend(
+            [float(value) for value in _field(item, "embedding") or []] for item in items
+        )
+    return vectors
+
+
+class LiteLLMEmbedder:
+    """API 后端 Embedder；满足 retrieval.Embedder 协议，不反向依赖 retrieval。"""
+
+    def __init__(self, config: LLMConfig, batch_size: int = 32):
+        self.config = config
+        self.batch_size = batch_size
+
+    @property
+    def model_id(self) -> str:
+        return self.config.litellm_model()
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        return embed_texts(self.config, list(texts), batch_size=self.batch_size)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed([text])[0]
 
 
 def _field(value, name: str, default=None):

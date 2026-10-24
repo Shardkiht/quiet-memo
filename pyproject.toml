@@ -12,6 +12,7 @@ dependencies = [
     "jieba>=0.42",
     "keyring>=25.5",
     "litellm>=1.60",
+    "numpy>=1.26",
     "openai>=1.60",
     "prompt-toolkit>=3.0",
     "pydantic>=2.9",
@@ -22,6 +23,10 @@ dependencies = [
     "tiktoken>=0.8",
     "typer>=0.15",
 ]
+
+[project.optional-dependencies]
+# 本地向量检索：uv sync --extra local-embed
+local-embed = ["fastembed>=0.3"]
 
 [project.scripts]
 qm = "quiet_memo.app.cli:main"

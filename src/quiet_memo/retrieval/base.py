@@ -23,11 +23,13 @@ class Retriever(Protocol):
 
 
 class Embedder(Protocol):
-    """文本向量化接口；具体模型在后续实现中接入。"""
+    """文本向量化接口；embed 用于条目入库，embed_query 用于查询侧。"""
 
     model_id: str
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
+
+    def embed_query(self, text: str) -> list[float]: ...
 
 
 class VectorRetriever(Retriever, Protocol):
