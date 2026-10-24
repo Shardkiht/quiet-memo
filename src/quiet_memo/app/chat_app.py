@@ -95,6 +95,14 @@ class PickScreen(ModalScreen):
         self.app.call_later(on_result, value)
 
 
+class NewSessionButton(Static):
+    """＋ 新会话：Button 默认 hover 样式（tall 边框 + 整块背景）会盖过虚线框，改 Static 自绘。"""
+
+    def on_click(self) -> None:
+        if not self.app.busy:
+            self.app._new_session()
+
+
 class SidebarToggle(Static):
     """«/» 折叠切换按钮：Button 的标签渲染会溢出窄按钮，Static 按内容框精确渲染。"""
 
@@ -214,7 +222,7 @@ class ChatApp(App):
     /* 侧栏隐藏后：对话区左上角的展开按钮，同款方框 */
     #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; padding: 0; background: #181a21; color: $accent; border: solid #4a4f5a; content-align: center middle; display: none; }
     #show-sidebar:hover { border: solid $accent; }
-    #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
+    #new-session { width: 1fr; height: 3; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; content-align: center middle; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
     #sessions { height: 1fr; }
     /* ListItem 默认高度跟随子容器（Vertical 是 1fr 会撑满列表），必须钉死 auto */
@@ -284,7 +292,7 @@ class ChatApp(App):
                 with Horizontal(id="sidebar-head"):
                     yield Static("quiet-memo", id="brand")
                     yield SidebarToggle("«", id="hide-sidebar")
-                yield Button("＋ 新会话", id="new-session")
+                yield NewSessionButton("＋ 新会话", id="new-session")
                 yield ListView(id="sessions")
             with Vertical(id="main"):
                 yield SidebarToggle("»", id="show-sidebar")
@@ -348,10 +356,6 @@ class ChatApp(App):
             self.query_one("#input", Input).focus()
             return
         self._switch_session(row["id"])
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "new-session" and not self.busy:
-            self._new_session()
 
     def on_key(self, event) -> None:
         palette = self.query_one("#cmd-palette", CommandPalette)
