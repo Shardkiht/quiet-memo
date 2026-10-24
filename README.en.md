@@ -79,7 +79,7 @@ If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Int
 
 ## Chat agent
 
-Run `qm` or `quietmemo` to enter the chat UI; a session is created when you send the first message. `qm chat` is equivalent. Type `/` to open the command menu with descriptions. Selection, input, and confirmation screens can all be cancelled with `ESC`. Chat content is centered and occupies about 36% of the window; the bottom status bar shows the current model and context usage.
+Run `qm` or `quietmemo` to enter the chat UI; a session is created when you send the first message. `qm chat` is equivalent. Type `/` to open the command menu with descriptions. Selection, input, and confirmation screens can all be cancelled with `ESC`. Chat content is centered and occupies about 36% of the window; the bottom status bar shows the current model and context usage and warns past the compaction threshold. Tool and retrieval events stream in live, turns are separated by a divider, and exiting distills the turn's statements with a summary.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`.

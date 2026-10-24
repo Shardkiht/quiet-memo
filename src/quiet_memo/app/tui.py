@@ -96,11 +96,16 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
     def status_bar() -> str:
-        # 底部状态栏：模型 + 本轮实际占用的上下文，随每轮刷新。
+        # 底部状态栏：模型 + 本轮实际占用的上下文，随每轮刷新；超压缩线加警示。
         total = service.config.chat.context_window
         plan = runtime.last_plan
         used = plan.estimated_tokens if plan is not None else 0
         percent = used / max(total, 1)
+        if percent >= runtime.config.compact_threshold:
+            return (
+                f"{indent()} ⚠ {runtime.model_label} · "
+                f"上下文 {format_tokens(used)}/{format_tokens(total)} · {percent:.0%}（超压缩线，下轮将压缩）"
+            )
         return (
             f"{indent()} {runtime.model_label} · "
             f"上下文 {format_tokens(used)}/{format_tokens(total)} · {percent:.0%}"
@@ -160,7 +165,13 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
             started = time.monotonic()
             try:
                 with console.status(f"{indent()}思考中…", spinner="dots"):
-                    reply = runtime.ask(line)
+                    # 工具与检索事件实时打印，不再等整轮回复结束。
+                    reply = runtime.ask(
+                        line,
+                        on_event=lambda event: console.print(
+                            centered(f"[{MUTED}]  ↳ {event}[/]")
+                        ),
+                    )
             except KeyboardInterrupt:
                 console.print(centered(f"[{WARNING}]已中断当前请求。[/]"))
                 continue
@@ -168,8 +179,6 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 console.print(centered(f"[red]{exc}[/red]"))
                 continue
             elapsed = time.monotonic() - started
-            for event in reply.events:
-                console.print(centered(f"[{MUTED}]  ↳ {event}[/]"))
             console.print(centered(Markdown(reply.content or "(空回复)")))
             meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
             percent = reply.estimated_tokens / max(service.config.chat.context_window, 1)
@@ -179,12 +188,22 @@ def chat_loop(runtime: AgentRuntime, service: MemoryService, sessions: SessionSt
                 meta.append(f"${reply.usage.cost_usd:.4f}")
             meta.append(f"{elapsed:.1f}s")
             console.print(centered(f"[{MUTED}]  {' · '.join(meta)}[/]"))
+            # 回合分隔线：把每轮问答划成独立区块。
+            console.print(centered(f"[#3a3a3a]{'─' * 28}[/]"))
     finally:
+        if runtime.has_session and runtime.config.extract_on_exit:
+            console.print(centered(f"[{MUTED}]正在沉淀本轮记忆…[/]"))
         stats = runtime.close()
         if runtime.has_session:
             console.print(centered(f"[dim]会话已保存：{runtime.current.id}[/dim]"))
         else:
             console.print(centered("[dim]未发送消息，没有创建会话。[/dim]"))
+        if stats.get("admitted") or stats.get("queued"):
+            console.print(
+                centered(
+                    f"[dim]退出时沉淀：写入 {stats['admitted']} 条，待确认 {stats['queued']} 条[/dim]"
+                )
+            )
         if stats.get("error"):
             console.print(centered(f"[dim]退出抽取失败：{stats['error']}[/dim]"))
         elif any(stats.get(key) for key in ("admitted", "queued", "blocked")):
