@@ -45,8 +45,10 @@ def indent(cols: int | None = None) -> str:
 
 
 def padded(renderable, cols: int | None = None):
+    # 不向右铺满终端（expand=False 并少补 2 列）：整行恰好占满时，
+    # 窗口拉伸/收窄的一两列误差会让行尾触发行回绕，实色分隔线最显形。
     left, _, right = layout_widths(cols)
-    return Padding(renderable, (0, right, 0, left))
+    return Padding(renderable, (0, max(0, right - 2), 0, left), expand=False)
 
 
 def print_right(markup: str, cols: int | None = None) -> None:
