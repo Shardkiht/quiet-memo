@@ -537,12 +537,18 @@ class ChatApp(App):
         used = plan.estimated_tokens if plan is not None else 0
         percent = used / max(total, 1)
         blocks = min(10, max(0, round(percent * 10)))
-        bar = "▊" * blocks + "▏" * (10 - blocks)
-        text = f"◆ {self.runtime.model_label} · {self.service.retrieval_mode}   上下文 {bar} {percent:.0%}"
+        # 用量条用制表横线（━ 已用 / ─ 剩余）：块/阴影字符在部分 CJK 字体会画成竖线；
+        # 低占用时百分比恒为 0%，直接展示“已用/上限”数字。
+        bar = f"[#8FAECB]{'━' * blocks}[/][#4a4f5a]{'─' * (10 - blocks)}[/]"
+        used_text = format_tokens(used) if used else "0"
+        text = (
+            f"[#d0d0d0]◆ {self.runtime.model_label}[/] [#5a5f6c]·[/] [#8a8f9c]{self.service.retrieval_mode}[/]"
+            f"   [#5a5f6c]上下文[/] {bar} [#8a8f9c]{used_text}/{format_tokens(total)}[/]"
+        )
         if self.pending_count:
-            text += f"   待确认 {self.pending_count}"
+            text += f"   [#D9A66C]待确认 {self.pending_count}[/]"
         if percent >= self.runtime.config.compact_threshold:
-            text += "   ⚠ 下轮压缩"
+            text += " [#D9A66C]⚠ 下轮压缩[/]"
         self.query_one("#status", Static).update(text)
 
     def _set_busy(self, busy: bool) -> None:
