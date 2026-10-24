@@ -4,7 +4,7 @@ from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore
-from quiet_memo.app.chat_app import ChatApp
+from quiet_memo.app.chat_app import SLASH_COMMANDS, ChatApp
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
@@ -83,3 +83,56 @@ async def test_slash_help_card(tmp_path):
         cards = app.query(".card")
         assert cards
         assert "命令" in str(cards[0].content)
+
+
+async def test_command_palette_filter_navigate_execute(tmp_path):
+    from quiet_memo.app.chat_app import CommandPalette
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "/th"  # 触发 Changed -> 面板打开
+        await pilot.pause()
+
+        palette = app.query_one("#cmd-palette", CommandPalette)
+        assert palette.display
+        assert [m[0] for m in palette.matches] == ["think"]
+        assert palette.current == "think"
+
+        await pilot.press("enter")  # 执行高亮命令
+        await pilot.pause()
+        assert not palette.display
+        cards = app.query(".card")
+        assert cards  # /think 走选择弹窗前先渲染提示或弹窗——执行过即可
+        assert widget.value == ""
+
+
+async def test_command_palette_escape_closes(tmp_path):
+    from quiet_memo.app.chat_app import CommandPalette
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "/"
+        await pilot.pause()
+        palette = app.query_one("#cmd-palette", CommandPalette)
+        assert palette.display and len(palette.matches) == len(SLASH_COMMANDS)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not palette.display
+
+
+async def test_ctrl_b_toggles_sidebar(tmp_path):
+    from textual.containers import Vertical
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        sidebar = app.query_one("#sidebar", Vertical)
+        assert sidebar.display
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert not sidebar.display
+        await pilot.press("ctrl+b")
+        await pilot.pause()
+        assert sidebar.display

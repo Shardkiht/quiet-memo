@@ -95,6 +95,64 @@ class PickScreen(ModalScreen):
         self.app.call_later(on_result, value)
 
 
+class CommandRow(Static):
+    """命令面板的一行：命令用法 + 说明；点击即执行。"""
+
+    def __init__(self, command: str, usage: str, description: str) -> None:
+        self.command = command
+        super().__init__(f"[cmd-usage]{usage:<20}[/] [cmd-desc]{description}[/]")
+        self.add_class("cmd-row")
+
+    def on_click(self) -> None:
+        self.app.run_command_from_palette(self.command)
+
+
+class CommandPalette(Vertical):
+    """竖排命令面板：跟随输入前缀过滤，↑↓ 移动高亮，Enter 执行。"""
+
+    def __init__(self) -> None:
+        super().__init__(id="cmd-palette")
+        self.matches: list[tuple[str, str, str]] = []
+        self.index = 0
+
+    def open(self, prefix: str) -> None:
+        needle = prefix.lower()
+        self.matches = [
+            (command, usage, description)
+            for command, usage, description in SLASH_COMMANDS
+            if command.startswith(needle)
+        ]
+        self.index = 0
+        self.rebuild()
+        self.display = bool(self.matches)
+
+    def close(self) -> None:
+        self.matches = []
+        self.display = False
+
+    def move(self, delta: int) -> None:
+        if not self.matches:
+            return
+        self.index = (self.index + delta) % len(self.matches)
+        self.refresh_rows()
+
+    @property
+    def current(self) -> str | None:
+        if 0 <= self.index < len(self.matches):
+            return self.matches[self.index][0]
+        return None
+
+    def rebuild(self) -> None:
+        self.remove_children()
+        if self.matches:
+            self.mount(*[CommandRow(*match) for match in self.matches])
+        self.refresh_rows()
+
+    def refresh_rows(self) -> None:
+        for position, row in enumerate(self.children):
+            row.set_class(position == self.index, "cmd-active")
+
+
 class TextInputScreen(ModalScreen):
     """单行输入模态：ESC 取消（None），Enter 提交。"""
 
@@ -147,10 +205,13 @@ class ChatApp(App):
     #sessions > ListItem { padding: 0 1; }
     .session-title { color: #c8ccd6; width: 1fr; overflow-x: hidden; text-overflow: ellipsis; }
     .session-meta { color: $faint; }
+    /* 覆写主题默认的整行亮色高亮：用克制的主题色，避免空白区域像误选 */
+    #sessions > ListItem.-highlight { background: #2b3444; }
     #sessions > ListItem.current { background: #232c3a; border-left: heavy $accent; }
+    #sessions > ListItem.current.-highlight { background: #2b3444; border-left: heavy $accent; }
     .group-label { color: $faint; padding: 1 1 0 1; }
 
-    #main { width: 1fr; }
+    #main { width: 1fr; layers: base overlay; }
     #chat { width: 1fr; height: 1fr; padding: 0 2; }
     .who-user { content-align: right top; color: $faint; width: 1fr; margin-top: 1; }
     .user-turn { width: 1fr; height: auto; align: right top; }
@@ -163,9 +224,18 @@ class ChatApp(App):
     .divider { border-top: solid #3a4150; height: 1; margin: 1 0; }
     .card { border: round #262933; background: $panel; padding: 0 2; margin: 1 0; color: #c8ccd6; width: 1fr; }
 
-    #slash-hint { color: $faint; padding: 0 2; height: 1; }
     #input { margin: 0 2; }
-    #status { background: #181a21; color: $muted; padding: 0 2; }
+    #bottom-bar { height: 1; background: #181a21; }
+    #toggle-sidebar { width: 5; height: 1; border: none; padding: 0; background: #232630; color: $muted; min-width: 5; }
+    #toggle-sidebar:hover { background: #2b303c; color: #d6dae2; }
+    #status { width: 1fr; background: #181a21; color: $muted; padding: 0 2; }
+
+    /* 命令面板：浮在输入框上方（覆盖对话区），OpenCode 风格竖排列表 */
+    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round $dim; padding: 0 1; display: none; }
+    .cmd-row { width: 1fr; height: 1; padding: 0 1; color: #c8ccd6; }
+    .cmd-row.cmd-active { background: #2b3444; }
+    .cmd-usage { color: $accent; }
+    .cmd-desc { color: $faint; }
 
     #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round $dim; padding: 1 2; }
     .pick-title { color: $accent; text-style: bold; margin-bottom: 1; }
@@ -176,7 +246,7 @@ class ChatApp(App):
 
     BINDINGS = [
         ("ctrl+q", "quit", "退出"),
-        ("ctrl+b", "focus_sidebar", "会话列表"),
+        ("ctrl+b", "toggle_sidebar", "折叠/展开会话栏"),
     ]
 
     def __init__(
@@ -202,9 +272,11 @@ class ChatApp(App):
                 yield ListView(id="sessions")
             with Vertical(id="main"):
                 yield VerticalScroll(id="chat")
-                yield Static("", id="slash-hint")
-                yield Input(placeholder="发送消息，/ 查看命令，Ctrl+B 会话列表", id="input")
-                yield Static("", id="status")
+                yield CommandPalette()
+                yield Input(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
+                with Horizontal(id="bottom-bar"):
+                    yield Button("◧", id="toggle-sidebar")
+                    yield Static("", id="status")
 
     def on_mount(self) -> None:
         self.refresh_pending()
@@ -216,8 +288,23 @@ class ChatApp(App):
             self.add_welcome()
         self.query_one("#input", Input).focus()
 
-    def action_focus_sidebar(self) -> None:
+    def action_toggle_sidebar(self) -> None:
+        sidebar = self.query_one("#sidebar", Vertical)
+        sidebar.display = not sidebar.display
+        button = self.query_one("#toggle-sidebar", Button)
+        button.label = "◨" if sidebar.display else "◧"
+
+    def show_sidebar(self) -> None:
+        sidebar = self.query_one("#sidebar", Vertical)
+        if not sidebar.display:
+            sidebar.display = True
+            self.query_one("#toggle-sidebar", Button).label = "◨"
         self.query_one("#sessions", ListView).focus()
+
+    def run_command_from_palette(self, command: str) -> None:
+        self.query_one("#cmd-palette", CommandPalette).close()
+        self.query_one("#input", Input).value = ""
+        self._command(f"/{command}")
 
     # ---------- 会话侧栏 ----------
 
@@ -252,8 +339,25 @@ class ChatApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-session" and not self.busy:
             self._new_session()
+        elif event.button.id == "toggle-sidebar":
+            self.action_toggle_sidebar()
+            self.query_one("#input", Input).focus()
 
     def on_key(self, event) -> None:
+        palette = self.query_one("#cmd-palette", CommandPalette)
+        if palette.display:
+            if event.key == "up":
+                event.prevent_default()
+                palette.move(-1)
+                return
+            if event.key == "down":
+                event.prevent_default()
+                palette.move(1)
+                return
+            if event.key == "escape":
+                event.prevent_default()
+                palette.close()
+                return
         # Del 删除侧栏高亮的会话；其他按键不受影响。
         if event.key != "delete":
             return
@@ -354,7 +458,7 @@ class ChatApp(App):
             "安静的个人记忆库 · 发送第一条消息后创建会话\n"
             f"◆ {self.runtime.model_label} · {self.service.retrieval_mode}"
             f" · 上下文 {format_tokens(total)}\n"
-            "/help 命令 · /models 模型 · Ctrl+B 会话列表 · Ctrl+Q 退出"
+            "/help 命令 · /models 模型 · Ctrl+B 折叠侧栏 · Ctrl+Q 退出"
         )
 
     def build_transcript(self) -> None:
@@ -446,14 +550,12 @@ class ChatApp(App):
     # ---------- 输入与回合 ----------
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        hint = self.query_one("#slash-hint", Static)
+        palette = self.query_one("#cmd-palette", CommandPalette)
         value = event.value
-        if not value.startswith("/") or " " in value:
-            hint.update("")
-            return
-        prefix = value[1:].lower()
-        matches = [f"{usage} {description}" for _, usage, description in SLASH_COMMANDS if usage.startswith(f"/{prefix}")]
-        hint.update("  ·  ".join(matches[:6]) if matches else "")
+        if value.startswith("/") and " " not in value:
+            palette.open(value[1:])
+        else:
+            palette.close()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if self.busy:
@@ -463,8 +565,14 @@ class ChatApp(App):
         if not line:
             return
         if line.startswith("/"):
+            palette = self.query_one("#cmd-palette", CommandPalette)
+            if palette.display and palette.current and " " not in line:
+                self.run_command_from_palette(palette.current)
+                return
+            palette.close()
             self._command(line)
             return
+        self.query_one("#cmd-palette", CommandPalette).close()
         stamp = time.strftime("%H:%M")
         self.add_user_turn(line, stamp)
         self._set_busy(True)
@@ -533,7 +641,7 @@ class ChatApp(App):
             if argument and command == "/resume":
                 self._resume_by_query(argument)
             else:
-                self.action_focus_sidebar()
+                self.show_sidebar()
                 self.notify("↑↓ 选择 · Enter 恢复 · Del 删除")
         elif command == "/compact":
             self._run_compact()
