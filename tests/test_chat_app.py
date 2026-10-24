@@ -125,7 +125,8 @@ async def test_command_palette_escape_closes(tmp_path):
 
 async def test_ctrl_b_toggles_sidebar(tmp_path):
     from textual.containers import Vertical
-    from textual.widgets import Button
+
+    from quiet_memo.app.chat_app import SidebarToggle
 
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
