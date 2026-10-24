@@ -17,22 +17,6 @@ def test_bare_invocation_falls_back_to_help_without_tty():
     assert "Usage:" in result.output
 
 
-def test_slash_completer_lists_and_filters_commands():
-    from prompt_toolkit.document import Document
-
-    from quiet_memo.app.ui import SLASH_COMMANDS, slash_completer
-
-    completer = slash_completer()
-    completions = list(completer.get_completions(Document("/", 1), None))
-    assert {item.text for item in completions} == {f"/{name}" for name, _, _ in SLASH_COMMANDS}
-
-    filtered = list(completer.get_completions(Document("/mo", 3), None))
-    assert [item.text for item in filtered] == ["/models"]
-
-    assert list(completer.get_completions(Document("/models re", 10), None)) == []
-    models = next(item for item in completions if item.text == "/models")
-    assert "切换模型" in models.display_meta_text
-
 
 def test_format_tokens_uses_km_units():
     from quiet_memo.infra.tokens import format_tokens
@@ -54,25 +38,6 @@ def test_layout_widths_wide_left():
         assert left == 2
         assert width == max(40, min(cols - 4, round(cols * 0.9)))
     assert widths(200)[1] == 180
-
-
-def test_bubble_lines_uniform_block():
-    from quiet_memo.app.ui import bubble_lines
-
-    lines = bubble_lines("今天下午三点去图书馆自习，顺便把 Java 并发的笔记看完", 24)
-    assert lines
-    # 气泡各行补齐成等宽块，且都落在限定宽度内。
-    assert len({line.cell_len for line in lines}) == 1
-    assert lines[0].cell_len <= 24
-    assert all(line.plain.strip() for line in lines)
-
-
-def test_input_echo_rows():
-    from quiet_memo.app.ui import input_echo_rows
-
-    assert input_echo_rows(4, "abc", 80) == 1
-    assert input_echo_rows(4, "a" * 100, 80) == 2  # ceil(104/80)
-    assert input_echo_rows(4, "", 80) == 1
 
 
 def test_padded_leaves_right_slack():
@@ -105,117 +70,8 @@ def test_escape_cancels_questionary_prompt():
         assert ask(question) is None
 
 
-def test_session_select_delete_returns_sentinel():
-    import questionary
-    from prompt_toolkit.input import create_pipe_input
-    from prompt_toolkit.output import DummyOutput
-
-    from quiet_memo.app import session_ui
-
-    with create_pipe_input() as inp:
-        question = questionary.select(
-            "pick",
-            choices=[questionary.Choice("A", value="a")],
-            input=inp,
-            output=DummyOutput(),
-        )
-        inp.send_text("\x1b[3~")
-        result = session_ui._session_select(question)
-
-    assert result == (session_ui.DELETE, "a")
 
 
-def test_session_choices_are_grouped_by_date():
-    import questionary
-
-    from quiet_memo.app.session_ui import session_choices, visible_sessions
-
-    rows = [
-        {
-            "id": "s-2",
-            "title": "新会话",
-            "messages": 3,
-            "summaries": 0,
-            "updated_at": "2026-10-22T10:00:00",
-        },
-        {
-            "id": "s-1",
-            "title": "旧会话",
-            "messages": 1,
-            "summaries": 1,
-            "updated_at": "2026-10-21T09:00:00",
-        },
-        {
-            "id": "s-empty",
-            "title": "(空会话)",
-            "messages": 0,
-            "summaries": 0,
-            "updated_at": "2026-10-20T09:00:00",
-        },
-    ]
-
-    visible = visible_sessions(rows)
-    choices = session_choices(visible, current_id="s-2")
-    separators = [item for item in choices if isinstance(item, questionary.Separator)]
-    values = [
-        item.value
-        for item in choices
-        if isinstance(item, questionary.Choice) and not isinstance(item, questionary.Separator)
-    ]
-
-    assert [row["id"] for row in visible] == ["s-2", "s-1"]
-    assert [item.title for item in separators] == ["2026-10-22", "2026-10-21"]
-    assert values == ["s-2", "s-1"]
-    assert "← 当前" in next(
-        item.title
-        for item in choices
-        if getattr(item, "value", None) == "s-2" and not isinstance(item, questionary.Separator)
-    )
-
-
-def test_session_manager_returns_session_id_not_first_character(
-    tmp_path, monkeypatch, patch_questionary
-):
-    from quiet_memo.agent.session import SessionStore, new_message_id
-    from quiet_memo.app import session_ui
-
-    patch_questionary(session_ui)
-    store = SessionStore(tmp_path)
-    session = store.create()
-    store.append(
-        session,
-        {"type": "message", "id": new_message_id(), "role": "user", "content": "测试会话"},
-    )
-
-    answers = [session.id]
-    monkeypatch.setattr(session_ui, "ask", lambda question, **kwargs: answers.pop(0))
-
-    assert session_ui.session_manager(store, current_id=None) == session.id
-
-
-def test_session_manager_delete_key_asks_before_deleting(
-    tmp_path, monkeypatch, patch_questionary
-):
-    from quiet_memo.agent.session import SessionStore, new_message_id
-    from quiet_memo.app import session_ui
-
-    patch_questionary(session_ui)
-    store = SessionStore(tmp_path)
-    session = store.create()
-    store.append(
-        session,
-        {"type": "message", "id": new_message_id(), "role": "user", "content": "待删除"},
-    )
-
-    answers = [(session_ui.DELETE, session.id), False, None]
-    monkeypatch.setattr(session_ui, "ask", lambda question, **kwargs: answers.pop(0))
-
-    assert session_ui.session_manager(store, current_id=None) is None
-    assert store.exists(session.id)
-
-    answers = [(session_ui.DELETE, session.id), True, None]
-    assert session_ui.session_manager(store, current_id=None) is None
-    assert not store.exists(session.id)
 
 
 def test_init_note_recall_commit(tmp_path):
