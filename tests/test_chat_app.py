@@ -125,17 +125,27 @@ async def test_command_palette_escape_closes(tmp_path):
 
 async def test_ctrl_b_toggles_sidebar(tmp_path):
     from textual.containers import Vertical
+    from textual.widgets import Button
 
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         sidebar = app.query_one("#sidebar", Vertical)
-        assert sidebar.display
+        expand = app.query_one("#show-sidebar", Button)
+        assert sidebar.display and not expand.display
         await pilot.press("ctrl+b")
         await pilot.pause()
-        assert not sidebar.display
+        assert not sidebar.display and expand.display
         await pilot.press("ctrl+b")
         await pilot.pause()
-        assert sidebar.display
+        assert sidebar.display and not expand.display
+
+        # 点侧栏右上角 « 隐藏；对话区左上角 » 恢复
+        await pilot.click("#hide-sidebar")
+        await pilot.pause()
+        assert not sidebar.display and expand.display
+        await pilot.click("#show-sidebar")
+        await pilot.pause()
+        assert sidebar.display and not expand.display
 
 
 async def test_sidebar_items_are_compact_and_clickable(tmp_path):

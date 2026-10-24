@@ -198,7 +198,14 @@ class ChatApp(App):
 
     #root { width: 1fr; height: 1fr; }
     #sidebar { width: 30; background: #181a21; border-right: solid #262933; }
-    #brand { color: $accent; text-style: bold; padding: 1 1 0 1; }
+    #sidebar-head { height: 3; align: left middle; }
+    #brand { color: $accent; text-style: bold; padding: 0 1; width: 1fr; }
+    /* 折叠按钮：侧栏右上角、主题色描边，保持显眼 */
+    #hide-sidebar { width: 3; height: 3; min-width: 3; background: #232630; color: $accent; border: round $accent; }
+    #hide-sidebar:hover { background: #2b3444; }
+    /* 侧栏隐藏后：对话区左上角的展开按钮 */
+    #show-sidebar { layer: overlay; dock: top; width: 4; height: 1; min-width: 4; border: none; padding: 0; background: #232630; color: $accent; display: none; }
+    #show-sidebar:hover { background: #2b3444; }
     #new-session { width: 1fr; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; }
     #new-session:hover { background: #2b303c; color: #d6dae2; }
     #sessions { height: 1fr; }
@@ -227,10 +234,7 @@ class ChatApp(App):
     .card { border: round #262933; background: $panel; padding: 0 2; margin: 1 0; color: #c8ccd6; width: 1fr; }
 
     #input { margin: 0 2; }
-    #bottom-bar { height: 1; background: #181a21; }
-    #toggle-sidebar { width: 5; height: 1; border: none; padding: 0; background: #232630; color: $muted; min-width: 5; }
-    #toggle-sidebar:hover { background: #2b303c; color: #d6dae2; }
-    #status { width: 1fr; background: #181a21; color: $muted; padding: 0 2; }
+    #status { width: 1fr; height: 1; background: #181a21; color: $muted; padding: 0 2; }
 
     /* 命令面板：浮在输入框上方（覆盖对话区），OpenCode 风格竖排列表 */
     #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round $dim; padding: 0 1; display: none; }
@@ -269,16 +273,17 @@ class ChatApp(App):
     def compose(self) -> ComposeResult:
         with Horizontal(id="root"):
             with Vertical(id="sidebar"):
-                yield Static("quiet-memo", id="brand")
+                with Horizontal(id="sidebar-head"):
+                    yield Static("quiet-memo", id="brand")
+                    yield Button("«", id="hide-sidebar")
                 yield Button("＋ 新会话", id="new-session")
                 yield ListView(id="sessions")
             with Vertical(id="main"):
+                yield Button("»", id="show-sidebar")
                 yield VerticalScroll(id="chat")
                 yield CommandPalette()
                 yield Input(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
-                with Horizontal(id="bottom-bar"):
-                    yield Button("◧", id="toggle-sidebar")
-                    yield Static("", id="status")
+                yield Static("", id="status")
 
     def on_mount(self) -> None:
         self.refresh_pending()
@@ -291,16 +296,14 @@ class ChatApp(App):
         self.query_one("#input", Input).focus()
 
     def action_toggle_sidebar(self) -> None:
-        sidebar = self.query_one("#sidebar", Vertical)
-        sidebar.display = not sidebar.display
-        button = self.query_one("#toggle-sidebar", Button)
-        button.label = "◨" if sidebar.display else "◧"
+        self._set_sidebar_visible(not self.query_one("#sidebar", Vertical).display)
+
+    def _set_sidebar_visible(self, visible: bool) -> None:
+        self.query_one("#sidebar", Vertical).display = visible
+        self.query_one("#show-sidebar", Button).display = not visible
 
     def show_sidebar(self) -> None:
-        sidebar = self.query_one("#sidebar", Vertical)
-        if not sidebar.display:
-            sidebar.display = True
-            self.query_one("#toggle-sidebar", Button).label = "◨"
+        self._set_sidebar_visible(True)
         self.query_one("#sessions", ListView).focus()
 
     def run_command_from_palette(self, command: str) -> None:
@@ -341,7 +344,7 @@ class ChatApp(App):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "new-session" and not self.busy:
             self._new_session()
-        elif event.button.id == "toggle-sidebar":
+        elif event.button.id in ("hide-sidebar", "show-sidebar"):
             self.action_toggle_sidebar()
             self.query_one("#input", Input).focus()
 
