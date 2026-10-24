@@ -192,11 +192,17 @@ def build_tools(service: MemoryService, session: Session, timeout: float = 60.0)
     registry.register(
         ToolSpec(
             name="recall",
-            description="检索用户长期记忆。回答涉及用户个人信息的问题前先调用。",
+            description=(
+                "检索用户长期记忆。回答涉及用户个人信息的问题前先调用。"
+                "query 用自然问句或用户的原话，不要拼凑关键词。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "检索关键词"},
+                    "query": {
+                        "type": "string",
+                        "description": "检索词：优先用自然问句或用户原话，如“我叫什么名字”",
+                    },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
                 },
                 "required": ["query"],

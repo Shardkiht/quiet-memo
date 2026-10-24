@@ -371,3 +371,33 @@ def test_ask_streams_events_to_callback(tmp_path):
 
     assert any("检索" in event for event in received)
     assert received == reply.events
+
+
+def _config_with_vault(tmp_path_factory=None):
+    import tempfile, pathlib
+    from quiet_memo.infra.config import Config, LLMConfig, RetrievalConfig
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    return Config(vault=tmp / "vault", llm=LLMConfig(), retrieval=RetrievalConfig(method="keyword"))
+
+
+def test_recall_tool_guides_natural_language_query():
+    """身份类查询召回缺口的修复之一：引导模型用自然问句/用户原话检索。"""
+    from quiet_memo.agent.tools import build_tools
+    from quiet_memo.agent.session import SessionStore
+    from quiet_memo.memory.service import MemoryService
+
+    config = _config_with_vault()
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    spec = build_tools(service, session)._tools["recall"]
+    assert "自然问句" in spec.description
+    assert "自然问句" in spec.parameters["properties"]["query"]["description"]
+
+
+def test_import_prompt_forbids_section_prefix():
+    """身份类查询召回缺口的修复之二：导入条目不带小节前缀，超短条目正文即事实。"""
+    from quiet_memo.memory.extractor import IMPORT_PROMPT
+
+    assert "小节编号或标题前缀" in IMPORT_PROMPT
+    assert "稀释向量语义" in IMPORT_PROMPT

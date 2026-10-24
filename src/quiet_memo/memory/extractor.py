@@ -129,6 +129,7 @@ IMPORT_PROMPT = """你是个人记忆导入器。把给定的档案或笔记内�
 5. 只整理档案主人本人的事实、偏好、计划、经历、设备、健康等；维护说明、导航索引、拆分注记、纯标题行不要输出。
 6. topic 用英文小写 kebab-case 规范名，如 preferences、career、health、devices、housing、food、people、schedule、learning、projects、identity。
 7. 明确事实 confidence 给 0.9 左右；带“未验证、存疑、矛盾、仅提及”边界的给 0.5—0.7，留给人工确认。
+8. 正文里不要保留小节编号或标题前缀（如“01 基本身份｜”），主题信息由 topic/title 承担；超短条目（≤12 字）尤其要保持正文就是事实本身，前缀会稀释向量语义导致检索不到。
 
 输出 JSON，格式：
 {"memories":[{"text":"...","topic":"preferences","title":"中文主题名","confidence":0.9}]}
