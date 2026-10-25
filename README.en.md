@@ -263,3 +263,5 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
+- Background scheduled session consolidation: periodically scan past sessions and auto-distill un-distilled content into memory (today the only triggers are exit and context compaction; session files are already appended per event, so no timer is needed for persistence itself)
+- Inject the vault's existing topic list into import extraction so incremental imports don't fragment topics
