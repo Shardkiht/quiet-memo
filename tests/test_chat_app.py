@@ -249,8 +249,13 @@ async def test_delete_session_uses_captured_row(tmp_path):
         await pilot.pause()
         # 模态打开期间模拟列表刷新（如后台回复完成后的 refresh_sessions）。
         app.refresh_sessions()
-        app._delete_session_result(row, True)
-        await pilot.pause()
+        # 走真实模态交互：高亮默认在第一项"确认删除"上，Enter 触发回调。
+        assert "不可恢复" in str(app.screen.query_one(".pick-title").render())
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if not store.exists(row["id"]):
+                break
 
         assert not store.exists(session.id)
         assert store.exists(survivor.id)

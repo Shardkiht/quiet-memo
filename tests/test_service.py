@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from quiet_memo.infra.config import Config, LLMConfig
-from quiet_memo.infra.gitops import GitError
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import Candidate, ExtractionResult
 from quiet_memo.memory.service import MemoryService
