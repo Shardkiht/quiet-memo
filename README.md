@@ -147,7 +147,7 @@ model = "BAAI/bge-small-zh-v1.5"
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
-| `/models` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/models refresh` 强制刷新） |
+| `/model` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/model refresh` 强制刷新） |
 | `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
 | `/setup` | 提示在终端运行 `qm setup`（配置向导不在对话界面内） |
@@ -157,7 +157,7 @@ model = "BAAI/bge-small-zh-v1.5"
 | `/pending` | 查看待确认候选 |
 | `/exit` | 退出 |
 
-`/help` 查看命令说明；`/quit` 同 `/exit`；`/model` 同 `/models`。选择类弹窗均可 `ESC` 取消；Ctrl+B 折叠/展开会话栏，Ctrl+Q 退出。
+`/help` 查看命令说明；`/quit` 同 `/exit`。选择类弹窗均可 `ESC` 取消；Ctrl+B 折叠/展开会话栏，Ctrl+Q 退出。
 
 ### 数据流
 
@@ -326,5 +326,6 @@ uv run python evals/retrieval_eval.py
 - 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
 - 真实模型 dogfood 与成本统计
 - 每日定时提交守护进程
+- 流式输出：助手回复正文逐段实时渲染（工具与检索事件卡片已是实时）
 - `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记已实现）
 - 导入抽取时注入 vault 已有主题列表，避免增量导入产生碎片主题

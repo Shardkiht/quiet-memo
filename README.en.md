@@ -147,7 +147,7 @@ In-session commands:
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
-| `/models` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/models refresh` forces a refresh) |
+| `/model` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/model refresh` forces a refresh) |
 | `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
 | `/setup` | Reminds you to run `qm setup` in the terminal (the setup wizard is not in the chat UI) |
@@ -157,7 +157,7 @@ In-session commands:
 | `/pending` | View pending candidates |
 | `/exit` | Exit |
 
-`/help` shows command descriptions; `/quit` is the same as `/exit`; `/model` is the same as `/models`.
+`/help` shows command descriptions; `/quit` is the same as `/exit`.
 
 ### Data flow
 
@@ -327,5 +327,6 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
+- Streaming output: render the reply text incrementally as it arrives (tool and retrieval event cards are already live)
 - A `qm consolidate` subcommand to trigger vault-wide catch-up manually or from a system scheduler (the automatic startup catch-up is already implemented)
 - Inject the vault's existing topic list into import extraction so incremental imports don't fragment topics

@@ -519,7 +519,7 @@ class ChatApp(App):
             self.exit()
         elif command == "/help":
             self.add_card("\n".join(f"{usage:<24}{description}" for _, usage, description in SLASH_COMMANDS), "命令")
-        elif command in ("/models", "/model"):
+        elif command == "/model":
             self._open_models(argument.lower() in ("refresh", "--refresh", "-r"))
         elif command == "/think":
             self._pick_reasoning()

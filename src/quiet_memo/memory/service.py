@@ -65,8 +65,10 @@ def load_persona(vault: Path) -> str:
     except FileNotFoundError:
         return ""
     except UnicodeDecodeError:
+        # 记事本 ANSI（中文系统即 GBK）保存的场景；gbk 编码全平台内置，
+        # 不用 Windows 专属的 mbcs——英文系统的 cp1252 解不了 GBK。
         try:
-            text = path.read_text(encoding="mbcs")
+            text = path.read_text(encoding="gbk")
         except (UnicodeDecodeError, OSError):
             return ""
     text = text.strip()
