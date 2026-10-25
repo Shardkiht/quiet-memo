@@ -88,6 +88,7 @@ Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the 
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`.
 - On exit, extracts user statements from the turn that have not yet been persisted.
+- On startup, checks for missed distillation: sessions that terminated abnormally (no `closed` record) or whose exit extraction failed are caught up automatically, up to 3 per launch, with a card reporting the result.
 - Memory entries record `session` and `message` sources, so they can be traced back to the original conversation.
 
 In-session commands:
@@ -111,6 +112,23 @@ In-session commands:
 | `/exit` | Exit |
 
 `/help` shows command descriptions; `/quit` is the same as `/exit`; `/model` is the same as `/models`.
+
+### Data flow
+
+```mermaid
+flowchart TD
+    U[User message] --> Q[Query building<br/>follow-ups carry context]
+    Q --> R[Hybrid retrieval<br/>BM25 + vector RRF]
+    R --> C[Agent loop<br/>LLM + tools]
+    C -- recall / memorize /<br/>correct / forget --> C
+    C --> A[Reply]
+    C -- user says "remember" --> W[Write adjudication<br/>confidence / conflict / secrets]
+    X[Exit extraction<br/>pre-compaction flush<br/>startup catch-up] --> W
+    W -- trusted --> V[(vault<br/>memories/*.md)]
+    W -- low confidence / conflict / sensitive --> P[(Pending queue<br/>pending.jsonl)]
+    P -- qm approve / reject --> V
+    V --> G[(Git commit<br/>auto Chinese summary)]
+```
 
 ### Context compaction
 
@@ -263,5 +281,5 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
-- Background scheduled session consolidation: periodically scan past sessions and auto-distill un-distilled content into memory (today the only triggers are exit and context compaction; session files are already appended per event, so no timer is needed for persistence itself)
+- A `qm consolidate` subcommand to trigger vault-wide catch-up manually or from a system scheduler (the automatic startup catch-up is already implemented)
 - Inject the vault's existing topic list into import extraction so incremental imports don't fragment topics

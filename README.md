@@ -88,6 +88,7 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
 - 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。
 - 退出时抽取本轮尚未沉淀的用户陈述。
+- 启动时自动检查漏沉淀：异常终止（无 `closed` 记录）或上次退出抽取失败的会话会在下次启动时补记，最多处理 3 个、弹卡片汇报。
 - 记忆条目记录 `session` 和 `message` 来源，可追溯到原始对话。
 
 会话内命令：
@@ -111,6 +112,23 @@ Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交�
 | `/exit` | 退出 |
 
 `/help` 查看命令说明；`/quit` 同 `/exit`；`/model` 同 `/models`。选择类弹窗均可 `ESC` 取消；Ctrl+B 折叠/展开会话栏，Ctrl+Q 退出。
+
+### 数据流
+
+```mermaid
+flowchart TD
+    U[用户消息] --> Q[查询构造<br/>追问自动带上文]
+    Q --> R[混合检索<br/>BM25 + 向量 RRF]
+    R --> C[Agent 循环<br/>LLM + 工具]
+    C -- recall / memorize /<br/>correct / forget --> C
+    C --> A[回复]
+    C -- 用户说"记住" --> W[写入裁决<br/>置信度 / 冲突 / 敏感拦截]
+    X[退出抽取<br/>压缩前沉淀<br/>启动补记] --> W
+    W -- 可信 --> V[(vault<br/>memories/*.md)]
+    W -- 低置信 / 冲突 / 敏感 --> P[(待确认队列<br/>pending.jsonl)]
+    P -- qm approve / reject --> V
+    V --> G[(Git 提交<br/>自动中文总结)]
+```
 
 ### 上下文压缩
 
@@ -262,5 +280,5 @@ uv run python evals/retrieval_eval.py
 - 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
 - 真实模型 dogfood 与成本统计
 - 每日定时提交守护进程
-- 后台定时整理会话：定期扫描历史会话，把未沉淀的内容自动抽取入记忆（当前只有退出与上下文压缩两个触发点；会话文件本身已是逐事件追加落盘，无需为持久化加定时器）
+- `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记已实现）
 - 导入抽取时注入 vault 已有主题列表，避免增量导入产生碎片主题
