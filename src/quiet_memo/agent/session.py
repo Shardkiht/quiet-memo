@@ -81,6 +81,13 @@ class Session:
             if record.get("type") in ("message", "assistant", "tool")
         ]
 
+    def needs_consolidation(self) -> bool:
+        """无 closed 记录 = 异常终止；带 extraction_error = 退出抽取失败。两者都漏沉淀。"""
+        types = {record.get("type") for record in self.records}
+        if "consolidated" in types:
+            return False
+        return "closed" not in types or "extraction_error" in types
+
     def user_texts_after_summary(self) -> list[str]:
         return [
             record["content"]
@@ -173,6 +180,23 @@ class SessionStore:
             )
         sessions.sort(key=lambda item: item["updated_at"], reverse=True)
         return sessions[:limit]
+
+    def unconsolidated(self, limit: int = 3, exclude: str | None = None) -> list[Session]:
+        """按最近更新优先，找出漏沉淀的会话（异常终止或退出抽取失败）。"""
+        if not self.root.exists():
+            return []
+        found: list[tuple[str, Session]] = []
+        for path in self.root.glob("*.jsonl"):
+            if exclude and path.stem == exclude:
+                continue
+            try:
+                session = self.load(path.stem)
+            except (json.JSONDecodeError, KeyError):
+                continue
+            if session.needs_consolidation():
+                found.append((session.updated_at, session))
+        found.sort(key=lambda item: item[0], reverse=True)
+        return [session for _, session in found[:limit]]
 
     def _path(self, session_id: str) -> Path:
         if not SESSION_ID_RE.match(session_id):

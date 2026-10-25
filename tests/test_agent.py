@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from quiet_memo.agent.runtime import AgentRuntime
-from quiet_memo.agent.session import SessionStore
+from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig
 from quiet_memo.llm import AssistantTurn, ToolCall
 from quiet_memo.memory.extractor import StaticExtractor
@@ -449,3 +449,73 @@ def test_init_vault_seeds_default_soul(tmp_path):
 
     soul = service.config.vault / "SOUL.md"
     assert "个人记忆助手" in soul.read_text(encoding="utf-8")
+
+
+def test_consolidate_pending_catches_crashed_session(tmp_path):
+    model = FakeChatModel([])
+    runtime, service = build_runtime(
+        tmp_path,
+        model,
+        [Candidate(text="崩溃会话里说的偏好", topic="preferences", confidence=0.95)],
+        extract_on_exit=True,
+    )
+    store = runtime.sessions
+    # 模拟意外退出：会话有用户消息但没有 closed 记录。
+    session = store.create()
+    store.append(session, {"type": "message", "id": new_message_id(), "role": "user", "content": "我喜欢清淡风味"})
+
+    result = runtime.consolidate_pending()
+
+    assert result["consolidated"] == 1
+    assert result["admitted"] == 1
+    assert service.store.has_text("崩溃会话里说的偏好")
+    types = [record["type"] for record in store.load(session.id).records]
+    assert "consolidated" in types
+    # 已打标记的会话不会被重复处理。
+    assert runtime.consolidate_pending()["scanned"] == 0
+
+
+def test_consolidate_pending_skips_current_and_respects_flag(tmp_path):
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([]))
+    store = runtime.sessions
+    session = store.create()
+    store.append(session, {"type": "message", "id": new_message_id(), "role": "user", "content": "当前会话内容"})
+
+    # 当前活跃会话不参与（其内容由 close() 沉淀）。
+    runtime.resume(session.id)
+    assert runtime.consolidate_pending()["scanned"] == 0
+
+    # extract_on_exit=False 时整个补记关闭。
+    runtime.start()
+    runtime.config.extract_on_exit = False
+    assert runtime.consolidate_pending()["scanned"] == 0
+
+
+def test_close_failure_marks_extraction_error_and_catchup_recovers(tmp_path):
+    runtime, service = build_runtime(
+        tmp_path,
+        FakeChatModel([]),
+        [Candidate(text="抽取失败后又补记的内容", topic="misc", confidence=0.95)],
+        extract_on_exit=True,
+    )
+    store = runtime.sessions
+    session = store.create()
+    store.append(session, {"type": "message", "id": new_message_id(), "role": "user", "content": "退出时该被抽取的话"})
+
+    original = service.memorize
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("API 挂了")
+
+    service.memorize = boom
+    runtime.resume(session.id)
+    stats = runtime.close()
+    assert stats["error"]
+    types = [record["type"] for record in store.load(session.id).records]
+    assert "extraction_error" in types and "closed" in types
+
+    service.memorize = original
+    runtime.start()
+    result = runtime.consolidate_pending()
+    assert result["admitted"] == 1
+    assert service.store.has_text("抽取失败后又补记的内容")

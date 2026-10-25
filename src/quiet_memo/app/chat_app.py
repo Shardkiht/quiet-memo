@@ -139,6 +139,44 @@ class ChatApp(App):
         else:
             self.add_welcome()
         self.query_one("#input", Input).focus()
+        self._run_catchup()
+
+    def _run_catchup(self) -> None:
+        """启动补沉淀：扫描异常终止/抽取失败的会话并补记。
+
+        先同步快扫（纯文件读取）：没有欠账就跳过，避免常态下短暂禁用输入。
+        """
+        exclude = self.runtime.current.id if self.runtime.has_session else None
+        if not self.sessions.unconsolidated(limit=3, exclude=exclude):
+            return
+        self._set_busy(True)
+        self.run_worker(
+            self._catchup_work, group="ask", thread=True, exclusive=True, exit_on_error=False
+        )
+
+    def _catchup_work(self) -> None:
+        try:
+            result = self.runtime.consolidate_pending()
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"启动补记检查失败：{exc}")
+            return
+        self.call_from_thread(self._after_catchup, result)
+
+    def _after_catchup(self, result: dict) -> None:
+        self._set_busy(False)
+        if result["consolidated"] or result["errors"]:
+            parts = []
+            if result["consolidated"]:
+                parts.append(
+                    f"补记 {result['consolidated']} 个未收尾会话："
+                    f"写入 {result['admitted']} 条，待确认 {result['queued']} 条"
+                )
+            for error in result["errors"]:
+                parts.append(f"补记失败 {error}")
+            self.add_card("\n".join(parts), "启动检查")
+            self.refresh_sessions()
+            self.refresh_pending()
+            self.update_status()
 
     def action_toggle_sidebar(self) -> None:
         self._set_sidebar_visible(not self.query_one("#sidebar", Vertical).display)

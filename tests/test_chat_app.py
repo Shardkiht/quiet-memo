@@ -3,7 +3,7 @@ from __future__ import annotations
 from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
-from quiet_memo.agent.session import SessionStore
+from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.app.chat_app import SLASH_COMMANDS, ChatApp, SidebarToggle
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig
 from quiet_memo.llm import AssistantTurn
@@ -28,12 +28,12 @@ class FakeSummarizer:
         return "会话摘要"
 
 
-def build_app(tmp_path, turns):
+def build_app(tmp_path, turns, extract_on_exit=False):
     config = Config(
         vault=tmp_path / "vault",
         llm=LLMConfig(),
         retrieval=RetrievalConfig(method="keyword"),
-        chat=ChatConfig(context_window=32000, auto_recall=3, recall_rewrite=False),
+        chat=ChatConfig(context_window=32000, auto_recall=3, recall_rewrite=False, extract_on_exit=extract_on_exit),
     )
     service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
     service.init_vault()
@@ -282,3 +282,23 @@ def test_slash_commands_cover_aliases():
     # 回归：面板必须列出 _command 实际支持的别名，/qu、/mo 前缀过滤要有提示。
     commands = {command for command, _, _ in SLASH_COMMANDS}
     assert "quit" in commands and "model" in commands
+
+
+async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
+    # 回归：启动检查发现异常终止的会话时，补记并显示卡片；无欠账时保持沉默。
+    app = build_app(tmp_path, [AssistantTurn(content="好")], extract_on_exit=True)
+    crashed = app.sessions.create()
+    app.sessions.append(
+        crashed,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "中断前说的话"},
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app.busy is False
+        assert app.query_one("#input", Input).disabled is False
+        cards = [str(widget.render()) for widget in app.query(".card")]
+        assert any("补记 1 个未收尾会话" in card for card in cards)
+        assert app.runtime.consolidate_pending()["scanned"] == 0  # 已标记，不会重复
