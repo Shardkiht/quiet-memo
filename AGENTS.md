@@ -14,6 +14,8 @@ uv run qm setup      # 配置模型与 API Key
 ```
 
 依赖只用 `uv` 管理；新增依赖写进 `pyproject.toml`，不要用 `pip install` 改本地环境。
+全局 `qm` 是 editable 安装：只同步代码、**不同步依赖**。改动依赖后必须重跑
+`uv tool install --force -e '.[local-embed]'` 重建工具环境，否则全局命令启动即崩（ModuleNotFoundError）。
 
 ## 技术栈
 
@@ -57,14 +59,30 @@ memory/agent → llm → infra
 - `sessions/<id>.jsonl` 是追加写的事件流，不重写旧行；上下文压缩只追加 `summary` 记录，不删除原文。
 - `vault/SOUL.md` 是可选自定义人设：存在时替换系统提示词的人设段，机制规则固定拼接在后不可覆盖；它是指令不是记忆，不参与抽取与检索。
 - 密钥、验证码、API Key 在写入前拦截；不把密钥写入 vault、配置示例或测试。
+- 迁移 vault 存量数据用一次性脚本（放 `scripts/`，不随包发布）：**默认 dry-run** 出前后对照报告，`--apply` 才落盘；条目 ID 与行尾标签必须逐字节保留；落盘后自动验证（ID 集合一致、条数不变、无空正文）并提交 vault git 作为回滚点；向量缓存依赖哈希自动增量重建，不手动处理。
 - `quiet-memo.toml`、`vault/`、`sessions/`、`.env`、密钥文件都不提交。
 
 ## 测试
 
 - 新行为必须带测试，放在 `tests/` 下对应的领域文件中。
 - 测试禁止读取本机 keyring、真实 API Key 或调用付费模型；使用 `tests/conftest.py` 的 fixture、`StaticExtractor` 和假模型。
-- 未接真实 API Key 验证时，不声称“已完成线上验证”。
-- 提交前运行 `uv run pytest`，全绿再继续。
+- **测试环境隔离是夹具级红线**：conftest autouse 已把 `QUIET_MEMO_CONFIG`/`QUIET_MEMO_VAULT` 钉在每个测试的临时目录，任何测试和代码路径都不得绕过它直连本机配置/记忆库。把源码回退到旧版本再跑新测试是危险组合（旧路径可能绕过 mock 写真实文件），必须先确认隔离护栏在位。
+- 未接真实 API Key 验证时，不声称“已完成线上验证”；真实调用只做冒烟（提前约定次数上限），解耦层的 mock 单测覆盖不了 service 接线的真实形状，关键链路补一次真实冒烟。
+- **每次提交前运行全量 `uv run pytest`，全绿才允许 commit**，不要只跑改动文件。
+
+
+## 可移植性
+
+CI 在 ubuntu-latest 与 windows-latest 双矩阵运行，**本地全绿不等于 CI 绿**：
+
+- 禁用平台专属编码与 API（如 `mbcs`）——ubuntu 上直接 LookupError，英文 Windows 上行为不同；用全平台内置的替代（如 `gbk`），确需平台分支时以 `sys.platform` 显式守卫。
+- 文件路径、换行、终端转义同理：优先标准库可移植写法。
+
+## 界面不变量
+
+- 忙碌态（补沉淀/切换/请求中）收到的用户意图**必须排队接续，不得静默丢弃**；异常必须释放 busy 并把错误显示出来，不能让输入框永久禁用。
+- 流式输出：循环级不做重试（重试会重复 delta）；完成时就地定稿，不重复挂载；中途断流保留半截并显式标注。
+- git、LLM 等慢操作在 worker 线程执行，UI 线程只经 `call_from_thread` 接收回调。
 
 ## 文档同步
 
@@ -78,6 +96,8 @@ README 面向用户，必须始终与 `src/quiet_memo` 的当前架构一致。�
 - 配置字段或默认值变化：同步 `config.example.toml`、README 配置示例与 `infra/config.py`。
 - 存储格式或写入规则变化：更新 README 的“写入规则”和“结构”章节。
 - README 不写会快速过期的固定数字（如测试数量），只写稳定的覆盖范围。
+- 功能待办以 GitHub Issues 为准（创建时写清现状/方案/验收标准，完成时带验收记录关闭）；README Roadmap 只留条目级摘要并指向 Issues。
+- README 呈现约束：不加装饰性 emoji；代码块里**不做依赖跨行字符对齐的 ASCII 排版**（GitHub 等宽字体无 CJK 字形，中文回退渲染必然错位），只保留框内自洽的元素。
 - 约定本身变化时更新本文件。
 
 ## 脱敏
