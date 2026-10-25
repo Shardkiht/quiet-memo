@@ -164,6 +164,11 @@ async def test_sidebar_items_are_compact_and_clickable(tmp_path):
         )
         ids.append(session.id)
     async with app.run_test(size=(100, 30)) as pilot:
+        # 等启动补沉淀（含自动提交）结束再操作列表，避免列表刷新吞掉点击
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy:
+                break
         await pilot.pause()
         items = list(app.query(SessionItem))
         assert len(items) >= 2

@@ -29,6 +29,18 @@ def similarity(left: str, right: str) -> float:
     return len(left_set & right_set) / len(left_set | right_set)
 
 
+def bigram_coverage(query: str, text: str) -> float:
+    """query 的 CJK bigram 有多少出现在 text 里，衡量 keyword 命中的字面质量。
+
+    与 similarity（对称 Jaccard）不同：短查询对长条目时 Jaccard 必然偏低，
+    覆盖率只看"查询有多少落在条目里"，才能区分真命中与虚匹配。
+    """
+    query_set = _bigrams(query)
+    if not query_set:
+        return 0.0
+    return len(query_set & _bigrams(text)) / len(query_set)
+
+
 def contains_secret(text: str) -> bool:
     return bool(SECRET_RE.search(text))
 

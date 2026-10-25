@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from ..memory.detect import bigram_coverage
 from .base import Retriever, SearchHit
 
 RRF_K = 60
+# keyword 命中的字面质量闸：查询的 CJK bigram 覆盖率低于该值的命中视为虚匹配，
+# 不参与 RRF（否则干扰项的 BM25 高名次会把向量路的正确结果挤下去，
+# 见 evals/ 数字类失败用例："投递了多少份申请" → "申请里的经历的措辞…"）。
+MIN_QUERY_COVERAGE = 0.3
 
 
 class HybridRetriever:
@@ -14,7 +19,11 @@ class HybridRetriever:
 
     def search(self, query: str, limit: int = 10) -> list[SearchHit]:
         deep = max(limit * 3, 12)
-        keyword_hits = self.keyword.search(query, deep)
+        keyword_hits = [
+            hit
+            for hit in self.keyword.search(query, deep)
+            if bigram_coverage(query, hit.text) >= MIN_QUERY_COVERAGE
+        ]
         vector_hits = self.vector.search(query, deep)
         if not vector_hits:
             return keyword_hits[:limit]

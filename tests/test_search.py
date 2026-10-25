@@ -59,3 +59,33 @@ def test_tokenize_drops_punctuation():
     assert "budget" in tokens
     assert "," not in tokens
     assert "." not in tokens
+
+
+def test_bigram_coverage_distinguishes_hit_from_noise():
+    from quiet_memo.memory.detect import bigram_coverage
+
+    assert bigram_coverage("法压壶", "咖啡器具包括法压壶、分享壶和电子秤") == 1.0
+    # 虚匹配：查询与干扰项只有零星 bigram 重叠
+    assert bigram_coverage("投递了多少份申请", "申请里的经历的措辞改了很多遍") < 0.3
+    assert bigram_coverage("coffee", "纯中文条目") == 0.0
+
+
+def test_hybrid_gates_literal_mismatch():
+    # 回归（issue #3）：keyword 虚匹配（干扰项 BM25 高名次）不得拖累 RRF 融合。
+    from quiet_memo.retrieval import HybridRetriever
+    from quiet_memo.retrieval.base import SearchHit
+
+    class Stub:
+        def __init__(self, hits):
+            self.hits = hits
+
+        def search(self, query, limit=10):
+            return self.hits[:limit]
+
+    query = "投递了多少份申请"
+    distractor = SearchHit(text="申请里的经历的措辞改了很多遍", topic="career")
+    target = SearchHit(text="上月在活动平台提交申请约 12 场，大多数没有回执", topic="career")
+    hybrid = HybridRetriever(Stub([distractor]), Stub([target]))
+
+    hits = hybrid.search(query, 5)
+    assert hits[0].text == target.text

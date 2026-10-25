@@ -17,15 +17,15 @@ uv run python evals/retrieval_eval.py --failures    # 打印未过 @3 的用例
 - **用例**：27 例，分五类（原词 / 口语改写 / 身份 / 数字 / 跨语言）；top-3 内命中任一可接受子串记过。
 - **指标**：Recall@3、Recall@5、MRR@10。
 
-## 结果（2026-10-24，BAAI/bge-small-zh-v1.5 本地推理）
+## 结果（2026-10-25，BAAI/bge-small-zh-v1.5 本地推理）
 
 | 检索方式 | Recall@3 | Recall@5 | MRR@10 |
 | --- | --- | --- | --- |
 | keyword | 67% | 67% | 0.667 |
-| vector | **89%** | **89%** | 0.815 |
-| hybrid | 85% | 85% | 0.815 |
+| vector | 89% | 89% | 0.815 |
+| hybrid | **89%** | **89%** | 0.815 |
 
-分类 Recall@3：hybrid 在原词 / 改写 / 身份上与向量单路持平，跨语言与数字类是共同弱项。
+分类 Recall@3：hybrid 在原词 / 身份上与向量单路持平且由两路融合保障；数字类从 50% 升到 75%（hybrid 增加 keyword 命中的字面覆盖闸：查询的 CJK bigram 在命中条目覆盖率 < 0.3 视为虚匹配，不参与 RRF——此前干扰项的 BM25 高名次会把向量路的正确结果挤下去）。跨语言 50% 是 bge-small-zh 的模型局限，agent 查询改写已要求非中文问题补充中文说法，根治需换 multilingual embedding 模型。
 
 ## 真实库验证（脱敏，仅汇总指标）
 

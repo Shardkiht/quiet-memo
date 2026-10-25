@@ -125,22 +125,23 @@ class StubRetriever:
 
 
 def test_hybrid_ranks_hits_in_both_paths_first():
-    keyword = StubRetriever(["a", "b", "c"])
-    vector = StubRetriever(["b", "d"])
-    hits = HybridRetriever(keyword, vector).search("q", limit=3)
+    # 夹具需通过字面覆盖闸（查询 bigram 在条目中覆盖率 >= 0.3）
+    keyword = StubRetriever(["红轴机械键盘", "键盘轴体", "红轴与键盘手感"])
+    vector = StubRetriever(["键盘轴体", "桌面音箱"])
+    hits = HybridRetriever(keyword, vector).search("红轴键盘", limit=3)
 
-    assert hits[0].id == "b"
+    assert hits[0].id == "键盘轴体"
     assert len(hits) == 3
 
 
 def test_hybrid_breaks_rrf_ties_toward_vector_rank():
     # BM25 噪声把 a 排第一、c 排第三；向量把 c 排第一、a 排第三 → RRF 完全平局，
-    # 决胜应信任向量名次（c 第一）。
-    keyword = StubRetriever(["a", "b", "c"])
-    vector = StubRetriever(["c", "b", "a"])
-    hits = HybridRetriever(keyword, vector).search("q", limit=3)
+    # 决胜应信任向量名次（c 第一）。夹具全部含查询词"键盘"，通过字面覆盖闸。
+    keyword = StubRetriever(["键盘手感", "键盘轴体", "机械键盘套装"])
+    vector = StubRetriever(["机械键盘套装", "键盘轴体", "键盘手感"])
+    hits = HybridRetriever(keyword, vector).search("键盘", limit=3)
 
-    assert [hit.id for hit in hits[:2]] == ["c", "a"]
+    assert [hit.id for hit in hits[:2]] == ["机械键盘套装", "键盘手感"]
 
 
 def test_hybrid_falls_back_to_keyword_when_vector_fails(tmp_path):

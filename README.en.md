@@ -317,8 +317,8 @@ uv run python evals/retrieval_eval.py
 | Retrieval | Recall@3 | Recall@5 | MRR@10 |
 | --- | --- | --- | --- |
 | keyword | 67% | 67% | 0.667 |
-| vector | **89%** | **89%** | 0.815 |
-| hybrid | 85% | 85% | 0.815 |
+| vector | 89% | 89% | 0.815 |
+| hybrid | **89%** | **89%** | 0.815 |
 
 On a real 797-entry personal vault (anonymized, aggregate metrics only), after fixing a vector-matrix misalignment caused by duplicate entry IDs from bulk import, hybrid's MRR@10 rose from 0.569 to 0.745 — the best of the three. Methodology, fix details, and known weaknesses are in [evals/README.md](evals/README.md).
 

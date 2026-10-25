@@ -316,8 +316,8 @@ uv run python evals/retrieval_eval.py
 | 检索方式 | Recall@3 | Recall@5 | MRR@10 |
 | --- | --- | --- | --- |
 | keyword | 67% | 67% | 0.667 |
-| vector | **89%** | **89%** | 0.815 |
-| hybrid | 85% | 85% | 0.815 |
+| vector | 89% | 89% | 0.815 |
+| hybrid | **89%** | **89%** | 0.815 |
 
 在一个 797 条的真实个人记忆库上（脱敏，仅汇总指标），修复批量导入的条目 ID 碰撞导致的向量错位后，hybrid 的 MRR@10 从 0.569 升到 0.745，成为三路最佳。方法、修复细节与已知弱点见 [evals/README.md](evals/README.md)。
 
