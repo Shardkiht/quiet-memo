@@ -16,28 +16,10 @@ from ..llm import (
 )
 from ..memory.service import MemoryService, load_persona
 from .context import ContextManager
+from .prompts import build_system_prompt
 from .recall import RecallQueryBuilder
 from .session import Session, SessionStore, new_message_id
 from .tools import build_tools, compact_tool_outputs
-
-
-DEFAULT_PERSONA = "你是用户的个人记忆助手，运行在本地终端，拥有跨会话的长期记忆。"
-
-# 机制段不可被人设覆盖：SOUL.md 只替换人设段，工具说明与记忆纪律永远拼在末尾。
-MECHANISM_PROMPT = """可用工具：
-- recall：检索长期记忆。回答涉及用户经历、偏好、计划、关系、设备、健康等问题前先调用。
-- memorize：把用户明确陈述的个人事实静默写入长期记忆。用户说“记住”时优先调用。
-- correct：更正已存在的记忆。用户指出旧信息错误并给出新表述时调用。
-- forget：软删除记忆。只在用户明确要求忘记时调用；不确定就先问。
-- review_pending：查看等待确认的记忆候选。
-
-规则：
-1. 只记录用户本人明确陈述的内容；助手建议、推测、用户转述的他人经历不能写成用户事实。
-2. 检索为空就直说没有记录，不要编造记得的内容。
-3. 写入后不要逐条复述或要求用户确认；queued 只说明有内容待确认即可。
-4. 不要在回复中暴露内部 ID，除非用户要求审阅。
-5. 回答简洁直接；引用记忆时说明主题或时间。
-6. 用户纠正信息时，先用 recall 找到对应记忆，再决定 correct 还是 memorize。"""
 
 
 @dataclass
@@ -305,9 +287,8 @@ class AgentRuntime:
         self.sessions.rename(self.current, title)
 
     def _system_prompt(self) -> str:
-        """每轮读 vault/SOUL.md，人设改动下一轮即生效；机制段固定在末尾。"""
-        persona = load_persona(self.service.config.vault) or DEFAULT_PERSONA
-        return f"{persona}\n\n{MECHANISM_PROMPT}"
+        """每轮读 vault/SOUL.md，人设改动下一轮即生效；拼接规则见 prompts.py。"""
+        return build_system_prompt(load_persona(self.service.config.vault))
 
     def _auto_recall(self, text: str) -> str:
         if self.config.auto_recall <= 0:

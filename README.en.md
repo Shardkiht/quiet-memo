@@ -213,8 +213,8 @@ Corrections use a "new entry + `supersedes`" pattern, and the old entry's status
 src/quiet_memo/
 ├── app/          cli.py, server.py, tui.py, chat_app.py, actions.py,
 │                 ui.py, session_ui.py            # CLI / Textual TUI / FastMCP entry points
-├── agent/        runtime.py, context.py, tools.py, session.py
-│                                                   # Agent loop, compaction, tools, sessions
+├── agent/        runtime.py, prompts.py, context.py, tools.py,
+│                 session.py                     # Agent loop, system prompt, compaction, tools, sessions
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py
 │                                                   # Memory domain and write decisions
