@@ -11,7 +11,7 @@ from quiet_memo.memory.extractor import (
     parse_import,
     split_chunks,
 )
-from quiet_memo.memory.models import Candidate
+from quiet_memo.memory.models import Candidate, ExtractionResult
 from quiet_memo.memory.service import MemoryService
 
 
@@ -178,3 +178,28 @@ def test_import_extractor_injects_existing_topics(monkeypatch):
 
     ImportExtractor(LLMConfig(), completer=fake_complete).extract("内容")
     assert "已有主题" not in captured["user"]
+
+
+def test_import_text_passes_store_topics_to_extractor(tmp_path, monkeypatch):
+    # 回归：service 注入路径要把 store.topics() 的主题名传给 ImportExtractor。
+    import quiet_memo.memory.service as service_module
+    from quiet_memo.memory.extractor import StaticExtractor
+
+    captured = {}
+
+    class FakeImportExtractor:
+        def __init__(self, config, topics=None):
+            captured["topics"] = topics or []
+
+        def extract(self, text):
+            return ExtractionResult(memories=[])
+
+    monkeypatch.setattr(service_module, "ImportExtractor", FakeImportExtractor)
+    config = Config(vault=tmp_path / "vault")
+    service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
+    service.init_vault()
+    service.note("既有条目", topic="preferences")
+
+    service.import_text("新内容")
+
+    assert captured["topics"] == ["preferences"]

@@ -199,7 +199,7 @@ class MemoryService:
         if not text:
             raise ValueError("导入内容为空。")
         if extractor is None:
-            topics = [topic["topic"] for topic in self.store.topics()]
+            topics = [topic.topic for topic in self.store.topics()]
             extractor = ImportExtractor(self.config.llm, topics=topics)
         return self._adjudicate(extractor.extract(text).memories, source, dry_run=dry_run)
 

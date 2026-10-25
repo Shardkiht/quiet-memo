@@ -16,10 +16,14 @@ class FakeChatModel:
     def __init__(self, turns):
         self.turns = list(turns)
 
-    def chat(self, messages, tools):
+    def chat(self, messages, tools, on_delta=None):
         turn = self.turns.pop(0)
         if isinstance(turn, Exception):
             raise turn
+        if on_delta is not None and turn.content:
+            half = max(1, len(turn.content) // 2)
+            on_delta(turn.content[:half])
+            on_delta(turn.content[half:])
         return turn
 
 
@@ -358,3 +362,59 @@ async def test_topics_command_lists_and_drills(tmp_path):
         await pilot.pause()
         cards = [str(w.render()) for w in app.query(".card")]
         assert any("喝咖啡偏好清淡" in c for c in cards)
+
+
+async def test_streaming_roundtrip_renders_single_reply(tmp_path):
+    # 回归（issue #4）：流式增量渲染只挂载一个回复块，完成后不重复。
+    app = build_app(tmp_path, [AssistantTurn(content="流式回复全文")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "测流式"
+        await pilot.press("enter")
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app._stream_widget is None  # 收尾已清
+        assert len(app.query(".reply")) == 1
+        assert len(app.query(".meta")) == 1
+        session = app.runtime.current
+        assert any(
+            record.get("type") == "assistant" and record.get("content") == "流式回复全文"
+            for record in session.records
+        )
+
+
+async def test_streaming_error_marks_interruption(tmp_path):
+    # 回归（issue #4）：中途断流保留半截内容并显式标注，不静默吞掉。
+    app = build_app(tmp_path, [])
+    from quiet_memo.llm import ChatModelError
+
+    class BoomModel:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools, on_delta=None):
+            self.calls += 1
+            if on_delta is not None:
+                on_delta("生成到一半")
+            raise ChatModelError("连接中断")
+
+    app.runtime.model = BoomModel()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        widget = app.query_one("#input", Input)
+        widget.value = "测试中断"
+        await pilot.press("enter")
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app.query(".reply")
+        cards = [str(w.render()) for w in app.query(".card")]
+        assert any("连接中断" in c for c in cards)
+        assert app.query_one("#input", Input).disabled is False

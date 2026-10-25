@@ -120,7 +120,12 @@ class AgentRuntime:
             raise RuntimeError("会话尚未开始")
         return self.session
 
-    def ask(self, text: str, on_event: Callable[[str], None] | None = None) -> AgentReply:
+    def ask(
+        self,
+        text: str,
+        on_event: Callable[[str], None] | None = None,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> AgentReply:
         text = text.strip()
         if not text:
             raise ValueError("消息为空。")
@@ -168,7 +173,7 @@ class AgentRuntime:
         completed = False
 
         while steps < self.config.max_tool_steps:
-            turn = self._chat_with_retry(messages, tools.schemas())
+            turn = self._chat_with_retry(messages, tools.schemas(), on_delta=on_delta)
             usage.add(turn.usage)
             steps += 1
             record = self._append_assistant(session, turn)
@@ -205,7 +210,7 @@ class AgentRuntime:
                     "content": "已达到工具调用上限。请基于以上信息直接给出最终回答，不要再调用工具。",
                 }
             )
-            turn = self._chat_with_retry(messages, [])
+            turn = self._chat_with_retry(messages, [], on_delta=on_delta)
             usage.add(turn.usage)
             steps += 1
             record = self._append_assistant(session, turn)
@@ -379,7 +384,20 @@ class AgentRuntime:
 
         return record_to_message(record) or {"role": "assistant", "content": ""}
 
-    def _chat_with_retry(self, messages: list[dict], tools: list[dict]) -> AssistantTurn:
+    def _chat_with_retry(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        on_delta: Callable[[str], None] | None = None,
+    ) -> AssistantTurn:
+        if on_delta is not None:
+            # 流式不做循环级重试：中断重发会让界面收到重复 delta。
+            try:
+                return self.model.chat(messages, tools, on_delta=on_delta)
+            except ChatModelError:
+                raise
+            except Exception as exc:
+                raise ChatModelError(f"LLM 调用失败：{exc}") from exc
         last_error: Exception | None = None
         for attempt in range(3):
             try:

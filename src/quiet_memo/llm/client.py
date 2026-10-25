@@ -241,17 +241,92 @@ class LiteLLMChatModel:
     def __init__(self, config: LLMConfig):
         self.config = config
 
-    def chat(self, messages: list[dict], tools: list[dict]) -> AssistantTurn:
+    def chat(self, messages: list[dict], tools: list[dict], on_delta=None) -> AssistantTurn:
         if not self.config.api_key():
             raise ChatModelError(
                 f"未配置 LLM API Key，请设置环境变量 {self.config.api_key_env}，"
                 "或运行 qm setup 保存到系统凭据。"
             )
         litellm = _litellm()
-        response = complete(self.config, messages, tools=tools or None)
-        message = response.choices[0].message
-        return AssistantTurn(
-            content=_field(message, "content") or "",
-            tool_calls=_tool_calls(message),
-            usage=_usage(response, litellm),
-        )
+        if on_delta is None:
+            response = complete(self.config, messages, tools=tools or None)
+            message = response.choices[0].message
+            return AssistantTurn(
+                content=_field(message, "content") or "",
+                tool_calls=_tool_calls(message),
+                usage=_usage(response, litellm),
+            )
+        return self._chat_stream(messages, tools or None, on_delta, litellm)
+
+    def _chat_stream(self, messages, tools, on_delta, litellm) -> AssistantTurn:
+        """流式：文本 delta 实时回调，tool_calls 增量累积，结束时返回聚合结果。"""
+        kwargs: dict = {
+            "model": self.config.litellm_model(),
+            "messages": messages,
+            "api_key": self.config.api_key(),
+            "timeout": self.config.timeout,
+            "num_retries": self.config.num_retries,
+            "temperature": self.config.temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if self.config.base_url:
+            kwargs["api_base"] = self.config.base_url
+        if self.config.reasoning_effort:
+            kwargs["reasoning_effort"] = self.config.reasoning_effort
+        if tools:
+            kwargs["tools"] = tools
+        if self.config.fallbacks:
+            kwargs["fallbacks"] = self.config.fallbacks
+
+        content_parts: list[str] = []
+        tool_acc: dict[int, dict] = {}
+        usage = Usage()
+        stream = litellm.completion(**kwargs)
+        for chunk in stream:
+            chunk_usage = _field(chunk, "usage")
+            if chunk_usage is not None:
+                try:
+                    cost = float(litellm.completion_cost(completion_response=chunk) or 0.0)
+                except Exception:
+                    cost = 0.0
+                usage = Usage(
+                    prompt_tokens=int(_field(chunk_usage, "prompt_tokens", 0) or 0),
+                    completion_tokens=int(_field(chunk_usage, "completion_tokens", 0) or 0),
+                    cost_usd=cost,
+                )
+            choices = _field(chunk, "choices") or []
+            if not choices:
+                continue
+            delta = _field(choices[0], "delta")
+            if delta is None:
+                continue
+            text = _field(delta, "content") or ""
+            if text:
+                content_parts.append(text)
+                on_delta(text)
+            for tc in _field(delta, "tool_calls") or []:
+                index = _field(tc, "index", 0) or 0
+                acc = tool_acc.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                tc_id = _field(tc, "id")
+                if tc_id:
+                    acc["id"] = tc_id
+                function = _field(tc, "function")
+                if function is not None:
+                    name = _field(function, "name")
+                    if name:
+                        acc["name"] = name
+                    arguments = _field(function, "arguments")
+                    if arguments:
+                        acc["arguments"] += arguments
+
+        tool_calls: list[ToolCall] = []
+        for acc in tool_acc.values():
+            try:
+                arguments = json.loads(acc["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            tool_calls.append(
+                ToolCall(id=acc["id"] or f"call-{len(tool_calls)}", name=acc["name"], arguments=arguments)
+            )
+        return AssistantTurn(content="".join(content_parts), tool_calls=tool_calls, usage=usage)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig
-from quiet_memo.llm import AssistantTurn, ToolCall
+from quiet_memo.llm import AssistantTurn, ChatModelError, ToolCall
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import Candidate, ExtractionResult
 from quiet_memo.memory.service import MemoryService
@@ -14,11 +16,15 @@ class FakeChatModel:
         self.turns = list(turns)
         self.calls = []
 
-    def chat(self, messages, tools):
+    def chat(self, messages, tools, on_delta=None):
         self.calls.append((messages, tools))
         turn = self.turns.pop(0)
         if isinstance(turn, Exception):
             raise turn
+        if on_delta is not None and turn.content:
+            half = max(1, len(turn.content) // 2)
+            on_delta(turn.content[:half])
+            on_delta(turn.content[half:])
         return turn
 
 
@@ -519,3 +525,41 @@ def test_close_failure_marks_extraction_error_and_catchup_recovers(tmp_path):
     result = runtime.consolidate_pending()
     assert result["admitted"] == 1
     assert service.store.has_text("抽取失败后又补记的内容")
+
+
+def test_ask_streams_reply_deltas(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="你好世界")])
+    runtime, _ = build_runtime(tmp_path, model)
+    deltas: list[str] = []
+
+    reply = runtime.ask("测试", on_delta=deltas.append)
+
+    assert deltas == ["你好", "世界"]
+    assert reply.content == "你好世界"
+    # 会话记录仍是完整内容
+    session = runtime.current
+    assert any(
+        record.get("type") == "assistant" and record.get("content") == "你好世界"
+        for record in session.records
+    )
+
+
+def test_streaming_failure_does_not_retry_or_duplicate(tmp_path):
+    # 回归：流中断后循环级重试会让界面收到重复 delta，必须单次直败。
+
+    class StreamBoom(FakeChatModel):
+        def chat(self, messages, tools, on_delta=None):
+            self.calls.append((messages, tools))
+            if on_delta is not None:
+                on_delta("半截")
+            raise RuntimeError("连接中断")
+
+    model = StreamBoom([])
+    runtime, _ = build_runtime(tmp_path, model)
+    deltas: list[str] = []
+
+    with pytest.raises(ChatModelError):
+        runtime.ask("测试", on_delta=deltas.append)
+
+    assert len(model.calls) == 1  # 未重试
+    assert deltas == ["半截"]  # 已发内容不重复

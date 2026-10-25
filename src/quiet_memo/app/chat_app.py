@@ -113,6 +113,9 @@ class ChatApp(App):
         self.busy = False
         self.pending_count = 0
         self._pending_switch: str | None = None
+        self._stream_widget: Markdown | None = None
+        self._stream_buffer = ""
+        self._stream_flush_scheduled = False
 
     # ---------- 布局 ----------
 
@@ -494,7 +497,9 @@ class ChatApp(App):
         started = time.monotonic()
         try:
             reply = self.runtime.ask(
-                line, on_event=lambda event: self.call_from_thread(self.add_event, event)
+                line,
+                on_event=lambda event: self.call_from_thread(self.add_event, event),
+                on_delta=lambda delta: self.call_from_thread(self._stream_append, stamp, delta),
             )
         except ChatModelError as exc:
             self.call_from_thread(self._finish_error, str(exc))
@@ -509,14 +514,56 @@ class ChatApp(App):
         meta.append(f"{elapsed:.1f}s")
         self.call_from_thread(self._finish_reply, reply.content, stamp, " · ".join(meta))
 
+    # ---------- 流式渲染：帧合并更新，完成/中断后收尾 ----------
+
+    def _stream_append(self, stamp: str, delta: str) -> None:
+        chat = self._chat()
+        if self._stream_widget is None:
+            chat.mount(Static(f"quiet-memo · {stamp}", classes="who-ai"))
+            self._stream_buffer = ""
+            self._stream_widget = Markdown("", classes="reply")
+            chat.mount(self._stream_widget)
+        self._stream_buffer += delta
+        if not self._stream_flush_scheduled:
+            self._stream_flush_scheduled = True
+            self.call_after_refresh(self._stream_flush)
+
+    def _stream_flush(self) -> None:
+        self._stream_flush_scheduled = False
+        if self._stream_widget is not None:
+            self._stream_widget.update(self._stream_buffer)
+            self._scroll_end()
+
+    def _stream_close(self, final_content: str) -> None:
+        if self._stream_widget is not None:
+            self._stream_widget.update(final_content)
+            self._stream_widget = None
+            self._stream_buffer = ""
+        self._stream_flush_scheduled = False
+
     def _finish_reply(self, content: str, stamp: str, meta: str) -> None:
-        self.add_assistant_turn(content, stamp, meta)
+        if self._stream_widget is not None:
+            # 流式已实时渲染正文：就地定稿并补 meta/分隔线，不再重复挂载。
+            self._stream_close(content or "（空回复）")
+            chat = self._chat()
+            if meta:
+                chat.mount(Static(meta, classes="meta"))
+            chat.mount(Static("", classes="divider"))
+            self._scroll_end()
+        else:
+            self.add_assistant_turn(content, stamp, meta)
         self.refresh_sessions()  # 首条消息会创建会话，侧栏需要随之出现
         self.refresh_pending()
         self.update_status()
         self._set_busy(False)
 
     def _finish_error(self, message: str) -> None:
+        if self._stream_widget is not None:
+            # 中途断流：保留已生成的半截并显式标注，不静默吞掉。
+            interrupted = self._stream_buffer + "\n\n*（生成中断）*"
+            self._stream_close(interrupted)
+            self._chat().mount(Static("", classes="divider"))
+            self._scroll_end()
         self.add_card(message)
         self.refresh_sessions()
         self._set_busy(False)
