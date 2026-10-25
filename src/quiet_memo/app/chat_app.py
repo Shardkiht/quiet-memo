@@ -272,20 +272,21 @@ class ChatApp(App):
             PickScreen(
                 f"删除会话「{row['title']}」？不可恢复",
                 [("确认删除", True), ("取消", False)],
-                self._delete_session_result,
+                partial(self._delete_session_result, row),
             )
         )
 
-    def _delete_session_result(self, confirmed) -> None:
+    def _delete_session_result(self, row: dict, confirmed) -> None:
         if confirmed is not True:
             self.query_one("#input", Input).focus()
             return
-        view = self.query_one("#sessions", ListView)
-        item = view.highlighted_child
-        if isinstance(item, SessionItem):
-            self.sessions.delete(item.row["id"])
+        # 用弹窗打开前捕获的 row，不读列表当前高亮：模态期间列表可能被刷新重建。
+        if self.sessions.exists(row["id"]):
+            self.sessions.delete(row["id"])
             self.refresh_sessions()
             self.notify("已删除会话。")
+        else:
+            self.notify("会话已不存在。")
         self.query_one("#input", Input).focus()
 
     # ---------- 对话流 ----------
@@ -717,9 +718,15 @@ class ChatApp(App):
         self.query_one("#input", Input).focus()
 
     def _context_custom(self, value) -> None:
-        if not value or not value.isdigit():
+        try:
+            # isdigit 会放行 "①" 这类 Unicode 数字而 int() 抛错，改用 int 校验。
+            size = int(value) if value else 0
+        except ValueError:
+            size = 0
+        if size <= 0:
+            self.add_card("上下文需要是正整数（token）。")
             self.query_one("#input", Input).focus()
             return
-        self.add_card(actions.apply_context(self.service, int(value)))
+        self.add_card(actions.apply_context(self.service, size))
         self.update_status()
         self.query_one("#input", Input).focus()

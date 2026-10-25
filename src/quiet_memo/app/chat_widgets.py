@@ -17,6 +17,7 @@ SLASH_COMMANDS = [
     ("summary", "/summary", "查看当前会话摘要"),
     ("status", "/status", "会话与记忆状态"),
     ("models", "/models [refresh]", "切换模型，refresh 强制刷新列表"),
+    ("model", "/model", "同 /models"),
     ("think", "/think", "切换思考强度（low/medium/high，按模型支持）"),
     ("context", "/context", "切换上下文长度（档位按模型上限生成）"),
     ("setup", "/setup", "完整配置模型 / API Key"),
@@ -26,6 +27,7 @@ SLASH_COMMANDS = [
     ("pending", "/pending", "查看待确认候选"),
     ("help", "/help", "查看命令帮助"),
     ("exit", "/exit", "退出"),
+    ("quit", "/quit", "同 /exit"),
 ]
 
 

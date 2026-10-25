@@ -218,3 +218,62 @@ async def test_session_switch_failure_releases_busy(tmp_path):
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
         assert "会话切换失败" in str(app.query(".card")[-1].render())
+
+
+async def test_delete_session_uses_captured_row(tmp_path):
+    # 回归：确认弹窗期间列表被刷新时，仍删除弹窗捕获的那条会话（不读高亮项）。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from quiet_memo.agent.session import new_message_id
+
+        # 待删目标是非当前会话；再留一个有消息的会话撑住列表渲染。
+        store = app.sessions
+        session = store.create()
+        store.rename(session, "待删除会话")
+        store.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": "待删除会话"},
+        )
+        survivor = store.create()
+        store.rename(survivor, "保留会话")
+        store.append(
+            survivor,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": "保留会话"},
+        )
+        await pilot.pause()
+        app.refresh_sessions()
+        row = {"id": session.id, "title": "待删除会话"}
+
+        app.confirm_delete_session(row)
+        await pilot.pause()
+        # 模态打开期间模拟列表刷新（如后台回复完成后的 refresh_sessions）。
+        app.refresh_sessions()
+        app._delete_session_result(row, True)
+        await pilot.pause()
+
+        assert not store.exists(session.id)
+        assert store.exists(survivor.id)
+        from quiet_memo.app.chat_app import SessionItem
+
+        # 列表已刷新：被删条目消失，保留会话仍在侧栏。
+        assert [item.row["id"] for item in app.query(SessionItem)] == [survivor.id]
+
+
+async def test_context_custom_rejects_unicode_digits(tmp_path):
+    # 回归："①".isdigit() 为 True 但 int() 抛错；现在应给出错误卡片而不是崩进事件循环。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._context_custom("①")
+        await pilot.pause()
+        assert "正整数" in str(app.query(".card")[-1].render())
+        app._context_custom("16x")
+        await pilot.pause()
+        assert "正整数" in str(app.query(".card")[-1].render())
+
+
+def test_slash_commands_cover_aliases():
+    # 回归：面板必须列出 _command 实际支持的别名，/qu、/mo 前缀过滤要有提示。
+    commands = {command for command, _, _ in SLASH_COMMANDS}
+    assert "quit" in commands and "model" in commands
