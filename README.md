@@ -1,6 +1,6 @@
 <div align="center">
 
-# quiet-memo
+# Quiet-Memo
 
 **安静的个人记忆库** —— 从日常对话中无感沉淀**你本人**的事实、偏好和计划
 

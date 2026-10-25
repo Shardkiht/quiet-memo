@@ -1,6 +1,6 @@
 <div align="center">
 
-# quiet-memo
+# Quiet-Memo
 
 **A quiet personal memory store** — it extracts facts, preferences, and plans about **you** from everyday conversations
 
