@@ -401,3 +401,53 @@ def test_import_prompt_forbids_section_prefix():
 
     assert "小节编号或标题前缀" in IMPORT_PROMPT
     assert "稀释向量语义" in IMPORT_PROMPT
+
+
+def test_system_prompt_default_without_soul(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="收到")])
+    runtime, _ = build_runtime(tmp_path, model)
+
+    runtime.ask("你好")
+
+    content = model.calls[0][0][0]["content"]
+    assert "个人记忆助手" in content
+    assert "可用工具：" in content
+
+
+def test_soul_md_replaces_persona_keeps_mechanism(tmp_path):
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "SOUL.md").write_text("你是阿澈，语气简洁带冷幽默。", encoding="utf-8")
+    model = FakeChatModel([AssistantTurn(content="收到")])
+    runtime, _ = build_runtime(tmp_path, model)
+
+    runtime.ask("你好")
+
+    content = model.calls[0][0][0]["content"]
+    assert "阿澈" in content
+    assert "个人记忆助手" not in content
+    assert content.index("阿澈") < content.index("规则：")
+
+
+def test_soul_md_hot_reload_next_turn(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="一"), AssistantTurn(content="二")])
+    runtime, _ = build_runtime(tmp_path, model)
+    runtime.ask("第一句")
+
+    (tmp_path / "vault" / "SOUL.md").write_text("你是测试人设B。", encoding="utf-8")
+    runtime.ask("第二句")
+
+    assert "测试人设B" not in model.calls[0][0][0]["content"]
+    assert "测试人设B" in model.calls[1][0][0]["content"]
+
+
+def test_soul_md_truncated_by_tokens(tmp_path):
+    (tmp_path / "vault").mkdir()
+    (tmp_path / "vault" / "SOUL.md").write_text("长" * 8000, encoding="utf-8")
+    model = FakeChatModel([AssistantTurn(content="收到")])
+    runtime, _ = build_runtime(tmp_path, model)
+
+    runtime.ask("你好")
+
+    content = model.calls[0][0][0]["content"]
+    assert len(content) < 9000
+    assert "规则：" in content

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from ..infra.config import Config, LLMConfig, RetrievalConfig, load_config
 from ..infra.gitops import GitRepo
+from ..infra.tokens import truncate_to_tokens
 from ..llm import LiteLLMEmbedder
 from ..llm.commit_summary import summarize_diff
 from ..retrieval import (
@@ -34,6 +35,7 @@ VAULT_README = """# quiet-memo vault
 - `.quiet-memo/pending.jsonl`：低置信、冲突或敏感候选，等待人工确认。
 - `.quiet-memo/resolved.jsonl`：已确认/已拒绝记录。
 - `.quiet-memo/audit.jsonl`：更正、删除等审计记录。
+- `SOUL.md`（可选）：自定义人设，替代系统提示词里的默认人设段。
 - 全部变更由 Git 跟踪，可回滚、可审计。
 """
 
@@ -43,6 +45,21 @@ VAULT_GITIGNORE = """__pycache__/
 Thumbs.db
 .quiet-memo/vectors.npz
 """
+
+SOUL_FILENAME = "SOUL.md"
+SOUL_MAX_TOKENS = 2000
+
+
+def load_persona(vault: Path) -> str:
+    """读 vault/SOUL.md 自定义人设；缺失或为空返回空串，超长按 token 截断。"""
+    try:
+        text = (vault / SOUL_FILENAME).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    text = text.strip()
+    if not text:
+        return ""
+    return truncate_to_tokens(text, SOUL_MAX_TOKENS)
 
 
 def _build_embedder(config: RetrievalConfig) -> Embedder | None:

@@ -14,16 +14,17 @@ from ..llm import (
     Summarizer,
     Usage,
 )
-from ..memory.service import MemoryService
+from ..memory.service import MemoryService, load_persona
 from .context import ContextManager
 from .recall import RecallQueryBuilder
 from .session import Session, SessionStore, new_message_id
 from .tools import build_tools, compact_tool_outputs
 
 
-SYSTEM_PROMPT = """你是用户的个人记忆助手，运行在本地终端，拥有跨会话的长期记忆。
+DEFAULT_PERSONA = "你是用户的个人记忆助手，运行在本地终端，拥有跨会话的长期记忆。"
 
-可用工具：
+# 机制段不可被人设覆盖：SOUL.md 只替换人设段，工具说明与记忆纪律永远拼在末尾。
+MECHANISM_PROMPT = """可用工具：
 - recall：检索长期记忆。回答涉及用户经历、偏好、计划、关系、设备、健康等问题前先调用。
 - memorize：把用户明确陈述的个人事实静默写入长期记忆。用户说“记住”时优先调用。
 - correct：更正已存在的记忆。用户指出旧信息错误并给出新表述时调用。
@@ -144,7 +145,7 @@ class AgentRuntime:
         memory_context = self._auto_recall(text)
         plan = self.context.prepare(
             session,
-            SYSTEM_PROMPT,
+            self._system_prompt(),
             text,
             current_id=message_id,
             memory_context=memory_context,
@@ -236,7 +237,7 @@ class AgentRuntime:
             return ["新会话还没有记录，无需压缩。"]
         plan = self.context.prepare(
             self.current,
-            SYSTEM_PROMPT,
+            self._system_prompt(),
             "",
             force=True,
         )
@@ -302,6 +303,11 @@ class AgentRuntime:
 
     def rename(self, title: str) -> None:
         self.sessions.rename(self.current, title)
+
+    def _system_prompt(self) -> str:
+        """每轮读 vault/SOUL.md，人设改动下一轮即生效；机制段固定在末尾。"""
+        persona = load_persona(self.service.config.vault) or DEFAULT_PERSONA
+        return f"{persona}\n\n{MECHANISM_PROMPT}"
 
     def _auto_recall(self, text: str) -> str:
         if self.config.auto_recall <= 0:
