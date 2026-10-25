@@ -1,18 +1,62 @@
-**English** | [中文](README.md)
-
-[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml) [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+<div align="center">
 
 # quiet-memo
 
-A quiet personal memory store: it extracts facts, preferences, and plans about **you** from everyday conversations and silently writes them to local Markdown by default. Only low-confidence, conflicting, or sensitive content goes to a confirmation queue.
+**A quiet personal memory store** — it extracts facts, preferences, and plans about **you** from everyday conversations
 
-- **Local-first**: Markdown is the single source of truth; Git handles versioning and audit.
-- **Silent by default**: Trusted content is written directly without interrupting you item by item; it only prompts when necessary.
-- **Full agent**: interactive chat, persisted sessions, context compaction, and a tool loop.
-- **Multi-model**: LiteLLM integration for DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and more.
-- **Reversible**: Each commit automatically generates a Chinese summary for your review.
+Local Markdown · Git-reversible · MCP-callable
 
-## Quick start
+[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+[中文](README.md) | **English**
+
+</div>
+
+## ✨ Highlights
+
+| | |
+| --- | --- |
+| 🗃 **Local-first** | Markdown is the single source of truth; Git handles versioning and audit |
+| 🤫 **Silent by default** | Trusted content is written directly without interrupting you item by item |
+| 🤖 **Full agent** | Interactive chat, persisted sessions, context compaction, and a tool loop |
+| 🔌 **Multi-model** | LiteLLM integration for DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and more |
+| ↩️ **Reversible** | Each commit automatically generates a Chinese summary for your review |
+
+## 🖥️ Interface preview
+
+```text
+╭──────────────────────┬──────────────────────────────────────────────────────────────────╮
+│ quiet-memo «         │ Quiet personal memory · first message creates a session          │
+│ ＋ New session       │ ◆ deepseek-flash · hybrid · context 200K                         │
+│ Today                │────────────────────────────────────────────────────────────────  │
+│ ▌14:32 Recent plans  │                                                                  │
+│   4 msgs             │                                                        me · 14:32│
+│ 10:02 Java Q&A       │                          ╭──────────────────────────────────────╮│
+│   6 msgs             │                          │  What have I been busy with lately?  ││
+│                      │                          ╰──────────────────────────────────────╯│
+│                      │quiet-memo · 14:32                                                │
+│                      │┃ recalled 「recent plans」: 3 entries                            │
+│ Yesterday            │Three things going on: wrapping up the final project,             │
+│ 21:47 Internship     │job hunting, and a fixed study rhythm — don't add more.           │
+│ 09:15 Weekly review  │2 steps · 3.2K tok · $0.0018 · 4.2s                               │
+│                      │────────────────────────────────────────────────────────────────  │
+│                      │                                                        me · 14:34│
+│                      │                   ╭─────────────────────────────────────────────╮│
+│                      │                   │  I added one more study day, remember that  ││
+│                      │                   ╰─────────────────────────────────────────────╯│
+│                      │✓ remembered [schedule] one extra library day midweek             │
+│                      │Noted. No clash with Sunday rest — three on, one off.             │
+│                      │                                                                  │
+│                      │❯ Send a message, / commands, Ctrl+B sidebar▊                     │
+│                      │◆ deepseek-flash · hybrid  context ━━──── 3.2K/200K  pending 2    │
+│                      │                                                                  │
+╰──────────────────────┴──────────────────────────────────────────────────────────────────╯
+```
+
+## 🚀 Quick start
 
 Requires Python 3.12+, uv, and git.
 
@@ -79,7 +123,7 @@ model = "BAAI/bge-small-zh-v1.5"
 
 If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Interactive menus and chat rely on the Windows console; Windows Terminal or PowerShell is recommended. Git Bash users can try `winpty`.
 
-## Chat agent
+## 💬 Chat agent
 
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Tool and retrieval events stream in as cards, turns are separated by a divider, and exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary.
 
@@ -154,7 +198,7 @@ You are Ache, my old friend. Keep replies concise, occasionally dry-humored, and
 - Content beyond roughly 2000 tokens is truncated.
 - SOUL.md is an instruction file, not a memory: it never enters extraction or retrieval; it lives in the vault, is versioned by Git, and changes are traceable.
 
-## Command line
+## ⌨️ Command line
 
 ```bash
 # Extract from a conversation and write silently
@@ -185,7 +229,7 @@ uv run qm commit --no-push
 uv run qm history
 ```
 
-### MCP integration
+## 🔌 MCP integration
 
 ```bash
 uv run qm serve --vault ~/.quiet-memo/vault
@@ -206,7 +250,7 @@ MCP client configuration:
 
 Exposed tools: `memorize`, `note`, `recall`, `review_pending`, `approve`, `reject`, `list_topics`, `status`.
 
-## Write rules
+## 📝 Write rules
 
 | Situation | Behavior |
 | --- | --- |
@@ -225,7 +269,7 @@ Memories are stored per topic as `memories/<topic>.md`, and entries carry a stab
 
 Corrections use a "new entry + `supersedes`" pattern, and the old entry's status becomes `superseded`; deletion is a soft delete with status `deleted`. Operations are written to `.quiet-memo/audit.jsonl`, and Git can roll them back.
 
-## Structure
+## 🗂 Structure
 
 ```text
 src/quiet_memo/
@@ -252,17 +296,17 @@ Development conventions (code style, storage invariants, testing, and docs sync)
 - Token budgets are estimated with tiktoken, falling back to character estimation when offline.
 - Session compaction, memory decisions, and source chains are custom-built; model adapters are delegated to LiteLLM, provider selection and password input use questionary, and keys use keyring.
 
-## Testing
+## 🧪 Testing
 
 ```bash
 uv run pytest
 ```
 
-Tests cover storage, queue, conflict detection, retrieval, extraction parsing, sessions, context compaction, the agent tool loop, MCP, and the CLI. LLM paths are tested with a static extractor and fake models; no claim of live verification is made without a real API key.
+Tests cover the store, queue, conflict detection, retrieval, extraction parsing, sessions, context compaction, the agent tool loop, MCP, and the CLI. LLM paths are tested with a fixed extractor and fake models; without real API keys, no online verification is claimed.
 
-## Retrieval evaluation
+## 📊 Retrieval evaluation
 
-`evals/` ships a reproducible synthetic-corpus benchmark (456 entries / 27 cases, no personal data):
+`evals/` provides a reproducible synthetic benchmark (456 entries / 27 cases, no personal data):
 
 ```bash
 uv run python evals/retrieval_eval.py
@@ -276,7 +320,7 @@ uv run python evals/retrieval_eval.py
 
 On a real 797-entry personal vault (anonymized, aggregate metrics only), after fixing a vector-matrix misalignment caused by duplicate entry IDs from bulk import, hybrid's MRR@10 rose from 0.569 to 0.745 — the best of the three. Methodology, fix details, and known weaknesses are in [evals/README.md](evals/README.md).
 
-## Roadmap
+## 🗺 Roadmap
 
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking

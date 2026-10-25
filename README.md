@@ -1,18 +1,62 @@
-**中文** | [English](README.en.md)
-
-[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml) [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+<div align="center">
 
 # quiet-memo
 
-安静的个人记忆库：从日常对话中抽取**你本人**的事实、偏好和计划，默认无感写入本地 Markdown；低置信、冲突或敏感内容才进入待确认队列。
+**安静的个人记忆库** —— 从日常对话中无感沉淀**你本人**的事实、偏好和计划
 
-- **本地优先**：Markdown 是唯一事实来源，Git 负责版本与审计。
-- **默认静默**：可信内容直接落盘，不逐条打断；只在必要时提醒。
-- **完整 Agent**：交互式对话、会话持久化、上下文压缩、工具循环。
-- **多模型**：LiteLLM 统一接入 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 等。
-- **可回滚**：每次提交自动生成中文总结，供本人审阅。
+本地 Markdown · Git 可回滚 · MCP 可调用
 
-## 快速开始
+[![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
+![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+
+**中文** | [English](README.en.md)
+
+</div>
+
+## ✨ 特性
+
+| | |
+| --- | --- |
+| 🗃 **本地优先** | Markdown 是唯一事实来源，Git 负责版本与审计 |
+| 🤫 **默认静默** | 可信内容直接落盘，不逐条打断；只在必要时提醒 |
+| 🤖 **完整 Agent** | 交互式对话、会话持久化、上下文压缩、工具循环 |
+| 🔌 **多模型** | LiteLLM 统一接入 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 等 |
+| ↩️ **可回滚** | 每次提交自动生成中文总结，供本人审阅 |
+
+## 🖥️ 界面预览
+
+```text
+╭────────────────────┬──────────────────────────────────────────────────────────────────╮
+│ quiet-memo «       │ 安静的个人记忆库 · 发送第一条消息后创建会话                      │
+│ ＋ 新会话          │ ◆ deepseek-flash · hybrid · 上下文 200K                          │
+│ 今天               │────────────────────────────────────────────────────────────────  │
+│ ▌14:32 最近的安排  │                                                                  │
+│   4 条             │                                                        我 · 14:32│
+│ 10:02 Java 并发    │                              ╭──────────────────────────────────╮│
+│   6 条             │                              │  我最近在忙什么？有什么要注意的  ││
+│                    │                              ╰──────────────────────────────────╯│
+│                    │quiet-memo · 14:32                                                │
+│                    │┃ 检索「最近的安排」：3 条                                        │
+│ 昨天               │根据记录，你最近在忙三件事：期末项目收尾、求职                    │
+│ 21:47 实习材料     │准备、固定自习节奏，不建议再加量。                                │
+│ 09:15 周计划       │2 步 · 3.2K tok · $0.0018 · 4.2s                                  │
+│                    │────────────────────────────────────────────────────────────────  │
+│                    │                                                        我 · 14:34│
+│                    │                            ╭────────────────────────────────────╮│
+│                    │                            │  对了，我周中加了一天自习，记住下  ││
+│                    │                            ╰────────────────────────────────────╯│
+│                    │✓ 已记住 [schedule] 周中增加一天图书馆自习                        │
+│                    │记下了。和周日休整不冲突，节奏是三学一休。                        │
+│                    │                                                                  │
+│                    │❯ 发送消息，/ 命令，Ctrl+B 侧栏▊                                  │
+│                    │◆ deepseek-flash · hybrid  上下文 ━━──── 3.2K/200K  待确认 2      │
+│                    │                                                                  │
+╰────────────────────┴──────────────────────────────────────────────────────────────────╯
+```
+
+## 🚀 快速开始
 
 需要 Python 3.12+、uv、git。
 
@@ -69,7 +113,7 @@ extract_on_exit = true
 method = "hybrid"             # keyword / vector / hybrid；向量后端不可用时自动回退 keyword
 
 [retrieval.embedding]
-backend = "local"             # local：fastembed 离线推理；api：发送记忆文本给供应商（注意隐私）
+backend = "local"             # local：fastembed 离线推理；api：把记忆文本发给 embedding 供应商（注意隐私）
 model = "BAAI/bge-small-zh-v1.5"
 # backend = "api" 时的示例：
 # provider = "siliconflow"
@@ -77,9 +121,9 @@ model = "BAAI/bge-small-zh-v1.5"
 # api_key_env = "SILICONFLOW_API_KEY"
 ```
 
-Windows Git Bash 下如果中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，建议用 Windows Terminal / PowerShell；Git Bash 可尝试 `winpty`。
+如果 Windows Git Bash 里中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，推荐 Windows Terminal 或 PowerShell；Git Bash 用户可尝试 `winpty`。
 
-## 对话 Agent
+## 💬 对话 Agent
 
 直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是可折叠的会话列表：↑↓ 选择、Enter 恢复、Del 删除（弹确认）；点侧栏右上角的 « 折叠（Ctrl+B 同效），折叠后在对话区左上角点 » 展开。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入 `/` 在输入框上方弹出竖排命令面板（↑↓ 选择 · Enter 执行 · ESC 关闭，可点击）；底部状态栏显示模型与检索模式、上下文用量（进度线与已用/上限数字）、待确认数量，超过压缩阈值会提示。工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果。
 
@@ -154,7 +198,7 @@ flowchart TD
 - 超过约 2000 token 自动截断。
 - SOUL.md 是指令不是记忆，不参与抽取与检索；它在记忆库内，随 Git 版本化，改动可回溯。
 
-## 命令行
+## ⌨️ 命令行
 
 ```bash
 # 从一段对话抽取并静默写入
@@ -184,7 +228,7 @@ uv run qm commit --no-push
 uv run qm history
 ```
 
-### 接入 MCP
+## 🔌 接入 MCP
 
 ```bash
 uv run qm serve --vault ~/.quiet-memo/vault
@@ -205,7 +249,7 @@ MCP 客户端配置：
 
 暴露工具：`memorize`、`note`、`recall`、`review_pending`、`approve`、`reject`、`list_topics`、`status`。
 
-## 写入规则
+## 📝 写入规则
 
 | 情况 | 行为 |
 | --- | --- |
@@ -224,7 +268,7 @@ MCP 客户端配置：
 
 更正采用“新条目 + `supersedes`”，旧条目状态改为 `superseded`；删除是软删除 `deleted`，操作写入 `.quiet-memo/audit.jsonl`，Git 可回滚。
 
-## 结构
+## 🗂 结构
 
 ```text
 src/quiet_memo/
@@ -251,7 +295,7 @@ src/quiet_memo/
 - token 预算用 tiktoken 估算，离线失败时回退字符估算。
 - 会话压缩、记忆裁决、来源链是自研核心；模型适配交给 LiteLLM，供应商选择与密码输入用 questionary，Key 用 keyring。
 
-## 测试
+## 🧪 测试
 
 ```bash
 uv run pytest
@@ -259,7 +303,7 @@ uv run pytest
 
 测试覆盖存储、队列、冲突检测、检索、抽取解析、会话、上下文压缩、Agent 工具循环、MCP 和 CLI。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
 
-## 检索评测
+## 📊 检索评测
 
 `evals/` 提供可复现的合成语料基准（456 条 / 27 例，无任何个人数据）：
 
@@ -275,7 +319,7 @@ uv run python evals/retrieval_eval.py
 
 在一个 797 条的真实个人记忆库上（脱敏，仅汇总指标），修复批量导入的条目 ID 碰撞导致的向量错位后，hybrid 的 MRR@10 从 0.569 升到 0.745，成为三路最佳。方法、修复细节与已知弱点见 [evals/README.md](evals/README.md)。
 
-## Roadmap
+## 🗺 Roadmap
 
 - 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
 - 真实模型 dogfood 与成本统计
