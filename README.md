@@ -323,6 +323,8 @@ uv run python evals/retrieval_eval.py
 
 ## Roadmap
 
+完整待办以 [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues) 为准。
+
 - 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
 - 真实模型 dogfood 与成本统计
 - 每日定时提交守护进程

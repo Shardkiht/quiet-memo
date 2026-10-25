@@ -324,6 +324,8 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 
 ## Roadmap
 
+The full todo list lives in [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues).
+
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
