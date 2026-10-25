@@ -127,7 +127,7 @@ If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Int
 
 ## Chat agent
 
-Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Tool and retrieval events stream in as cards, turns are separated by a divider, and exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary.
+Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`.
@@ -154,7 +154,8 @@ In-session commands:
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |
-| `/pending` | View pending candidates |
+| `/pending` | Work through pending candidates one by one: approve / reject / edit then write; automatically advances to the next until the queue is empty |
+| `/topics [name]` | Browse memory topics and entry counts; with a name, drills into that topic's entries |
 | `/exit` | Exit |
 
 `/help` shows command descriptions; `/quit` is the same as `/exit`.
@@ -223,6 +224,10 @@ uv run qm recall "downtown"
 uv run qm pending
 uv run qm approve p-20261022-140312-a1b2
 uv run qm reject p-20261022-140312-c3d4
+
+# Manually correct / forget a memory (soft delete, auditable)
+uv run qm correct mem-20261022-194250-8f1e "The corrected full statement" --reason "info updated"
+uv run qm forget mem-20261022-194250-8f1e
 
 # Sessions and commits
 uv run qm sessions
@@ -329,6 +334,5 @@ The full todo list lives in [GitHub Issues](https://github.com/Shardkiht/quiet-m
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
-- Streaming output: render the reply text incrementally as it arrives (tool and retrieval event cards are already live)
-- A `qm consolidate` subcommand to trigger vault-wide catch-up manually or from a system scheduler (the automatic startup catch-up is already implemented)
+- A `qm consolidate` subcommand to trigger vault-wide catch-up manually or from a system scheduler (the automatic startup catch-up and auto-commit are already implemented)
 - Inject the vault's existing topic list into import extraction so incremental imports don't fragment topics
