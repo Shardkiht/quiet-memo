@@ -50,6 +50,17 @@ def patch_questionary(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolate_user_config(monkeypatch, tmp_path):
+    """测试永远解析到测试自己的临时配置/记忆库，任何代码路径都碰不到本机真实配置。
+
+    起因：源码回退（突变验证）等场景下，写配置可能落到 default_config_path()，
+    曾把 pytest 临时 vault 写进用户真实 config.toml。环境变量是最后一道闸。
+    """
+    monkeypatch.setenv("QUIET_MEMO_CONFIG", str(tmp_path / "config.toml"))
+    monkeypatch.setenv("QUIET_MEMO_VAULT", str(tmp_path / "default-vault"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_llm_credentials(monkeypatch):
     """测试禁止读取本机 keyring / 真实 Key，避免误调模型和产生费用。"""
     fake = types.ModuleType("keyring")
