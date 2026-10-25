@@ -28,32 +28,34 @@ Local Markdown · Git-reversible · MCP-callable
 ## Interface preview
 
 ```text
-╭──────────────────────┬──────────────────────────────────────────────────────────────────╮
-│ quiet-memo «         │ Quiet personal memory · first message creates a session          │
-│ ＋ New session       │ ◆ deepseek-flash · hybrid · context 200K                         │
-│ Today                │────────────────────────────────────────────────────────────────  │
-│ ▌14:32 Recent plans  │                                                                  │
-│   4 msgs             │                                                        me · 14:32│
-│ 10:02 Java Q&A       │                          ╭──────────────────────────────────────╮│
-│   6 msgs             │                          │  What have I been busy with lately?  ││
-│                      │                          ╰──────────────────────────────────────╯│
-│                      │quiet-memo · 14:32                                                │
-│                      │┃ recalled 「recent plans」: 3 entries                            │
-│ Yesterday            │Three things going on: wrapping up the final project,             │
-│ 21:47 Internship     │job hunting, and a fixed study rhythm — don't add more.           │
-│ 09:15 Weekly review  │2 steps · 3.2K tok · $0.0018 · 4.2s                               │
-│                      │────────────────────────────────────────────────────────────────  │
-│                      │                                                        me · 14:34│
-│                      │                   ╭─────────────────────────────────────────────╮│
-│                      │                   │  I added one more study day, remember that  ││
-│                      │                   ╰─────────────────────────────────────────────╯│
-│                      │✓ remembered [schedule] one extra library day midweek             │
-│                      │Noted. No clash with Sunday rest — three on, one off.             │
-│                      │                                                                  │
-│                      │❯ Send a message, / commands, Ctrl+B sidebar▊                     │
-│                      │◆ deepseek-flash · hybrid  context ━━──── 3.2K/200K  pending 2    │
-│                      │                                                                  │
-╰──────────────────────┴──────────────────────────────────────────────────────────────────╯
+ quiet-memo «        ◆ deepseek-flash · hybrid · context 200K
+
+ Sessions (Ctrl+B to collapse)      ＋ New session
+ Today     ▌14:32 Recent plans · 4 msgs
+           10:02 Java Q&A · 6 msgs
+ Yesterday 21:47 Internship · 12 msgs
+           09:15 Weekly review · 3 msgs
+
+──────────────────────────────────────────────────────────────
+                                                me · 14:32
+      ╭──────────────────────────────────────╮
+      │  What have I been busy with lately?  │
+      ╰──────────────────────────────────────╯
+quiet-memo · 14:32
+┃ recalled 「recent plans」: 3 entries
+Three things going on: wrapping up the final project,
+job hunting, and a fixed study rhythm — don't add more.
+2 steps · 3.2K tok · $0.0018 · 4.2s
+──────────────────────────────────────────────────────────────
+                                                me · 14:34
+╭─────────────────────────────────────────────╮
+│  I added one more study day, remember that  │
+╰─────────────────────────────────────────────╯
+✓ remembered [schedule] one extra library day midweek
+Noted. No clash with Sunday rest — three on, one off.
+
+❯ Send a message, / commands, Ctrl+B sidebar▊
+◆ deepseek-flash · hybrid   context ━━──── 3.2K/200K   pending 2
 ```
 
 ## Quick start
