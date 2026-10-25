@@ -210,10 +210,10 @@ MCP 客户端配置：
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, chat_app.py, actions.py,
-│                 ui.py, session_ui.py            # CLI / Textual TUI / FastMCP 入口
+├── app/          cli.py, server.py, tui.py, chat_app.py, chat_widgets.py,
+│                 actions.py, ui.py, session_ui.py   # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
-│                 session.py                     # Agent 循环、系统提示词、压缩、工具、会话
+│                 session.py, recall.py              # Agent 循环、系统提示词、压缩、工具、会话
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py
 │                                                   # 记忆领域与写入裁决
