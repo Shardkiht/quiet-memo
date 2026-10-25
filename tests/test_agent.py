@@ -593,3 +593,67 @@ def test_close_deferred_marks_session_for_catchup(tmp_path):
     result = runtime.consolidate_pending()
     assert result["admitted"] == 1
     assert service.store.has_text("延后沉淀的内容")
+
+    # 游标回归：再次切走（无新消息）不重复打标记、不重复抽取
+    session = runtime.resume(session.id)
+    runtime.close(distill=False)
+    assert not runtime.sessions.load(session.id).needs_consolidation()
+    assert runtime.consolidate_pending()["scanned"] == 0
+
+
+def test_consolidate_threshold_and_cursor_partition(tmp_path):
+    # 回归（频繁切换场景）：小尾巴攒批不烧调用；重复关闭只抽取游标之后的新内容。
+    calls: list[str] = []
+    # 候选文本必须互斥：同主题 bigram 相似度过高会被裁决为冲突进队列
+    words = ("oranges imported", "bananas yellow", "cherries red")
+
+    class CountingExtractor:
+        def extract(self, text, context=""):
+            calls.append(text)
+            from quiet_memo.memory.models import ExtractionResult
+
+            return ExtractionResult(
+                memories=[Candidate(text=words[len(calls) - 1], topic="misc", confidence=0.95)]
+            )
+
+    model = FakeChatModel([])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(context_window=32000, extract_on_exit=True),
+    )
+    service = MemoryService(config, extractor=CountingExtractor())
+    service.init_vault()
+    runtime = AgentRuntime(service, model, SessionStore(config.vault), config=config.chat)
+    runtime.start()
+    session = runtime.sessions.create()
+    for text in ("第一条", "第二条"):
+        runtime.sessions.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": text},
+        )
+    session = runtime.resume(session.id)
+
+    # 两条新消息 < 阈值 3：跳过、标记保留、零调用
+    runtime.close(distill=False)
+    assert session.needs_consolidation()
+    runtime.start()
+    assert runtime.consolidate_pending(min_new_messages=3)["consolidated"] == 0
+    assert calls == []
+
+    # 启动补记（阈值 1）：两条消息合并进同一次抽取调用
+    assert runtime.consolidate_pending()["admitted"] == 1
+    assert len(calls) == 1
+    assert "第一条" in calls[0] and "第二条" in calls[0]
+
+    # 游标回归：再新增一条后关闭，只抽新内容，不含已沉淀的旧消息
+    session = runtime.resume(session.id)  # 重取活跃对象，避免过期引用
+    runtime.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "第三条"},
+    )
+    runtime.close(distill=False)
+    runtime.start()
+    assert runtime.consolidate_pending()["admitted"] == 1
+    assert "第三条" in calls[1]
+    assert "第一条" not in calls[1] and "第二条" not in calls[1]

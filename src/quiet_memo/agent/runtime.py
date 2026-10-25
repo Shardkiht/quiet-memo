@@ -252,7 +252,8 @@ class AgentRuntime:
         session = self.session
         self._closed = True
         stats = dict(empty)
-        user_texts = session.user_texts_after_summary()
+        # 游标感知：只抽取上次成功沉淀之后的新内容，反复切换不重复抽取。
+        user_texts = session.user_texts_after_distilled()
         if not distill:
             # 切换会话走快速路径：只做记账，沉淀延后（标记供补沉淀拾取）。
             if user_texts:
@@ -274,6 +275,10 @@ class AgentRuntime:
                     duplicates=len(result.duplicates),
                     blocked=len(result.blocked),
                 )
+                self.sessions.append(
+                    session,
+                    {"type": "distilled", "up_to": session.last_user_message_id()},
+                )
             except Exception as exc:
                 stats["error"] = str(exc)
                 # 留下失败标记：启动补沉淀据此识别"有 closed 但没沉淀成"的会话。
@@ -283,10 +288,11 @@ class AgentRuntime:
         self.sessions.append(session, {"type": "closed"})
         return stats
 
-    def consolidate_pending(self, limit: int = 3) -> dict:
-        """补沉淀：抽取异常终止或上次退出抽取失败的会话，处理后打 consolidated 标记。
+    def consolidate_pending(self, limit: int = 3, min_new_messages: int = 1) -> dict:
+        """补沉淀：抽取异常终止、退出抽取失败或切换时延后的会话。
 
-        当前活跃会话不参与（其内容由 close() 正常沉淀）。
+        游标之后新用户消息不足 min_new_messages 的会话跳过（标记保留，零成本
+        攒批），避免频繁切换触发大量小抽取。当前活跃会话不参与。
         """
         result = {"scanned": 0, "consolidated": 0, "admitted": 0, "queued": 0, "errors": []}
         if not self.config.extract_on_exit:
@@ -294,7 +300,9 @@ class AgentRuntime:
         exclude = self.session.id if self.session is not None else None
         for session in self.sessions.unconsolidated(limit, exclude=exclude):
             result["scanned"] += 1
-            texts = session.user_texts_after_summary()
+            texts = session.user_texts_after_distilled()
+            if len(texts) < min_new_messages:
+                continue
             if texts:
                 joined = "\n---\n".join(texts)[-12000:]
                 try:
@@ -312,6 +320,10 @@ class AgentRuntime:
                     continue
                 result["admitted"] += len(extracted.admitted)
                 result["queued"] += len(extracted.queued)
+                self.sessions.append(
+                    session,
+                    {"type": "distilled", "up_to": session.last_user_message_id()},
+                )
             self.sessions.append(session, {"type": "consolidated"})
             result["consolidated"] += 1
         return result

@@ -82,16 +82,53 @@ class Session:
         ]
 
     def needs_consolidation(self) -> bool:
-        """异常终止（无 closed）、抽取失败或切换时延后的沉淀，都需要补记。"""
-        types = {record.get("type") for record in self.records}
-        if "consolidated" in types:
-            return False
-        return "closed" not in types or "extraction_error" in types or "distill_deferred" in types
+        """位置感知判定：晚于上次 consolidated 记录的 deferred/error 标记算欠账，
+        或从未正常关闭过（异常终止）。同会话多轮"切走→补沉淀"循环因此可用。
+        """
+        last_consolidated = -1
+        pending_after = False
+        has_closed = False
+        for index, record in enumerate(self.records):
+            record_type = record.get("type")
+            if record_type == "consolidated":
+                last_consolidated = index
+                pending_after = False
+            elif record_type in ("distill_deferred", "extraction_error"):
+                pending_after = index > last_consolidated
+            elif record_type == "closed":
+                has_closed = True
+        if pending_after:
+            return True
+        return last_consolidated == -1 and not has_closed
 
     def user_texts_after_summary(self) -> list[str]:
         return [
             record["content"]
             for record in self.records_after_summary()
+            if record.get("type") == "message" and record.get("role") == "user"
+        ]
+
+    def _distill_cursor_index(self) -> int:
+        # 最后一次成功沉淀覆盖到的消息记录位置；从未沉淀过则回退到摘要边界。
+        for index in range(len(self.records) - 1, -1, -1):
+            record = self.records[index]
+            if record.get("type") == "distilled":
+                up_to = record.get("up_to")
+                if up_to:
+                    message_index = next(
+                        (j for j, r in enumerate(self.records) if r.get("id") == up_to),
+                        None,
+                    )
+                    if message_index is not None:
+                        return message_index
+        return self.covered_records() - 1
+
+    def user_texts_after_distilled(self) -> list[str]:
+        """自上次沉淀游标（或摘要边界）之后的用户消息——避免来回切换重复抽取。"""
+        start = max(self._distill_cursor_index(), self.covered_records() - 1)
+        return [
+            record["content"]
+            for record in self.records[start + 1 :]
             if record.get("type") == "message" and record.get("role") == "user"
         ]
 

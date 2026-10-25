@@ -441,10 +441,12 @@ async def test_switch_defers_distill_then_catches_up_in_background(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         first = app.sessions.create()
-        app.sessions.append(
-            first,
-            {"type": "message", "id": new_message_id(), "role": "user", "content": "第一场对话内容"},
-        )
+        # 3 条用户消息：达到后台补沉淀阈值（min_new_messages=3）
+        for text in ("第一场对话一", "第一场对话二", "第一场对话三"):
+            app.sessions.append(
+                first,
+                {"type": "message", "id": new_message_id(), "role": "user", "content": text},
+            )
         second = app.sessions.create()
         app.sessions.append(
             second,
@@ -511,7 +513,7 @@ async def test_session_picker_search_resume_and_delete(tmp_path):
                 break
         assert app.runtime.current.id == s1.id
 
-        # 再次打开：Del 删除当前高亮（另一条），确认后列表同步刷新
+        # 再次打开：过滤锁定另一条会话，Del 删除，确认后列表同步刷新
         widget.value = "/sessions"
         await pilot.press("enter")
         for _ in range(50):
@@ -519,6 +521,10 @@ async def test_session_picker_search_resume_and_delete(tmp_path):
             if isinstance(app.screen, SessionPickerScreen):
                 break
         picker = app.screen
+        picker.query_one("#picker-input", Input).value = "租房"
+        picker.on_input_changed(Input.Changed(picker.query_one("#picker-input", Input), "租房"))
+        await pilot.pause()
+        await pilot.press("down")  # 焦点从搜索框移交列表（搜索框的 Del 是编辑按键）
         await pilot.press("delete")
         await pilot.pause()
         assert "PickScreen" in type(app.screen).__name__  # 删除确认弹窗已弹出

@@ -309,7 +309,8 @@ class ChatApp(App):
         if self.busy:
             return
         try:
-            deferred = self.runtime.consolidate_pending()
+            # 切走时的后台补沉淀设阈值：小尾巴攒批留给启动补记，不烧小调用。
+            deferred = self.runtime.consolidate_pending(min_new_messages=3)
         except Exception:
             return
         if deferred["consolidated"] or deferred["errors"]:
