@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-DEFAULT_PERSONA = "你是用户的个人记忆助手，运行在本地终端，拥有跨会话的长期记忆。"
+from ..memory.service import DEFAULT_PERSONA
 
 # 机制段不可被人设覆盖：SOUL.md 只替换人设段，工具说明与记忆纪律永远拼在末尾。
 MECHANISM_PROMPT = """可用工具：

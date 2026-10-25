@@ -46,6 +46,10 @@ Thumbs.db
 .quiet-memo/vectors.npz
 """
 
+# 默认人设兼作 init 写入 SOUL.md 的模板；放 memory 层是因为 agent/prompts.py 可以引 memory，
+# 反向不行（分层：app → agent → memory → retrieval → infra）。
+DEFAULT_PERSONA = "你是用户的个人记忆助手，运行在本地终端，拥有跨会话的长期记忆。"
+
 SOUL_FILENAME = "SOUL.md"
 SOUL_MAX_TOKENS = 2000
 
@@ -135,6 +139,9 @@ class MemoryService:
         readme = self.config.vault / "README.md"
         if not readme.exists():
             readme.write_text(VAULT_README, encoding="utf-8")
+        soul = self.config.vault / SOUL_FILENAME
+        if not soul.exists():
+            soul.write_text(DEFAULT_PERSONA + "\n", encoding="utf-8")
         gitignore = self.config.vault / ".gitignore"
         if not gitignore.exists():
             gitignore.write_text(VAULT_GITIGNORE, encoding="utf-8")

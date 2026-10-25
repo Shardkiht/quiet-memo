@@ -451,3 +451,10 @@ def test_soul_md_truncated_by_tokens(tmp_path):
     content = model.calls[0][0][0]["content"]
     assert len(content) < 9000
     assert "规则：" in content
+
+
+def test_init_vault_seeds_default_soul(tmp_path):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]))
+
+    soul = service.config.vault / "SOUL.md"
+    assert "个人记忆助手" in soul.read_text(encoding="utf-8")

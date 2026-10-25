@@ -131,7 +131,7 @@ Put a `SOUL.md` at the vault root (default `~/.quiet-memo/vault/SOUL.md`) with y
 You are Ache, my old friend. Keep replies concise, occasionally dry-humored, and address me by name.
 ```
 
-- Without the file the default persona is used; an empty file is treated the same as missing.
+- `qm init` generates a `SOUL.md` pre-filled with the default persona; edit it freely. Deleting or emptying the file falls back to the built-in default.
 - The persona only replaces the persona section of the system prompt; tool descriptions and memory discipline (only record self-stated facts, never fabricate on empty recall, etc.) are always appended after it and cannot be overridden.
 - Content beyond roughly 2000 tokens is truncated.
 - SOUL.md is an instruction file, not a memory: it never enters extraction or retrieval; it lives in the vault, is versioned by Git, and changes are traceable.
