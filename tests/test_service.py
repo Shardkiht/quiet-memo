@@ -156,3 +156,15 @@ def test_load_persona_missing_or_empty(tmp_path):
     assert load_persona(vault) == ""
     (vault / "SOUL.md").write_text("   \n", encoding="utf-8")
     assert load_persona(vault) == ""
+
+
+def test_commit_pending_changes_auto_commits_without_llm(tmp_path):
+    # 启动检查：有未提交变更时自动提交（不 push、不调 LLM），无变更时返回 None。
+    service = make_service(tmp_path, [])
+    assert service.commit_pending_changes() is None  # 干净库
+
+    service.note("启动前未提交的一条", topic="misc")
+    commit = service.commit_pending_changes()
+    assert commit
+    assert not service.repo.has_changes()
+    assert any("自动提交" in item["subject"] for item in service.history(3))

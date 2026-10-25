@@ -155,8 +155,8 @@ def test_import_dry_run_then_apply(tmp_path, monkeypatch):
     from quiet_memo.memory.models import Candidate, ExtractionResult
 
     class FakeImportExtractor:
-        def __init__(self, config):
-            pass
+        def __init__(self, config, topics=None):
+            self.topics = topics or []
 
         def extract(self, text):
             return ExtractionResult(
@@ -180,3 +180,48 @@ def test_import_dry_run_then_apply(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "已写入" in result.output
     assert (vault / "memories" / "preferences.md").exists()
+
+
+def test_cli_correct_and_forget(tmp_path):
+    from quiet_memo.infra.config import Config, LLMConfig
+    from quiet_memo.memory.extractor import StaticExtractor
+    from quiet_memo.memory.models import ExtractionResult
+    from quiet_memo.memory.service import MemoryService
+
+    vault = tmp_path / "vault"
+    config = Config(vault=vault, llm=LLMConfig())
+    service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
+    service.init_vault()
+    entry = service.note("旧表述：住在城西", topic="housing")
+
+    result = invoke(["correct", entry.id, "新表述：住在滨江", "--vault", str(vault)])
+    assert result.exit_code == 0, result.output
+    assert "已更正" in result.output
+    assert service.store.find(entry.id).status == "superseded"
+    assert service.store.has_text("新表述：住在滨江")
+
+    active = service.store.entries(topic="housing")
+    assert len(active) == 1
+    result = invoke(["forget", active[0].id, "--reason", "测试删除", "--vault", str(vault)])
+    assert result.exit_code == 0, result.output
+    assert "已删除" in result.output
+    assert service.store.entries(topic="housing") == []
+    assert service.store.find(active[0].id).status == "deleted"
+
+
+def test_cli_correct_rejects_inactive_entry(tmp_path):
+    from quiet_memo.infra.config import Config, LLMConfig
+    from quiet_memo.memory.extractor import StaticExtractor
+    from quiet_memo.memory.models import ExtractionResult
+    from quiet_memo.memory.service import MemoryService
+
+    vault = tmp_path / "vault"
+    config = Config(vault=vault, llm=LLMConfig())
+    service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
+    service.init_vault()
+    entry = service.note("一条记录", topic="misc")
+    service.forget(entry.id)
+
+    result = invoke(["correct", entry.id, "试图更正已删除的记忆", "--vault", str(vault)])
+    assert result.exit_code == 1
+    assert "不能更正" in result.output

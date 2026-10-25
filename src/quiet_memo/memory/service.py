@@ -198,7 +198,9 @@ class MemoryService:
         text = text.strip()
         if not text:
             raise ValueError("导入内容为空。")
-        extractor = extractor or ImportExtractor(self.config.llm)
+        if extractor is None:
+            topics = [topic["topic"] for topic in self.store.topics()]
+            extractor = ImportExtractor(self.config.llm, topics=topics)
         return self._adjudicate(extractor.extract(text).memories, source, dry_run=dry_run)
 
     def _adjudicate(
@@ -385,6 +387,14 @@ class MemoryService:
             "dirty": self.repo.has_changes() if self.repo.is_repo else False,
             "retrieval": self.retrieval_mode,
         }
+
+    def commit_pending_changes(self) -> str | None:
+        """启动检查用：自动提交 vault 未保存变更（不 push、不调 LLM 生成总结）。"""
+        self.repo.ensure_init()
+        self.repo.stage_all()
+        if not self.repo.has_staged():
+            return None
+        return self.repo.commit("memory: 自动提交未保存变更（启动检查）")
 
     def commit(self, push: bool | None = None) -> dict:
         self.repo.ensure_init()

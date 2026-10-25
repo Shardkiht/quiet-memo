@@ -275,13 +275,53 @@ def reject(
     config: Path | None = CONFIG_OPTION,
     vault: Path | None = VAULT_OPTION,
 ) -> None:
-    """拒绝一条候选，保留处理记录。"""
+    """拒绝一条待确认候选，保留处理记录。"""
     try:
         item = _service(config, vault).reject(item_id)
     except KeyError as exc:
         fail(str(exc))
         return
     console.print(f"[dim]已拒绝[/dim] {item.id} {item.text}")
+
+
+@app.command()
+def correct(
+    entry_id: str = typer.Argument(..., help="要更正的记忆 ID"),
+    text: str = typer.Argument(..., help="更正后的完整表述"),
+    reason: str = typer.Option("", "--reason", help="更正原因"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """更正一条记忆：写入新条目，旧条目置为 superseded。"""
+    try:
+        entry = _service(config, vault).correct(entry_id, text, reason)
+    except KeyError as exc:
+        fail(str(exc))
+        return
+    except ValueError as exc:
+        fail(str(exc))
+        return
+    console.print(f"[bold]已更正[/] [{entry.topic}] {entry.text}")
+    console.print(f"[dim]旧条目 {entry_id} 已置为 superseded，审计已记录[/dim]")
+
+
+@app.command()
+def forget(
+    entry_id: str = typer.Argument(..., help="要删除的记忆 ID"),
+    reason: str = typer.Option("", "--reason", help="删除原因"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """软删除一条记忆（保留审计，Git 可回滚）。"""
+    try:
+        entry = _service(config, vault).forget(entry_id, reason)
+    except KeyError as exc:
+        fail(str(exc))
+        return
+    except ValueError as exc:
+        fail(str(exc))
+        return
+    console.print(f"[bold]已删除[/] {entry.id} [{entry.topic}] {entry.text}")
 
 
 @app.command("topics")

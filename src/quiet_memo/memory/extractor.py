@@ -161,10 +161,12 @@ def parse_import(content: str) -> ExtractionResult:
 class ImportExtractor:
     """导入抽取：输出必须通过严格校验，失败带着错误回传重出，连续失败整块放弃。"""
 
-    def __init__(self, config: LLMConfig, completer=complete, max_attempts: int = 3):
+    def __init__(self, config: LLMConfig, completer=complete, max_attempts: int = 3, topics: list[str] | None = None):
         self.config = config
         self.completer = completer
         self.max_attempts = max_attempts
+        # vault 已有主题：新条目优先归入既有主题，避免增量导入产生碎片主题。
+        self.topics = [topic for topic in (topics or []) if topic]
 
     def extract(self, text: str) -> ExtractionResult:
         if self.config.requires_api_key() and not self.config.api_key():
@@ -172,7 +174,12 @@ class ImportExtractor:
                 f"未配置 LLM API Key，请设置环境变量 {self.config.api_key_env}，"
                 "或运行 qm setup 保存到系统凭据。"
             )
-        user_content = f"待整理内容：\n{text}"
+        topic_hint = (
+            f"\n\nvault 已有主题（新条目优先归入这里的既有主题，确属新领域才新建）：\n{'、'.join(self.topics)}"
+            if self.topics
+            else ""
+        )
+        user_content = f"待整理内容：\n{text}{topic_hint}"
         feedback = ""
         for _ in range(self.max_attempts):
             content = user_content if not feedback else f"{user_content}\n\n上一轮输出被拒绝：{feedback}\n请修正后重新输出完整 JSON。"

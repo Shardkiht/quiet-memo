@@ -150,3 +150,31 @@ class _StaticResult:
 
     def extract(self, text: str) -> object:
         return self.result
+
+
+def test_import_extractor_injects_existing_topics(monkeypatch):
+    monkeypatch.setattr(LLMConfig, "api_key", lambda self: "test-key")
+    captured = {}
+
+    def fake_complete(config, messages, **kwargs):
+        captured["user"] = messages[-1]["content"]
+
+        class _Msg:
+            content = '{"memories":[]}'
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+
+        return _Resp()
+
+    ImportExtractor(
+        LLMConfig(), completer=fake_complete, topics=["preferences", "08-coffee-food-routine"]
+    ).extract("内容")
+    assert "08-coffee-food-routine" in captured["user"]
+    assert "优先归入" in captured["user"]
+
+    ImportExtractor(LLMConfig(), completer=fake_complete).extract("内容")
+    assert "已有主题" not in captured["user"]

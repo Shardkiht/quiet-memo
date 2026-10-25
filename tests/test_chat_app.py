@@ -302,3 +302,54 @@ async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
         cards = [str(widget.render()) for widget in app.query(".card")]
         assert any("补记 1 个未收尾会话" in card for card in cards)
         assert app.runtime.consolidate_pending()["scanned"] == 0  # 已标记，不会重复
+
+
+async def test_pending_interactive_approve(tmp_path):
+    # 回归：/pending 必须能在界面内完成确认闭环（issue #1）。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from quiet_memo.memory.models import Candidate, PendingItem
+
+        item = PendingItem.from_candidate(
+            Candidate(text="低置信的偏好内容", topic="preferences", confidence=0.5), "chat", "low confidence"
+        )
+        app.service.queue.add(item)
+        app.refresh_pending()
+
+        widget = app.query_one("#input", Input)
+        widget.value = "/pending"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if app.screen.__class__.__name__ == "PickScreen":
+                break
+        await pilot.press("enter")  # 选中第一条 → 动作菜单
+        for _ in range(50):
+            await pilot.pause()
+            if len(app.screen_stack) >= 2 and app.screen.__class__.__name__ == "PickScreen":
+                break
+        await pilot.press("enter")  # 高亮"确认写入"
+        for _ in range(100):
+            await pilot.pause()
+            if not app.service.pending():
+                break
+        assert not app.service.pending()
+        assert app.service.store.has_text("低置信的偏好内容")
+        cards = [str(w.render()) for w in app.query(".card")]
+        assert any("已写入" in c for c in cards)
+
+
+async def test_topics_command_lists_and_drills(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.service.note("喝咖啡偏好清淡", topic="preferences", title="偏好")
+        app._show_topics()
+        await pilot.pause()
+        cards = [str(w.render()) for w in app.query(".card")]
+        assert any("preferences" in c and "记忆主题" in c for c in cards)
+        app._show_topics("preferences")
+        await pilot.pause()
+        cards = [str(w.render()) for w in app.query(".card")]
+        assert any("喝咖啡偏好清淡" in c for c in cards)

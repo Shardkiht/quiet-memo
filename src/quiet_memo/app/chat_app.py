@@ -112,6 +112,7 @@ class ChatApp(App):
         self.sessions = sessions
         self.busy = False
         self.pending_count = 0
+        self._pending_switch: str | None = None
 
     # ---------- 布局 ----------
 
@@ -157,13 +158,17 @@ class ChatApp(App):
     def _catchup_work(self) -> None:
         try:
             result = self.runtime.consolidate_pending()
+            auto_commit = self.service.commit_pending_changes()
         except Exception as exc:
             self.call_from_thread(self._finish_error, f"启动补记检查失败：{exc}")
             return
-        self.call_from_thread(self._after_catchup, result)
+        self.call_from_thread(self._after_catchup, result, auto_commit)
 
-    def _after_catchup(self, result: dict) -> None:
+    def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
         self._set_busy(False)
+        if auto_commit:
+            self.notify(f"已自动提交 vault 未保存变更：{auto_commit}")
+            self.refresh_sessions()
         if result["consolidated"] or result["errors"]:
             parts = []
             if result["consolidated"]:
@@ -177,6 +182,10 @@ class ChatApp(App):
             self.refresh_sessions()
             self.refresh_pending()
             self.update_status()
+        pending_switch = self._pending_switch
+        self._pending_switch = None
+        if pending_switch:
+            self._switch_session(pending_switch)
 
     def action_toggle_sidebar(self) -> None:
         self._set_sidebar_visible(not self.query_one("#sidebar", Vertical).display)
@@ -215,7 +224,11 @@ class ChatApp(App):
             view.append(item)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if not isinstance(event.item, SessionItem) or self.busy:
+        if not isinstance(event.item, SessionItem):
+            return
+        if self.busy:
+            # 启动补沉淀等忙碌期间点击会话：记住意图，结束后自动切换，不静默丢弃。
+            self._pending_switch = event.item.row["id"]
             return
         row = event.item.row
         if self.runtime.has_session and row["id"] == self.runtime.current.id:
@@ -571,14 +584,112 @@ class ChatApp(App):
             else:
                 self._run_remember(argument)
         elif command == "/pending":
-            items = self.service.pending()
-            self.add_card(
-                "\n".join(f"{item.id} · [{item.topic}] {item.reason} — {item.text}" for item in items)
-                if items
-                else "没有待确认项。"
-            )
+            self._open_pending()
+        elif command == "/topics":
+            self._show_topics(argument.strip() or None)
         else:
             self.add_card(f"未知命令：{command}，输入 /help 查看帮助。")
+
+    # ---------- 待确认交互处理（issue #1） ----------
+
+    @staticmethod
+    def _truncate(text: str, width: int) -> str:
+        return text if len(text) <= width else text[:width] + "…"
+
+    def _open_pending(self) -> None:
+        items = self.service.pending()
+        if not items:
+            self.add_card("没有待确认项。")
+            return
+        options = [
+            (f"{item.id}  [{item.topic}] {self._truncate(item.text, 36)}", item.id)
+            for item in items
+        ]
+        self.push_screen(PickScreen(f"待确认 {len(items)} 条", options, self._pending_picked))
+
+    def _pending_picked(self, item_id) -> None:
+        if item_id is None:
+            self.query_one("#input", Input).focus()
+            return
+        item = next((i for i in self.service.pending() if i.id == item_id), None)
+        if item is None:
+            self.notify("该待确认项已不存在。")
+            return
+        options = [
+            ("确认写入", ("approve", item_id, None)),
+            ("改写后写入", ("edit", item_id, None)),
+            ("拒绝", ("reject", item_id, None)),
+        ]
+        self.push_screen(PickScreen(f"[{item.topic}] {self._truncate(item.text, 44)}", options, self._pending_action))
+
+    def _pending_action(self, value) -> None:
+        if value is None:
+            self.query_one("#input", Input).focus()
+            return
+        action, item_id, _ = value
+        if action == "edit":
+            item = next((i for i in self.service.pending() if i.id == item_id), None)
+            default = item.text if item else ""
+            self.push_screen(
+                TextInputScreen("改写后的完整表述", default=default, on_result=lambda v: self._pending_edited(item_id, v))
+            )
+            return
+        self._pending_apply(action, item_id, None)
+
+    def _pending_edited(self, item_id, text) -> None:
+        if not text:
+            self.query_one("#input", Input).focus()
+            return
+        self._pending_apply("approve", item_id, text.strip())
+
+    def _pending_apply(self, action: str, item_id: str, override: str | None) -> None:
+        try:
+            if action == "approve":
+                entry = self.service.approve(item_id)
+                if override and override != entry.text:
+                    entry = self.service.correct(entry.id, override, reason="人工改写后写入")
+                message = f"已写入 [{entry.topic}] {entry.text}"
+            else:
+                item = self.service.reject(item_id)
+                message = f"已拒绝 {item.id} {self._truncate(item.text, 40)}"
+        except (KeyError, ValueError) as exc:
+            self.add_card(str(exc))
+            return
+        self.add_card(message)
+        self.refresh_pending()
+        self.update_status()
+        if self.service.pending():
+            # 队列里还有：自动进入下一条，ESC 随时退出循环。
+            self.call_after_refresh(self._open_pending)
+        else:
+            self.add_card("待确认队列已清空。")
+            self.query_one("#input", Input).focus()
+
+    def _show_topics(self, name: str | None = None) -> None:
+        topics = self.service.topics()
+        if not topics:
+            self.add_card("记忆库为空。")
+            return
+        if name:
+            needle = name.lower()
+            matched = next(
+                (t for t in topics if needle in t["topic"].lower() or needle in t["title"].lower()),
+                None,
+            )
+            if matched is None:
+                self.add_card(f"没有匹配的主题：{name}")
+                return
+            entries = self.service.store.entries(topic=matched["topic"])
+            lines = [f"{matched['title']}（{matched['topic']}）· {len(entries)} 条", ""]
+            for entry in entries:
+                tag = "" if entry.status == "active" else f"（{entry.status}）"
+                lines.append(f"{entry.id[:26]}  {self._truncate(entry.text, 56)}{tag}")
+            self.add_card("\n".join(lines), "主题条目")
+            return
+        self.add_card(
+            "\n".join(f"{t['topic']:<24} {t['title']} · {t['entries']} 条 · 更新 {t['updated']}" for t in topics),
+            "记忆主题",
+        )
 
     def _resume_by_query(self, query: str) -> None:
         if self.busy:
