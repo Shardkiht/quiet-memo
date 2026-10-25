@@ -82,7 +82,7 @@ def apply_model(
 ) -> str:
     """切换模型并落盘热更新；未配置 Key 等情况不生效，返回提示消息。"""
     from dataclasses import replace
-    from ..infra.providers import PRESETS, has_api_key, resolve_config_path, write_config
+    from ..infra.providers import PRESETS, has_api_key, write_config
 
     current = service.config.llm
     preset = next((item for item in PRESETS if item.key == provider), None)
@@ -113,8 +113,11 @@ def apply_model(
 
     service.config.llm = new_llm
     service.config.chat.context_window = context_window
-    write_config(resolve_config_path(None), service.config)
-    runtime.reload_llm()
+    # 热更新写回 service 记住的加载路径；未记录时（内存构造的 service）跳过落盘。
+    if service.config_path:
+        write_config(service.config_path, service.config)
+    # 传当前配置对象热更新，不重读文件：写盘与重读之间没有竞态。
+    runtime.reload_llm(service.config)
     return (
         f"模型已切换：{runtime.model_label}"
         f" · 上下文 {format_tokens(context_window)}"
@@ -134,10 +137,12 @@ def reasoning_options(service: MemoryService) -> list[tuple[str, str]]:
 
 
 def apply_reasoning(service: MemoryService, value: str) -> str:
-    from ..infra.providers import resolve_config_path, write_config
+    from ..infra.providers import write_config
 
     service.config.llm.reasoning_effort = value or None
-    write_config(resolve_config_path(None), service.config)
+    # 热更新写回 service 记住的加载路径；未记录时（内存构造的 service）跳过落盘。
+    if service.config_path:
+        write_config(service.config_path, service.config)
     return f"思考强度已切换：{value or '默认'}"
 
 
@@ -161,7 +166,7 @@ def context_options(service: MemoryService) -> list[int]:
 
 def apply_context(service: MemoryService, value: int) -> str:
     """设置上下文长度（下一轮生效）；非法值不生效，返回提示消息。"""
-    from ..infra.providers import resolve_config_path, write_config
+    from ..infra.providers import write_config
 
     max_input = model_metadata(service.config.llm.litellm_model()).get("max_input_tokens")
     try:
@@ -178,5 +183,7 @@ def apply_context(service: MemoryService, value: int) -> str:
     if value == service.config.chat.context_window:
         return "上下文长度未变化。"
     service.config.chat.context_window = value
-    write_config(resolve_config_path(None), service.config)
+    # 热更新写回 service 记住的加载路径；未记录时（内存构造的 service）跳过落盘。
+    if service.config_path:
+        write_config(service.config_path, service.config)
     return f"上下文已切换：{format_tokens(value)} · 下一轮生效。{note}".strip()

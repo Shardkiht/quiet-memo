@@ -285,12 +285,7 @@ def test_apply_model_updates_config_and_runtime(tmp_path, monkeypatch):
 
     runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
     config_path = tmp_path / "quiet-memo.toml"
-    monkeypatch.setattr(
-        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
-    )
-    monkeypatch.setattr(
-        "quiet_memo.infra.config.load_config", lambda *args, **kwargs: service.config
-    )
+    service.config_path = config_path
 
     message = actions.apply_model(service, runtime, "deepseek", "deepseek-v4-pro")
 
@@ -316,10 +311,8 @@ def test_apply_reasoning_updates_config_hot(tmp_path, monkeypatch, service):
     from quiet_memo.app import actions
 
     config_path = tmp_path / "quiet-memo.toml"
+    service.config_path = config_path
     monkeypatch.setattr(actions, "supported_params", lambda model: ("reasoning_effort",))
-    monkeypatch.setattr(
-        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
-    )
 
     assert actions.reasoning_options(service)
     message = actions.apply_reasoning(service, "high")
@@ -340,9 +333,7 @@ def test_context_options_and_apply(tmp_path, monkeypatch, service):
     from quiet_memo.app import actions
 
     config_path = tmp_path / "quiet-memo.toml"
-    monkeypatch.setattr(
-        "quiet_memo.infra.providers.resolve_config_path", lambda path=None: config_path
-    )
+    service.config_path = config_path
 
     options = actions.context_options(service)
     assert 16000 in options

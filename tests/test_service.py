@@ -97,13 +97,18 @@ def test_commit_generates_fallback_summary_and_history(tmp_path):
     assert not again["committed"]
 
 
-def test_push_without_remote_raises(tmp_path):
+def test_push_without_remote_reports_error_but_keeps_commit(tmp_path):
+    # 回归：push 失败不再抛异常掩盖已完成的本地提交。
     service = make_service(tmp_path, [])
     service.note("一条记录", topic="misc")
     service.commit(push=False)
     service.note("另一条记录", topic="misc")
-    with pytest.raises(GitError):
-        service.commit(push=True)
+
+    result = service.commit(push=True)
+
+    assert result["committed"] and result["hash"]
+    assert result["pushed"] is False
+    assert "remote" in result["push_error"]
 
 
 def test_recall_and_topics(tmp_path):
@@ -115,3 +120,40 @@ def test_recall_and_topics(tmp_path):
     topics = {item["topic"]: item for item in service.topics()}
     assert topics["preferences"]["title"] == "偏好"
     assert topics["preferences"]["entries"] == 1
+
+
+def test_commit_push_failure_does_not_hide_commit(tmp_path):
+    # auto_push 但无 remote：本地提交必须成功返回 hash，push 失败只记录在 push_error。
+    config = Config(vault=tmp_path / "vault", llm=LLMConfig(), auto_push=True)
+    service = MemoryService(
+        config, extractor=StaticExtractor(ExtractionResult(memories=[]))
+    )
+    service.init_vault()
+    service.note("一条记录", topic="misc")
+
+    result = service.commit()
+
+    assert result["committed"] and result["hash"]
+    assert result["pushed"] is False
+    assert "remote" in result["push_error"]
+
+
+def test_load_persona_falls_back_to_gbk(tmp_path):
+    # 记事本 ANSI（GBK）保存的 SOUL.md 不应炸掉整轮对话。
+    from quiet_memo.memory.service import load_persona
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "SOUL.md").write_bytes("你是阿澈，语气简洁。".encode("gbk"))
+
+    assert "阿澈" in load_persona(vault)
+
+
+def test_load_persona_missing_or_empty(tmp_path):
+    from quiet_memo.memory.service import load_persona
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    assert load_persona(vault) == ""
+    (vault / "SOUL.md").write_text("   \n", encoding="utf-8")
+    assert load_persona(vault) == ""

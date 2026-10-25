@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..infra.config import Config, LLMConfig, RetrievalConfig, load_config
-from ..infra.gitops import GitRepo
+from ..infra.config import Config, LLMConfig, RetrievalConfig, default_config_path, load_config
+from ..infra.gitops import GitError, GitRepo
 from ..infra.tokens import truncate_to_tokens
 from ..llm import LiteLLMEmbedder
 from ..llm.commit_summary import summarize_diff
@@ -55,11 +55,20 @@ SOUL_MAX_TOKENS = 2000
 
 
 def load_persona(vault: Path) -> str:
-    """读 vault/SOUL.md 自定义人设；缺失或为空返回空串，超长按 token 截断。"""
+    """读 vault/SOUL.md 自定义人设；缺失或为空返回空串，超长按 token 截断。
+
+    用户可能用记事本以 ANSI/GBK 保存，UTF-8 失败时按本机编码兜底，避免炸掉整轮对话。
+    """
+    path = vault / SOUL_FILENAME
     try:
-        text = (vault / SOUL_FILENAME).read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
+    except UnicodeDecodeError:
+        try:
+            text = path.read_text(encoding="mbcs")
+        except (UnicodeDecodeError, OSError):
+            return ""
     text = text.strip()
     if not text:
         return ""
@@ -119,7 +128,13 @@ class MemorizeResult:
 
 
 class MemoryService:
-    def __init__(self, config: Config, extractor=None, retriever: Retriever | None = None):
+    def __init__(
+        self,
+        config: Config,
+        extractor=None,
+        retriever: Retriever | None = None,
+        config_path: Path | None = None,
+    ):
         self.config = config
         self.store = MemoryStore(config.vault)
         self.queue = PendingQueue(config.vault)
@@ -131,6 +146,8 @@ class MemoryService:
             self.retrieval_mode = "custom"
         else:
             self.retriever, self.retrieval_mode = build_retriever(config, self.store)
+        # 热更新（切模型/上下文）写回配置的路径：记住加载来源，避免写错文件或被读回旧值。
+        self.config_path = config_path
 
     def init_vault(self) -> dict:
         self.store.ensure()
@@ -383,18 +400,24 @@ class MemoryService:
         if body:
             message += f"\n\n{body}"
         commit_hash = self.repo.commit(message)
+        # 本地提交已成功；push 失败只记录原因，不掩盖已完成的提交。
         should_push = self.config.auto_push if push is None else push
         pushed = False
         push_output = ""
+        push_error = ""
         if should_push and commit_hash:
-            push_output = self.repo.push()
-            pushed = True
+            try:
+                push_output = self.repo.push()
+                pushed = True
+            except GitError as exc:
+                push_error = str(exc)
         return {
             "committed": commit_hash is not None,
             "summary": summary,
             "hash": commit_hash,
             "pushed": pushed,
             "push_output": push_output,
+            "push_error": push_error,
         }
 
 
@@ -404,7 +427,8 @@ def get_service(
     extractor=None,
     retriever: Retriever | None = None,
 ) -> MemoryService:
-    config = load_config(config_path)
+    resolved = Path(config_path).expanduser() if config_path else default_config_path()
+    config = load_config(resolved)
     if vault is not None:
         config.vault = Path(vault).expanduser().resolve()
-    return MemoryService(config, extractor=extractor, retriever=retriever)
+    return MemoryService(config, extractor=extractor, retriever=retriever, config_path=resolved)

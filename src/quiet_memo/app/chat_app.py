@@ -233,13 +233,18 @@ class ChatApp(App):
         )
 
     def _session_work(self, session_id: str | None) -> None:
-        stats = self.runtime.close()
-        if session_id is None:
-            self.runtime.start()
-            label = None
-        else:
-            session = self.runtime.resume(session_id)
-            label = f"{session.id} · {session.title()}"
+        try:
+            stats = self.runtime.close()
+            if session_id is None:
+                self.runtime.start()
+                label = None
+            else:
+                session = self.runtime.resume(session_id)
+                label = f"{session.id} · {session.title()}"
+        except Exception as exc:
+            # 会话文件损坏/被删等异常不能让 busy 卡死：留在原会话并提示。
+            self.call_from_thread(self._finish_error, f"会话切换失败：{exc}")
+            return
         self.call_from_thread(self._after_session_switch, stats, label)
 
     def _after_session_switch(self, stats: dict, label: str | None) -> None:
@@ -576,7 +581,11 @@ class ChatApp(App):
         )
 
     def _compact_work(self) -> None:
-        events = self.runtime.force_compact()
+        try:
+            events = self.runtime.force_compact()
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"压缩失败：{exc}")
+            return
         self.call_from_thread(self._after_compact, events)
 
     def _after_compact(self, events: list[str]) -> None:

@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..infra.config import ChatConfig
+from ..infra.config import ChatConfig, Config
 from ..infra.tokens import truncate_to_tokens
 from ..llm import (
     AssistantTurn,
@@ -82,13 +82,20 @@ class AgentRuntime:
         self._closed = False
         return self.session
 
-    def reload_llm(self) -> None:
-        """配置变更后热更新模型、抽取器和摘要器，不重启会话。"""
-        from ..infra.config import load_config
+    def reload_llm(self, config: "Config | None" = None) -> None:
+        """配置变更后热更新模型、抽取器和摘要器，不重启会话。
+
+        默认从 service 记住的配置路径重读；调用方持有新配置对象时直接传入，
+        避免落盘与重读之间的竞态把切换回滚。
+        """
         from ..llm import LLMSummarizer, LiteLLMChatModel
         from ..memory.extractor import LLMExtractor
 
-        config = load_config()
+        if config is None:
+            from ..infra.config import load_config
+
+            path = self.service.config_path
+            config = load_config(path) if path else load_config()
         self.service.config.llm = config.llm
         self.service.config.chat = config.chat
         self.service.extractor = LLMExtractor(config.llm)

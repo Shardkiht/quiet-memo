@@ -345,6 +345,8 @@ def commit(
     console.print(f"提交：{result['hash']}")
     if result["pushed"]:
         console.print("[bold]已推送[/]")
+    elif result.get("push_error"):
+        console.print(f"[#b8b8b8]本地提交已完成，推送未成功：{result['push_error']}[/]")
 
 
 @app.command()

@@ -177,3 +177,44 @@ async def test_sidebar_items_are_compact_and_clickable(tmp_path):
             if not app.busy and app.runtime.has_session:
                 break
         assert app.runtime.current.id == second.row["id"]
+
+
+async def test_compact_failure_releases_busy(tmp_path):
+    # 回归：force_compact 抛异常时输入框必须恢复可用，而不是永久禁用。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        def boom():
+            raise RuntimeError("persona broken")
+
+        app.runtime.force_compact = boom
+        app._run_compact()
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app.busy is False
+        input_widget = app.query_one("#input", Input)
+        assert input_widget.disabled is False
+        assert "压缩失败" in str(app.query(".card")[-1].render())
+
+
+async def test_session_switch_failure_releases_busy(tmp_path):
+    # 回归：resume 抛异常（会话文件损坏等）时同样不能卡死输入框。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+
+        def boom(session_id):
+            raise KeyError("会话不存在：s-xxx")
+
+        app.runtime.resume = boom
+        app._switch_session("s-20260101-000000-dead")
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app.busy is False
+        assert app.query_one("#input", Input).disabled is False
+        assert "会话切换失败" in str(app.query(".card")[-1].render())
