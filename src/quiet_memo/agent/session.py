@@ -82,11 +82,11 @@ class Session:
         ]
 
     def needs_consolidation(self) -> bool:
-        """无 closed 记录 = 异常终止；带 extraction_error = 退出抽取失败。两者都漏沉淀。"""
+        """异常终止（无 closed）、抽取失败或切换时延后的沉淀，都需要补记。"""
         types = {record.get("type") for record in self.records}
         if "consolidated" in types:
             return False
-        return "closed" not in types or "extraction_error" in types
+        return "closed" not in types or "extraction_error" in types or "distill_deferred" in types
 
     def user_texts_after_summary(self) -> list[str]:
         return [
@@ -158,7 +158,7 @@ class SessionStore:
         path.unlink()
         return True
 
-    def list(self, limit: int = 20) -> list[dict]:
+    def list(self, limit: int = 20, with_tokens: bool = True) -> list[dict]:
         if not self.root.exists():
             return []
         sessions = []
@@ -173,7 +173,8 @@ class SessionStore:
                     "started_at": session.started_at,
                     "updated_at": session.updated_at,
                     "messages": len(session.messages),
-                    "tokens": session.estimated_tokens(),
+                    # token 估算要遍历全部记录，侧栏高频刷新时传 with_tokens=False 跳过。
+                    "tokens": session.estimated_tokens() if with_tokens else 0,
                     "summaries": sum(1 for record in session.records if record.get("type") == "summary"),
                     "title": session.title(),
                 }

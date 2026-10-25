@@ -563,3 +563,33 @@ def test_streaming_failure_does_not_retry_or_duplicate(tmp_path):
 
     assert len(model.calls) == 1  # 未重试
     assert deltas == ["半截"]  # 已发内容不重复
+
+
+def test_close_deferred_marks_session_for_catchup(tmp_path):
+    # 切换会话走快速路径：不内联抽取，打 deferred 标记，由补沉淀拾取。
+    model = FakeChatModel([])
+    runtime, service = build_runtime(
+        tmp_path,
+        model,
+        [Candidate(text="延后沉淀的内容", topic="misc", confidence=0.95)],
+        extract_on_exit=True,
+    )
+    session = runtime.sessions.create()
+    runtime.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "说点要记住的"},
+    )
+    runtime.resume(session.id)
+
+    runtime.close(distill=False)
+
+    types = {record["type"] for record in runtime.sessions.load(session.id).records}
+    assert "distill_deferred" in types and "closed" in types
+    assert session.needs_consolidation()
+    assert not service.store.has_text("延后沉淀的内容")  # 未内联抽取
+
+    # 补沉淀排除当前活跃会话：脱离会话（如已切走/退出）后才拾取。
+    runtime.start()
+    result = runtime.consolidate_pending()
+    assert result["admitted"] == 1
+    assert service.store.has_text("延后沉淀的内容")

@@ -418,3 +418,114 @@ async def test_streaming_error_marks_interruption(tmp_path):
         cards = [str(w.render()) for w in app.query(".card")]
         assert any("连接中断" in c for c in cards)
         assert app.query_one("#input", Input).disabled is False
+
+
+async def test_switch_defers_distill_then_catches_up_in_background(tmp_path):
+    # 回归：切换会话不做内联抽取（不卡顿），deferred 标记由后台补沉淀消化。
+    app = build_app(tmp_path, [], extract_on_exit=True)
+    from quiet_memo.memory.models import Candidate
+
+    class CountingExtractor:
+        def __init__(self):
+            self.calls = 0
+
+        def extract(self, text, context=""):
+            self.calls += 1
+            from quiet_memo.memory.models import ExtractionResult
+
+            return ExtractionResult(
+                memories=[Candidate(text="后台补记的内容", topic="misc", confidence=0.95)]
+            )
+
+    app.service.extractor = counting = CountingExtractor()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        first = app.sessions.create()
+        app.sessions.append(
+            first,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": "第一场对话内容"},
+        )
+        second = app.sessions.create()
+        app.sessions.append(
+            second,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": "第二场对话内容"},
+        )
+        app.refresh_sessions()
+        app.runtime.resume(first.id)  # 活跃会话才有 close(distill=False) 的 deferred 标记
+
+        app._switch_session(second.id)
+        for _ in range(300):
+            await pilot.pause()
+            if not app.busy and app.runtime.current.id == second.id:
+                break
+        assert app.runtime.current.id == second.id
+        types = {r["type"] for r in app.sessions.load(first.id).records}
+        assert "distill_deferred" in types
+        for _ in range(300):
+            await pilot.pause()
+            if counting.calls:
+                break
+        assert counting.calls >= 1  # 后台补沉淀已执行
+        assert app.service.store.has_text("后台补记的内容")
+
+
+async def test_session_picker_search_resume_and_delete(tmp_path):
+    # 回归（issue 反馈）：/sessions 打开 OpenCode 式选择器——搜索/恢复/删除。
+    app = build_app(tmp_path, [])
+    from textual.widgets import Input
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        from quiet_memo.agent.session import new_message_id
+        from quiet_memo.app.chat_widgets import SessionPickerScreen
+
+        store = app.sessions
+        s1 = store.create()
+        store.rename(s1, "Java 并发讨论")
+        store.append(s1, {"type": "message", "id": new_message_id(), "role": "user", "content": "Java 并发讨论"})
+        s2 = store.create()
+        store.rename(s2, "租房预算讨论")
+        store.append(s2, {"type": "message", "id": new_message_id(), "role": "user", "content": "租房预算讨论"})
+
+        widget = app.query_one("#input", Input)
+        widget.value = "/sessions"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, SessionPickerScreen):
+                break
+        picker = app.screen
+        assert isinstance(picker, SessionPickerScreen)
+        assert len(list(picker.query("#picker-list ListItem"))) == 2
+
+        picker.query_one("#picker-input", Input).value = "java"
+        await pilot.pause()
+        picker.on_input_changed(Input.Changed(picker.query_one("#picker-input", Input), "java"))
+        await pilot.pause()
+        assert len(list(picker.query("#picker-list ListItem"))) == 1
+
+        await pilot.press("enter")
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy and app.runtime.has_session:
+                break
+        assert app.runtime.current.id == s1.id
+
+        # 再次打开：Del 删除当前高亮（另一条），确认后列表同步刷新
+        widget.value = "/sessions"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, SessionPickerScreen):
+                break
+        picker = app.screen
+        await pilot.press("delete")
+        await pilot.pause()
+        assert "PickScreen" in type(app.screen).__name__  # 删除确认弹窗已弹出
+        await pilot.press("enter")  # 确认删除
+        for _ in range(100):
+            await pilot.pause()
+            if not store.exists(s2.id):
+                break
+        assert not store.exists(s2.id)
+        assert store.exists(s1.id)

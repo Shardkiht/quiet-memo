@@ -23,6 +23,7 @@ from .chat_widgets import (
     NewSessionButton,
     PickScreen,
     SessionItem,
+    SessionPickerScreen,
     SidebarToggle,
     SLASH_COMMANDS,
     TextInputScreen,
@@ -89,6 +90,8 @@ class ChatApp(App):
     .cmd-desc { color: $faint; }
 
     #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round $dim; padding: 1 2; }
+    #picker-input { width: 1fr; margin-bottom: 1; }
+    #picker-list { height: auto; max-height: 16; }
     .pick-title { color: $accent; text-style: bold; margin-bottom: 1; }
     #pick-list { height: auto; max-height: 18; }
     #pick-input { width: 1fr; }
@@ -213,7 +216,7 @@ class ChatApp(App):
         view.clear()
         current_id = self.runtime.current.id if self.runtime.has_session else None
         last_date = None
-        for row in visible_sessions(self.sessions.list(100)):
+        for row in visible_sessions(self.sessions.list(100, with_tokens=False)):
             stamp = row.get("updated_at") or row.get("started_at") or ""
             date = stamp[:10] or "未知日期"
             if date != last_date:
@@ -288,7 +291,8 @@ class ChatApp(App):
 
     def _session_work(self, session_id: str | None) -> None:
         try:
-            stats = self.runtime.close()
+            # 快速路径：切换只做记账（distill=False 不跑 LLM 抽取），UI 立即就绪。
+            stats = self.runtime.close(distill=False)
             if session_id is None:
                 self.runtime.start()
                 label = None
@@ -300,6 +304,26 @@ class ChatApp(App):
             self.call_from_thread(self._finish_error, f"会话切换失败：{exc}")
             return
         self.call_from_thread(self._after_session_switch, stats, label)
+        # 沉淀延后到后台：刚切走的会话标记 distill_deferred，这里立即补；
+        # 用户已开始新对话（busy）则不打断，留给下次启动补记。
+        if self.busy:
+            return
+        try:
+            deferred = self.runtime.consolidate_pending()
+        except Exception:
+            return
+        if deferred["consolidated"] or deferred["errors"]:
+            self.call_from_thread(self._after_deferred_distill, deferred)
+
+    def _after_deferred_distill(self, deferred: dict) -> None:
+        self.refresh_pending()
+        self.update_status()
+        if deferred["consolidated"]:
+            self.notify(
+                f"上一会话已后台沉淀：写入 {deferred['admitted']} 条，待确认 {deferred['queued']} 条"
+            )
+        for error in deferred["errors"]:
+            self.notify(f"后台沉淀失败：{error}")
 
     def _after_session_switch(self, stats: dict, label: str | None) -> None:
         self._clear_chat()
@@ -341,6 +365,10 @@ class ChatApp(App):
             self.notify("已删除会话。")
         else:
             self.notify("会话已不存在。")
+        # 从会话选择器里删除时，同步刷新底层选择器的列表
+        for screen in self.screen_stack:
+            if isinstance(screen, SessionPickerScreen):
+                screen.set_rows(visible_sessions(self.sessions.list(100, with_tokens=False)))
         self.query_one("#input", Input).focus()
 
     # ---------- 对话流 ----------
@@ -594,8 +622,7 @@ class ChatApp(App):
             if argument and command == "/resume":
                 self._resume_by_query(argument)
             else:
-                self.show_sidebar()
-                self.notify("↑↓ 选择 · Enter 恢复 · Del 删除")
+                self.open_session_picker()
         elif command == "/compact":
             self._run_compact()
         elif command == "/summary":
@@ -737,6 +764,29 @@ class ChatApp(App):
             "\n".join(f"{t['topic']:<24} {t['title']} · {t['entries']} 条 · 更新 {t['updated']}" for t in topics),
             "记忆主题",
         )
+
+    def open_session_picker(self) -> None:
+        rows = visible_sessions(self.sessions.list(100, with_tokens=False))
+        if not rows:
+            self.add_card("没有可选择的会话。")
+            return
+        current_id = self.runtime.current.id if self.runtime.has_session else None
+        self.push_screen(
+            SessionPickerScreen(rows, current_id, self._picker_selected)
+        )
+
+    def _picker_selected(self, session_id) -> None:
+        if session_id is None:
+            self.query_one("#input", Input).focus()
+            return
+        if self.runtime.has_session and session_id == self.runtime.current.id:
+            self.notify("已经是当前会话。")
+            self.query_one("#input", Input).focus()
+            return
+        if self.busy:
+            self._pending_switch = session_id
+            return
+        self._switch_session(session_id)
 
     def _resume_by_query(self, query: str) -> None:
         if self.busy:

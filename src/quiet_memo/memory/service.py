@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -150,6 +151,8 @@ class MemoryService:
             self.retriever, self.retrieval_mode = build_retriever(config, self.store)
         # 热更新（切模型/上下文）写回配置的路径：记住加载来源，避免写错文件或被读回旧值。
         self.config_path = config_path
+        # 后台补沉淀与前台对话可能并发写 vault：所有变更操作在这把锁内串行。
+        self.write_lock = threading.Lock()
 
     def init_vault(self) -> dict:
         self.store.ensure()
@@ -204,6 +207,17 @@ class MemoryService:
         return self._adjudicate(extractor.extract(text).memories, source, dry_run=dry_run)
 
     def _adjudicate(
+        self,
+        candidates: list[Candidate],
+        source: str,
+        session_id: str | None = None,
+        message_id: str | None = None,
+        dry_run: bool = False,
+    ) -> MemorizeResult:
+        with self.write_lock:
+            return self._adjudicate_locked(candidates, source, session_id, message_id, dry_run)
+
+    def _adjudicate_locked(
         self,
         candidates: list[Candidate],
         source: str,
@@ -298,43 +312,46 @@ class MemoryService:
         text = text.strip()
         if not text:
             raise ValueError("内容为空。")
-        if self.store.has_text(text):
-            raise ValueError("相同内容已存在。")
-        return self.store.append(topic, text, source="user-note", confidence=1.0, title=title)
+        with self.write_lock:
+            if self.store.has_text(text):
+                raise ValueError("相同内容已存在。")
+            return self.store.append(topic, text, source="user-note", confidence=1.0, title=title)
 
     def correct(self, entry_id: str, text: str, reason: str = "") -> Entry:
-        old = self.store.find(entry_id)
-        if old is None:
-            raise KeyError(f"记忆不存在：{entry_id}")
-        if old.status != STATUS_ACTIVE:
-            raise ValueError(f"记忆当前状态为 {old.status}，不能更正。")
-        entry = self.store.append(
-            old.topic,
-            text.strip(),
-            source="correction",
-            confidence=1.0,
-            supersedes=entry_id,
-        )
-        self.store.set_status(entry_id, STATUS_SUPERSEDED)
-        self.audit.write(
-            "correct",
-            old_entry=entry_id,
-            new_entry=entry.id,
-            reason=reason,
-            old_text=old.text,
-            new_text=entry.text,
-        )
-        return entry
+        with self.write_lock:
+            old = self.store.find(entry_id)
+            if old is None:
+                raise KeyError(f"记忆不存在：{entry_id}")
+            if old.status != STATUS_ACTIVE:
+                raise ValueError(f"记忆当前状态为 {old.status}，不能更正。")
+            entry = self.store.append(
+                old.topic,
+                text.strip(),
+                source="correction",
+                confidence=1.0,
+                supersedes=entry_id,
+            )
+            self.store.set_status(entry_id, STATUS_SUPERSEDED)
+            self.audit.write(
+                "correct",
+                old_entry=entry_id,
+                new_entry=entry.id,
+                reason=reason,
+                old_text=old.text,
+                new_text=entry.text,
+            )
+            return entry
 
     def forget(self, entry_id: str, reason: str = "") -> Entry:
-        old = self.store.find(entry_id)
-        if old is None:
-            raise KeyError(f"记忆不存在：{entry_id}")
-        if old.status != STATUS_ACTIVE:
-            raise ValueError(f"记忆当前状态为 {old.status}，无需删除。")
-        self.store.set_status(entry_id, STATUS_DELETED)
-        self.audit.write("forget", entry=entry_id, reason=reason, text=old.text)
-        return old.model_copy(update={"status": STATUS_DELETED})
+        with self.write_lock:
+            old = self.store.find(entry_id)
+            if old is None:
+                raise KeyError(f"记忆不存在：{entry_id}")
+            if old.status != STATUS_ACTIVE:
+                raise ValueError(f"记忆当前状态为 {old.status}，无需删除。")
+            self.store.set_status(entry_id, STATUS_DELETED)
+            self.audit.write("forget", entry=entry_id, reason=reason, text=old.text)
+            return old.model_copy(update={"status": STATUS_DELETED})
 
     def recall(self, query: str, limit: int = 10) -> list[SearchHit]:
         return self.retriever.search(query, limit)
@@ -343,6 +360,10 @@ class MemoryService:
         return self.queue.all()
 
     def approve(self, item_id: str) -> Entry:
+        with self.write_lock:
+            return self._approve_locked(item_id)
+
+    def _approve_locked(self, item_id: str) -> Entry:
         item = self.queue.get(item_id)
         if item is None:
             raise KeyError(f"待确认项不存在：{item_id}")
@@ -366,6 +387,10 @@ class MemoryService:
         return entry
 
     def reject(self, item_id: str) -> PendingItem:
+        with self.write_lock:
+            return self._reject_locked(item_id)
+
+    def _reject_locked(self, item_id: str) -> PendingItem:
         item = self.queue.resolve(item_id, "rejected")
         if item is None:
             raise KeyError(f"待确认项不存在：{item_id}")
@@ -390,13 +415,18 @@ class MemoryService:
 
     def commit_pending_changes(self) -> str | None:
         """启动检查用：自动提交 vault 未保存变更（不 push、不调 LLM 生成总结）。"""
-        self.repo.ensure_init()
-        self.repo.stage_all()
-        if not self.repo.has_staged():
-            return None
-        return self.repo.commit("memory: 自动提交未保存变更（启动检查）")
+        with self.write_lock:
+            self.repo.ensure_init()
+            self.repo.stage_all()
+            if not self.repo.has_staged():
+                return None
+            return self.repo.commit("memory: 自动提交未保存变更（启动检查）")
 
     def commit(self, push: bool | None = None) -> dict:
+        with self.write_lock:
+            return self._commit_locked(push)
+
+    def _commit_locked(self, push: bool | None) -> dict:
         self.repo.ensure_init()
         self.repo.stage_all()
         if not self.repo.has_staged():

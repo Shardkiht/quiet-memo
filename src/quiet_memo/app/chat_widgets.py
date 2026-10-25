@@ -159,6 +159,96 @@ class CommandPalette(Vertical):
             row.set_class(position == self.index, "cmd-active")
 
 
+class SessionPickerScreen(ModalScreen):
+    """OpenCode 风格会话选择器：搜索过滤、Enter 恢复、Del 删除（带确认）、ESC 取消。"""
+
+    BINDINGS = [("escape", "cancel", "取消"), ("down", "focus_list", "选择")]
+
+    def __init__(self, rows: list[dict], current_id: str | None, on_result) -> None:
+        super().__init__()
+        self._rows = rows
+        self._current_id = current_id
+        self._on_result = on_result
+        self._filtered = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="pick-card"):
+            yield Input(placeholder="搜索会话标题或 ID…", id="picker-input")
+            yield ListView(id="picker-list")
+            yield Static("↑↓ 选择 · Enter 恢复 · Del 删除 · ESC 取消", classes="pick-hint")
+
+    def on_mount(self) -> None:
+        self._rebuild()
+        self.query_one("#picker-input", Input).focus()
+
+    def set_rows(self, rows: list[dict]) -> None:
+        self._rows = rows
+        self._rebuild()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        needle = event.value.strip().lower()
+        if needle:
+            self._filtered = [
+                row
+                for row in self._rows
+                if needle in row["title"].lower() or needle in row["id"].lower()
+            ]
+        else:
+            self._filtered = self._rows
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        listing = self.query_one("#picker-list", ListView)
+        listing.clear()
+        for row in self._filtered:
+            time_text = (row.get("updated_at") or "")[11:16]
+            meta = f"{time_text} · {row['messages']} 条".lstrip("· ")
+            if row["id"] == self._current_id:
+                meta += " · ← 当前"
+            item = SessionItem({**row, "meta": meta})
+            if row["id"] == self._current_id:
+                item.add_class("current")
+            listing.append(item)
+        # 清空重建后 index 为 None（无高亮），Enter 会落空——显式高亮第一项。
+        if self._filtered:
+            listing.index = 0
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        # 焦点在搜索框时 Enter：确认当前高亮的会话。
+        event.stop()
+        item = self.query_one("#picker-list", ListView).highlighted_child
+        if isinstance(item, SessionItem):
+            self._finish(item.row["id"])
+
+    def action_focus_list(self) -> None:
+        self.query_one("#picker-list", ListView).focus()
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        event.stop()
+        event.prevent_default()
+        row = getattr(event.item, "row", None)
+        if row is not None:
+            self._finish(row["id"])
+
+    def on_key(self, event) -> None:
+        if event.key != "delete":
+            return
+        view = self.query_one("#picker-list", ListView)
+        item = view.highlighted_child
+        if isinstance(item, SessionItem):
+            event.stop()
+            event.prevent_default()
+            self.app.confirm_delete_session(item.row)
+
+    def action_cancel(self) -> None:
+        self._finish(None)
+
+    def _finish(self, value) -> None:
+        on_result = self._on_result
+        self.dismiss()
+        self.app.call_later(on_result, value)
+
+
 class TextInputScreen(ModalScreen):
     """单行输入模态：ESC 取消（None），Enter 提交。"""
 

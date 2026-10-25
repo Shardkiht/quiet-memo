@@ -132,7 +132,7 @@ Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
-- Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`.
+- Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done.
 - On exit, extracts user statements from the turn that have not yet been persisted.
 - On startup, checks for missed distillation: sessions that terminated abnormally (no `closed` record) or whose exit extraction failed are caught up automatically, up to 3 per launch, with a card reporting the result.
 - Memory entries record `session` and `message` sources, so they can be traced back to the original conversation.
@@ -142,7 +142,7 @@ In-session commands:
 | Command | Action |
 | --- | --- |
 | `/new` | End the current session and start a new one (created after the first message) |
-| `/sessions` | Jump to the left session list (arrows to browse, Enter to resume, Del to delete) |
+| `/sessions` | Open the session picker: type to filter, Enter to resume, Del to delete (with confirmation), ESC to cancel |
 | `/resume [id\|query]` | Resume a session; without arguments jumps to the session list, an id/keyword resumes the match directly |
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |

@@ -245,7 +245,7 @@ class AgentRuntime:
             events.append("没有可压缩的早期记录。")
         return events
 
-    def close(self) -> dict:
+    def close(self, distill: bool = True) -> dict:
         empty = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0, "error": None}
         if self.session is None or self._closed:
             return empty
@@ -253,6 +253,12 @@ class AgentRuntime:
         self._closed = True
         stats = dict(empty)
         user_texts = session.user_texts_after_summary()
+        if not distill:
+            # 切换会话走快速路径：只做记账，沉淀延后（标记供补沉淀拾取）。
+            if user_texts:
+                self.sessions.append(session, {"type": "distill_deferred"})
+            self.sessions.append(session, {"type": "closed"})
+            return stats
         if self.config.extract_on_exit and user_texts:
             joined = "\n---\n".join(user_texts)[-12000:]
             try:
