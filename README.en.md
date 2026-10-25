@@ -223,7 +223,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM adapter, session/commit summaries
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, prompts.py             # Config, providers, Git, tokens, terminal
+                  layout.py, dialogs.py             # Config, providers, Git, tokens, terminal dialogs
 ```
 
 Dependency direction: `app → agent → memory → retrieval → infra`, `memory/agent → llm → infra`.

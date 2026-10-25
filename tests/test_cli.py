@@ -62,7 +62,7 @@ def test_escape_cancels_questionary_prompt():
     from prompt_toolkit.input import create_pipe_input
     from prompt_toolkit.output import DummyOutput
 
-    from quiet_memo.infra.prompts import ask
+    from quiet_memo.infra.dialogs import ask
 
     with create_pipe_input() as inp:
         question = questionary.text("name", input=inp, output=DummyOutput())

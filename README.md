@@ -222,7 +222,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM 适配、会话/提交摘要
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, prompts.py             # 配置、供应商、Git、token、终端
+                  layout.py, dialogs.py             # 配置、供应商、Git、token、终端交互
 ```
 
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。

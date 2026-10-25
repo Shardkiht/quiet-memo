@@ -17,7 +17,7 @@ from .config import (
     load_config,
     write_example_config,
 )
-from .prompts import ask
+from .dialogs import ask
 from .tokens import format_tokens
 
 console = Console()
