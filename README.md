@@ -131,6 +131,7 @@ timeout = 10.0
 max_results = 5
 cache_ttl = 86400
 transport = "http"            # http：本地 daemon；mcp：每次启动 npx MCP 进程
+auto_start = true             # 打开 TUI 时后台预热 daemon，不阻塞界面
 ```
 
 如果 Windows Git Bash 里中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，推荐 Windows Terminal 或 PowerShell；Git Bash 用户可尝试 `winpty`。
@@ -290,7 +291,7 @@ npx -y open-websearch@latest serve
 
 - 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
 - daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
-- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）。
+- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）。
 - 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
 
 ## 写入规则

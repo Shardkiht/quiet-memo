@@ -318,6 +318,7 @@ timeout = {config.search.timeout}
 max_results = {config.search.max_results}
 cache_ttl = {config.search.cache_ttl}
 transport = "{config.search.transport}"
+auto_start = {str(config.search.auto_start).lower()}
 '''
     path.write_text(content, encoding="utf-8")
 

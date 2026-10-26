@@ -30,6 +30,21 @@ MAX_DAEMON_LIMIT = 50
 ClientFactory = Callable[[], httpx.Client]
 
 
+def npx_command(
+    command: str = "npx",
+    args: tuple[str, ...] = ("-y", "open-websearch@latest"),
+) -> list[str]:
+    """解析 npx 路径；Windows 下 .cmd/.bat 通过 cmd /c 启动。"""
+    resolved = shutil.which(command) or shutil.which(f"{command}.cmd")
+    if not resolved:
+        raise ProviderError(
+            NAME, ProviderErrorKind.NETWORK, "未找到 npx；请先安装 Node.js"
+        )
+    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")):
+        return [os.environ.get("COMSPEC", "cmd.exe"), "/c", resolved, *args]
+    return [resolved, *args]
+
+
 def _text(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
@@ -238,14 +253,7 @@ class McpStdioTransport:
             self._stop(process)
 
     def _command_line(self) -> list[str]:
-        resolved = shutil.which(self.command) or shutil.which(f"{self.command}.cmd")
-        if not resolved:
-            raise ProviderError(
-                NAME, ProviderErrorKind.NETWORK, "未找到 npx；请先安装 Node.js"
-            )
-        if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")):
-            return [os.environ.get("COMSPEC", "cmd.exe"), "/c", resolved, *self.args]
-        return [resolved, *self.args]
+        return npx_command(self.command, self.args)
 
     @staticmethod
     def _read_stdout(process: subprocess.Popen, messages: queue.Queue) -> None:

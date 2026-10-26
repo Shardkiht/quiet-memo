@@ -98,6 +98,7 @@ def test_search_config_roundtrip(tmp_path):
             max_results=2,
             cache_ttl=0,
             transport="mcp",
+            auto_start=True,
         ),
     )
 
@@ -111,6 +112,7 @@ def test_search_config_roundtrip(tmp_path):
     assert loaded.search.max_results == 2
     assert loaded.search.cache_ttl == 0
     assert loaded.search.transport == "mcp"
+    assert loaded.search.auto_start is True
 
 
 def test_resolve_config_path_env_wins_over_cwd(tmp_path, monkeypatch):

@@ -14,6 +14,7 @@ from textual.widgets import Input, Label, ListView, ListItem, Markdown, Static
 
 from ..agent.runtime import AgentRuntime
 from ..agent.session import SessionStore
+from ..infra.search.daemon import ensure_search_daemon
 from ..infra.tokens import format_tokens
 from ..llm import ChatModelError
 from ..memory.service import MemoryService
@@ -146,6 +147,24 @@ class ChatApp(ChatCommandsMixin, App):
             self.add_welcome()
         self.query_one("#input", Input).focus()
         self._run_catchup()
+        self._warm_search()
+
+    def _warm_search(self) -> None:
+        search = self.service.config.search
+        if not search.enabled or not search.auto_start or search.transport != "http":
+            return
+        self.run_worker(
+            self._warm_search_work, group="search", thread=True, exit_on_error=False
+        )
+
+    def _warm_search_work(self) -> None:
+        try:
+            result = ensure_search_daemon(self.service.config.search.base_url)
+        except Exception as exc:
+            self.call_from_thread(self.notify, f"联网搜索未启动：{exc}")
+            return
+        if result == "started":
+            self.call_from_thread(self.notify, "联网搜索已启动")
 
     def _run_catchup(self) -> None:
         """启动补沉淀：扫描异常终止/抽取失败的会话并补记，同时提交未保存的 vault 变更。

@@ -6,7 +6,7 @@ from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.app.chat_app import ChatApp, SidebarToggle
 from quiet_memo.app.chat_widgets import SLASH_COMMANDS
-from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig
+from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig, SearchConfig
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import ExtractionResult
@@ -33,11 +33,12 @@ class FakeSummarizer:
         return "会话摘要"
 
 
-def build_app(tmp_path, turns, extract_on_exit=False):
+def build_app(tmp_path, turns, extract_on_exit=False, search=None):
     config = Config(
         vault=tmp_path / "vault",
         llm=LLMConfig(),
         retrieval=RetrievalConfig(method="keyword"),
+        search=search or SearchConfig(),
         chat=ChatConfig(context_window=32000, auto_recall=3, recall_rewrite=False, extract_on_exit=extract_on_exit),
     )
     service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
@@ -306,6 +307,26 @@ async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
                 break
         assert app.busy is False
         assert not app.service.repo.has_changes()
+
+
+async def test_auto_start_warms_search_in_background(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "quiet_memo.app.chat_app.ensure_search_daemon",
+        lambda base_url: calls.append(base_url) or "running",
+    )
+    app = build_app(
+        tmp_path,
+        [],
+        search=SearchConfig(enabled=True, auto_start=True),
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(100):
+            await pilot.pause()
+            if calls:
+                break
+        assert calls == ["http://127.0.0.1:3000"]
+        assert app.busy is False
 
 
 async def test_new_session_click_queues_while_busy(tmp_path):

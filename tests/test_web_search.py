@@ -16,6 +16,7 @@ from quiet_memo.infra.search import (
     build_search_router,
 )
 from quiet_memo.infra.search.cache import SearchCache
+from quiet_memo.infra.search.daemon import ensure_daemon
 from quiet_memo.infra.search.open_websearch import OpenWebSearchProvider
 from quiet_memo.infra.search.router import normalize_url
 from quiet_memo.memory.service import MemoryService
@@ -261,6 +262,44 @@ def test_cache_expires(tmp_path):
     router.search(SearchQuery("q"))
 
     assert provider.calls == 2
+
+
+def test_ensure_daemon_reuses_running_process():
+    spawns = []
+    result = ensure_daemon(
+        "http://127.0.0.1:3000",
+        health_check=lambda: True,
+        spawn=lambda: spawns.append(1),
+    )
+
+    assert result == "running"
+    assert spawns == []
+
+
+def test_ensure_daemon_spawns_and_waits_for_health():
+    checks = iter([False, False, True])
+    spawns = []
+    result = ensure_daemon(
+        "http://127.0.0.1:3000",
+        health_check=lambda: next(checks),
+        spawn=lambda: spawns.append(1),
+        sleep=lambda _: None,
+    )
+
+    assert result == "started"
+    assert spawns == [1]
+
+
+def test_ensure_daemon_timeout_is_structured():
+    with pytest.raises(ProviderError) as caught:
+        ensure_daemon(
+            "http://127.0.0.1:3000",
+            timeout=0,
+            health_check=lambda: False,
+            spawn=lambda: None,
+            sleep=lambda _: None,
+        )
+    assert caught.value.kind is ProviderErrorKind.TIMEOUT
 
 
 def test_disabled_search_does_not_register_tool(tmp_path):

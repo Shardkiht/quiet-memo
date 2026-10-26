@@ -92,6 +92,7 @@ class SearchConfig:
     max_results: int = 5
     cache_ttl: int = 86400
     transport: str = "http"  # http / mcp
+    auto_start: bool = False  # 打开 TUI 时后台预热 HTTP daemon
 
 
 @dataclass(slots=True)
@@ -197,6 +198,7 @@ def load_config(path: Path | str | None = None) -> Config:
         max_results=int(search_raw.get("max_results", 5)),
         cache_ttl=int(search_raw.get("cache_ttl", 86400)),
         transport=str(search_raw.get("transport", "http")),
+        auto_start=bool(search_raw.get("auto_start", False)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),
@@ -262,6 +264,8 @@ max_results = 5
 cache_ttl = 86400
 # http：调用本地 daemon；mcp：每次搜索启动 npx MCP 进程
 transport = "http"
+# 打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面
+auto_start = true
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

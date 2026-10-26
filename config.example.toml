@@ -54,3 +54,5 @@ max_results = 5
 cache_ttl = 86400
 # http：调用本地 daemon；mcp：每次搜索启动 npx MCP 进程（Windows 会走 npx.cmd）。
 transport = "http"
+# 打开 TUI 时在后台探测并拉起 HTTP daemon（不阻塞界面）。
+auto_start = true
