@@ -554,6 +554,8 @@ async def test_input_cursor_is_vertical_bar(tmp_path):
         rendered = widget.render_line(0).text
         assert "│" in rendered
         assert "测试" in rendered
+        # 光标只在渲染层插入；写进 _value 会让 Textual 把输入背景刷到左侧。
+        assert "│" not in widget._value.plain
 
 
 async def test_auto_start_warms_search_in_background(tmp_path, monkeypatch):
