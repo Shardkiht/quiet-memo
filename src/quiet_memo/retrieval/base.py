@@ -17,7 +17,7 @@ class SearchHit(BaseModel):
 
 
 class Retriever(Protocol):
-    """检索抽象：当前实现关键词 BM25，后续可替换为向量/混合检索。"""
+    """检索抽象：默认 hybrid；关键字与向量实现共用同一个 search 接口。"""
 
     def search(self, query: str, limit: int = 10) -> list[SearchHit]: ...
 
@@ -30,9 +30,3 @@ class Embedder(Protocol):
     def embed(self, texts: Sequence[str]) -> list[list[float]]: ...
 
     def embed_query(self, text: str) -> list[float]: ...
-
-
-class VectorRetriever(Retriever, Protocol):
-    """向量检索接口；实现需要先同步索引，具体实现后续接入。"""
-
-    def sync(self) -> None: ...

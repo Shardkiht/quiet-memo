@@ -4,7 +4,8 @@ from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore, new_message_id
-from quiet_memo.app.chat_app import SLASH_COMMANDS, ChatApp, SidebarToggle
+from quiet_memo.app.chat_app import ChatApp, SidebarToggle
+from quiet_memo.app.chat_widgets import SLASH_COMMANDS
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
@@ -56,7 +57,8 @@ async def _wait_reply(app, pilot, limit=200):
     # press 后消息处理是异步的：必须等回复真正挂载，不能只看 busy 标志。
     for _ in range(limit):
         await pilot.pause()
-        if app.query(".reply"):
+        # 回复块在流式中途就挂载，侧栏刷新发生在收尾阶段；必须等 busy 释放再断言。
+        if app.query(".reply") and not app.busy:
             return
     raise AssertionError("等待回复超时")
 
@@ -291,6 +293,19 @@ def test_slash_commands_cover_aliases():
     # 回归：面板必须列出 _command 实际支持的别名，/qu、/mo 前缀过滤要有提示。
     commands = {command for command, _, _ in SLASH_COMMANDS}
     assert "quit" in commands and "model" in commands
+
+
+async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
+    # 回归：没有漏沉淀会话时，启动检查仍应提交未保存的 vault 变更。
+    app = build_app(tmp_path, [])
+    app.service.note("启动前未提交的变更", topic="misc")
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(200):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app.busy is False
+        assert not app.service.repo.has_changes()
 
 
 async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):

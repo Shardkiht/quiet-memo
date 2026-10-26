@@ -38,6 +38,7 @@ memory/agent → llm → infra
 - `infra/`：配置、供应商、Git、token 估算、终端交互。
 
 新增代码不要制造新的反向依赖或循环依赖；跨模块使用相对导入。
+现有 `retrieval` 只读 `memory` 的 `models`、`store`、`detect` 获取条目与字面覆盖，这是已知例外；新增检索实现不要反向依赖 memory 的写入逻辑。
 
 ## 代码风格
 

@@ -279,8 +279,9 @@ MCP 客户端配置：
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, chat_app.py, chat_widgets.py,
-│                 actions.py, ui.py, session_ui.py   # CLI / Textual TUI / FastMCP 入口
+├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
+│                 chat_widgets.py, actions.py, ui.py, session_ui.py
+│                                                   # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py              # Agent 循环、系统提示词、压缩、工具、会话
 ├── memory/       service.py, store.py, models.py, queue.py,
@@ -295,7 +296,7 @@ src/quiet_memo/
 ```
 
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。
-`retrieval/keyword.py` 读取 `memory/store.py` 的条目，是 `memory ↔ retrieval` 之间唯一的跨层回读。
+`retrieval` 会只读 `memory` 的 `models`、`store`、`detect`（条目读取、归一化与字面覆盖判断），这是 `memory ↔ retrieval` 的已知回读；写入与裁决仍只由 `memory` 负责。
 开发约定（代码风格、存储不变量、测试与文档同步）见 [AGENTS.md](AGENTS.md)。
 
 - 检索默认 hybrid：jieba + rank-bm25 与向量余弦两路结果做 RRF 融合；向量由 fastembed 本地推理（可选 extra）或 embedding API 计算，缓存为 `.quiet-memo/vectors.npz` 派生数据（vault 内已 gitignore，删除后自动重建；换 embedding 模型自动失效）。向量后端不可用时回退纯 BM25，`/status` 和 `qm status` 显示当前检索模式。
