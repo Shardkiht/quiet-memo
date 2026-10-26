@@ -494,6 +494,15 @@ async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
         assert not app.service.repo.has_changes()
 
 
+async def test_chat_scrollbar_is_thin(tmp_path):
+    from textual.containers import VerticalScroll
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#chat", VerticalScroll).styles.scrollbar_size_vertical == 1
+
+
 async def test_input_cursor_is_vertical_bar(tmp_path):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
