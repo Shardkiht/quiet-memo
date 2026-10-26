@@ -131,6 +131,27 @@ async def test_command_palette_escape_closes(tmp_path):
         assert not palette.display
 
 
+async def test_command_palette_columns_align(tmp_path):
+    from quiet_memo.app.chat_app import CommandPalette
+    from quiet_memo.app.chat_widgets import CommandRow
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.query_one("#input", Input).value = "/"
+        await pilot.pause()
+        palette = app.query_one("#cmd-palette", CommandPalette)
+        rows = list(palette.query(CommandRow))
+        assert len(rows) == len(SLASH_COMMANDS)
+
+        starts = set()
+        for row, (_, usage, description) in zip(rows, SLASH_COMMANDS):
+            plain = row.render().plain
+            # [refresh] 等方括号必须原样可见，不能被当成标记吞掉
+            assert usage in plain
+            starts.add(plain.index(description))
+        assert len(starts) == 1
+
+
 async def test_ctrl_b_toggles_sidebar(tmp_path):
     from textual.containers import Vertical
 

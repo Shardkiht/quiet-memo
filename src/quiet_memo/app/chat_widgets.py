@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from rich.markup import escape
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
@@ -105,7 +106,10 @@ class CommandRow(Static):
 
     def __init__(self, command: str, usage: str, description: str) -> None:
         self.command = command
-        super().__init__(f"[cmd-usage]{usage:<18}[/] [cmd-desc]{description}[/]")
+        # 用法里的 [refresh] 等方括号会被当成 Rich 标记吞掉，须转义后再补空格
+        super().__init__(
+            f"[cmd-usage]{escape(f'{usage:<18}')}[/] [cmd-desc]{escape(description)}[/]"
+        )
         self.add_class("cmd-row")
 
     def on_click(self) -> None:
