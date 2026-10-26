@@ -292,6 +292,7 @@ npx -y open-websearch@latest serve
 - 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
 - daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
 - `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）。
+- `auto_start` 启动的 daemon 在 Windows 下隐藏控制台窗口；退出 TUI 后继续常驻，下次直接复用。
 - 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
 
 ## 写入规则

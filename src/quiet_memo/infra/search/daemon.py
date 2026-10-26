@@ -75,9 +75,15 @@ def _spawn_daemon(command: list[str], log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     kwargs: dict = {}
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(
-            subprocess, "DETACHED_PROCESS", 0
-        ) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        # CREATE_NO_WINDOW 让 npx/cmd 不创建控制台窗口；qm 退出后进程仍独立常驻。
+        # 不用 DETACHED_PROCESS：它会让 CREATE_NO_WINDOW 失效，可能重新弹出窗口。
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
+        kwargs["startupinfo"] = startupinfo
     else:
         kwargs["start_new_session"] = True
 

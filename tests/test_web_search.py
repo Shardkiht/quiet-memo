@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import httpx
 import pytest
 
@@ -15,6 +17,7 @@ from quiet_memo.infra.search import (
     SearchRouter,
     build_search_router,
 )
+from quiet_memo.infra.search import daemon as daemon_module
 from quiet_memo.infra.search.cache import SearchCache
 from quiet_memo.infra.search.daemon import ensure_daemon
 from quiet_memo.infra.search.open_websearch import OpenWebSearchProvider
@@ -300,6 +303,23 @@ def test_ensure_daemon_timeout_is_structured():
             sleep=lambda _: None,
         )
     assert caught.value.kind is ProviderErrorKind.TIMEOUT
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows console flags")
+def test_spawn_daemon_hides_console_window(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, command, **kwargs):
+            captured["command"] = command
+            captured.update(kwargs)
+
+    monkeypatch.setattr(daemon_module.subprocess, "Popen", FakePopen)
+    daemon_module._spawn_daemon(["cmd", "/c", "npx"], tmp_path / "daemon.log")
+
+    assert captured["creationflags"] & daemon_module.subprocess.CREATE_NO_WINDOW
+    assert captured["startupinfo"].dwFlags & daemon_module.subprocess.STARTF_USESHOWWINDOW
+    assert captured["startupinfo"].wShowWindow == daemon_module.subprocess.SW_HIDE
 
 
 def test_disabled_search_does_not_register_tool(tmp_path):
