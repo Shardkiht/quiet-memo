@@ -312,6 +312,7 @@ class ChatCommandsMixin:
 
     def _show_model_picker(self, entries: list[tuple]) -> None:
         self._set_busy(False)
+        self._drain_pending_intent()
         self.push_screen(
             PickScreen(f"Current model: {self.runtime.model_label}", entries, self._model_picked)
         )

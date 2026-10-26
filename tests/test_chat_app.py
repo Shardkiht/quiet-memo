@@ -39,7 +39,7 @@ def build_app(tmp_path, turns, extract_on_exit=False, search=None):
         vault=tmp_path / "vault",
         llm=LLMConfig(),
         retrieval=RetrievalConfig(method="keyword"),
-        search=search or SearchConfig(),
+        search=search or SearchConfig(auto_start=False),
         chat=ChatConfig(context_window=32000, auto_recall=3, recall_rewrite=False, extract_on_exit=extract_on_exit),
     )
     service = MemoryService(config, extractor=StaticExtractor(ExtractionResult(memories=[])))
@@ -278,6 +278,41 @@ async def test_delete_session_uses_captured_row(tmp_path):
         assert [item.row["id"] for item in app.query(SessionItem)] == [survivor.id]
 
 
+async def test_delete_confirmation_rechecks_current_session(tmp_path):
+    # 回归：弹窗期间目标变成当前会话时，确认也不能删除它。
+    app = build_app(tmp_path, [])
+    store = app.sessions
+    session = store.create()
+    store.rename(session, "目标会话")
+    store.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "内容"},
+    )
+    row = {"id": session.id, "title": "目标会话"}
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.confirm_delete_session(row)
+        await pilot.pause()
+        app.runtime.resume(session.id)
+        app._delete_session_result(row, True)
+        await pilot.pause()
+
+        assert store.exists(session.id)
+
+
+async def test_model_picker_drains_pending_session_intent(tmp_path):
+    # 回归：模型列表加载期间排队的会话意图，在释放 busy 时必须接续。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._pending_new = True
+        app._show_model_picker([])
+        await pilot.pause()
+
+        assert app._pending_new is False
+
+
 async def test_context_custom_rejects_unicode_digits(tmp_path):
     # 回归："①".isdigit() 为 True 但 int() 抛错；现在应给出错误卡片而不是崩进事件循环。
     app = build_app(tmp_path, [])
@@ -458,6 +493,37 @@ async def test_streaming_roundtrip_renders_single_reply(tmp_path):
         )
 
 
+async def test_streaming_keeps_text_before_tool_calls(tmp_path):
+    # 回归：工具调用前的流式正文不能被最终回复覆盖，事件顺序保持生成顺序。
+    from quiet_memo.llm import ToolCall
+
+    app = build_app(
+        tmp_path,
+        [
+            AssistantTurn(
+                content="我先查一下",
+                tool_calls=[ToolCall(id="c1", name="recall", arguments={"query": "清淡"})],
+            ),
+            AssistantTurn(content="最终回答"),
+        ],
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "测试工具前文本"
+        await pilot.press("enter")
+        for _ in range(300):
+            await pilot.pause()
+            if not app.busy:
+                break
+
+        children = list(app._chat().children)
+        contents = [getattr(child, "_markdown", "") for child in children]
+        first = next(i for i, text in enumerate(contents) if "我先查一下" in text)
+        final = next(i for i, text in enumerate(contents) if "最终回答" in text)
+        event = next(i for i, child in enumerate(children) if "event-card" in child.classes)
+        assert first < event < final
+
+
 async def test_streaming_error_marks_interruption(tmp_path):
     # 回归（issue #4）：中途断流保留半截内容并显式标注，不静默吞掉。
     app = build_app(tmp_path, [])
@@ -608,3 +674,5 @@ async def test_session_picker_search_resume_and_delete(tmp_path):
                 break
         assert not store.exists(s2.id)
         assert store.exists(s1.id)
+        # 过滤结果也要同步：已删会话不能继续留在过滤后的列表里。
+        assert len(list(picker.query("#picker-list ListItem"))) == 0

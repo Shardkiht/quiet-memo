@@ -420,6 +420,11 @@ class ChatApp(ChatCommandsMixin, App):
         if confirmed is not True:
             self.query_one("#input", Input).focus()
             return
+        # 弹窗期间可能已排队切换到目标会话：确认时复查，不能删掉当前活跃会话。
+        if self.runtime.has_session and row["id"] == self.runtime.current.id:
+            self.notify("Cannot delete the current session; use /new first.")
+            self.query_one("#input", Input).focus()
+            return
         # 用弹窗打开前捕获的 row，不读列表当前高亮：模态期间列表可能被刷新重建。
         if self.sessions.exists(row["id"]):
             self.sessions.delete(row["id"])
@@ -497,6 +502,10 @@ class ChatApp(ChatCommandsMixin, App):
         self._scroll_end()
 
     def add_event(self, event: str) -> None:
+        if self._stream_widget is not None and self._stream_buffer:
+            # 工具事件在两轮生成之间：先就地定稿当前段，后续 delta 另起一块，
+            # 否则最终回复会覆盖工具前的正文，事件顺序也会颠倒。
+            self._stream_close(self._stream_buffer)
         memo = event.startswith(("Saved", "Corrected", "Deleted"))
         self._chat().mount(
             Static(f"✓ {event}" if memo else f"┃ {event}", classes="event-card memo" if memo else "event-card")

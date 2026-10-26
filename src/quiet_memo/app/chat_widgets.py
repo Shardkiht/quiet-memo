@@ -182,6 +182,13 @@ class SessionPickerScreen(ModalScreen):
 
     def set_rows(self, rows: list[dict]) -> None:
         self._rows = rows
+        # 外部刷新（如删除会话）也要重算过滤结果，否则已删条目仍显示并可被选中。
+        needle = self.query_one("#picker-input", Input).value.strip().lower()
+        self._filtered = [
+            row
+            for row in rows
+            if needle in row["title"].lower() or needle in row["id"].lower()
+        ] if needle else rows
         self._rebuild()
 
     def on_input_changed(self, event: Input.Changed) -> None:
