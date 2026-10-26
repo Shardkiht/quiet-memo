@@ -110,8 +110,8 @@ async def test_command_palette_filter_navigate_execute(tmp_path):
         await pilot.press("enter")  # 执行高亮命令
         await pilot.pause()
         assert not palette.display
-        cards = app.query(".card")
-        assert cards  # /think 走选择弹窗前先渲染提示或弹窗——执行过即可
+        # /think 要么弹出选择器，要么提示模型不支持；两者都说明命令已执行。
+        assert app.query(".card") or app.screen.__class__.__name__ in {"PickScreen", "TextInputScreen"}
         assert widget.value == ""
 
 

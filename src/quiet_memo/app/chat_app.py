@@ -35,66 +35,72 @@ class ChatApp(ChatCommandsMixin, App):
     TITLE = "quiet-memo — Personal Memory"
 
     CSS = """
-    $accent: #8FAECB;
-    $dim: #46586B;
-    $muted: #8a8f9c;
-    $faint: #5a5f6c;
-    $panel: #1c1e26;
-    $green: #9CBF9A;
+    $accent: #d2d3d7;
+    $dim: #3a3b42;
+    $muted: #96979c;
+    $faint: #63646b;
+    $panel: #17181c;
+    $bg: #131417;
 
+    Screen { background: $bg; }
     #root { width: 1fr; height: 1fr; }
-    #sidebar { width: 30; background: #181a21; border-right: solid #262933; }
+    #sidebar { width: 28; background: #101114; border-right: solid #202127; }
     #sidebar-head { height: 3; align: left middle; }
     #brand { color: $accent; text-style: bold; padding: 0 1; width: 1fr; }
-    /* 折叠按钮：朴素方框、不贴分割线（右侧留 1 格），避免凸出感 */
-    #hide-sidebar { width: 3; height: 3; min-width: 3; padding: 0; background: #181a21; color: $accent; border: solid #4a4f5a; margin-right: 1; content-align: center middle; }
-    #hide-sidebar:hover { border: solid $accent; }
-    /* 侧栏隐藏后：对话区左上角的展开按钮，同款方框 */
-    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; padding: 0; background: #181a21; color: $accent; border: solid #4a4f5a; content-align: center middle; display: none; }
-    #show-sidebar:hover { border: solid $accent; }
-    #new-session { width: 1fr; height: 3; margin: 0 1 1 1; background: #232630; color: $muted; border: dashed #333947; content-align: center middle; }
-    #new-session:hover { background: #2b303c; color: #d6dae2; }
+    /* 折叠按钮只留符号，减少侧栏头部的方框噪音 */
+    #hide-sidebar { width: 3; height: 3; min-width: 3; padding: 0; background: #101114; color: $faint; border: none; margin-right: 1; content-align: center middle; }
+    #hide-sidebar:hover { color: $accent; }
+    #show-sidebar { layer: overlay; dock: top; width: 3; height: 3; min-width: 3; padding: 0; background: $bg; color: $faint; border: none; content-align: center middle; display: none; }
+    #show-sidebar:hover { color: $accent; }
+    #new-session { width: 1fr; height: 3; margin: 0 1 1 1; background: #17181c; color: $muted; border: none; content-align: left middle; padding: 0 1; }
+    #new-session:hover { background: #202127; color: $accent; }
     #sessions { height: 1fr; }
     /* ListItem 默认高度跟随子容器（Vertical 是 1fr 会撑满列表），必须钉死 auto */
     #sessions > ListItem { padding: 0 1; height: auto; }
     #sessions > ListItem > Vertical { height: auto; }
-    .session-title { color: #c8ccd6; width: 1fr; overflow-x: hidden; text-overflow: ellipsis; }
+    .session-title { color: #c2c3c7; width: 1fr; overflow-x: hidden; text-overflow: ellipsis; }
     .session-meta { color: $faint; }
-    /* 覆写主题默认的整行亮色高亮：用克制的主题色，避免空白区域像误选 */
-    #sessions > ListItem.-highlight { background: #2b3444; }
-    #sessions > ListItem.current { background: #232c3a; border-left: heavy $accent; }
-    #sessions > ListItem.current.-highlight { background: #2b3444; border-left: heavy $accent; }
+    /* 当前会话只用一条左线和轻微底色，避免整行亮色像误选 */
+    #sessions > ListItem.-highlight { background: #1c1d22; }
+    #sessions > ListItem.current { background: #1b1c21; border-left: heavy $muted; }
+    #sessions > ListItem.current.-highlight { background: #22242a; border-left: heavy $accent; }
     .group-label { color: $faint; padding: 1 1 0 1; }
 
     #main { width: 1fr; layers: base overlay; }
-    #chat { width: 1fr; height: 1fr; padding: 0 2; }
+    #chat { width: 1fr; height: 1fr; padding: 1 3; }
     .who-user { content-align: right top; color: $faint; width: 1fr; margin-top: 1; }
     .user-turn { width: 1fr; height: auto; align: right top; }
-    .bubble { background: #232c3a; color: #dbe6f2; padding: 0 2; width: auto; max-width: 62%; height: auto; }
-    .who-ai { color: $accent; text-style: bold; margin-top: 1; width: 1fr; }
-    .reply { margin: 0 0 0 1; height: auto; }
+    .bubble { background: #1e2026; color: #d5d6da; padding: 0 2; width: auto; max-width: 68%; height: auto; }
+    .who-ai { color: $accent; margin-top: 1; width: 1fr; }
+    .reply { margin: 0; height: auto; }
     .event-card { border-left: heavy $dim; color: $muted; padding: 0 1; width: 1fr; }
-    .event-card.memo { border-left: heavy $green; color: $green; }
+    .event-card.memo { border-left: heavy $muted; color: $muted; }
     .meta { color: $faint; width: 1fr; }
-    .divider { border-top: solid #3a4150; height: 1; margin: 1 0; }
-    .card { border: round #262933; background: $panel; padding: 0 2; margin: 1 0; color: #c8ccd6; width: 1fr; }
+    .divider { border-top: solid #202127; height: 1; margin: 1 0; }
+    .card { border-left: heavy $dim; background: $panel; padding: 0 2; margin: 1 0; color: #c2c3c7; width: 1fr; }
+    /* 空会话欢迎区：无边框，靠字号和留白建立层级 */
+    .welcome-brand { color: #d5d6da; text-style: bold; margin: 2 0 0 0; }
+    .welcome-line { color: #9a9b9f; }
+    .welcome-meta { color: $faint; margin-top: 1; }
+    .welcome-hint { color: #6f7076; margin-top: 2; }
 
-    #input { margin: 0 2; }
+    #input { margin: 0 3 1 3; background: #16171b; border: round #26272d; }
+    #input:focus { border: round #4a4b52; }
     /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */
     #input > .input--cursor {
         background: transparent;
-        color: #d6dae2;
+        color: #d5d6da;
     }
-    #status { width: 1fr; height: 1; background: #181a21; color: $muted; padding: 0 2; }
+    #status { width: 1fr; height: 1; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
 
-    /* 命令面板：浮在输入框上方（覆盖对话区），OpenCode 风格竖排列表 */
-    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round $dim; padding: 0 1; display: none; }
-    .cmd-row { width: 1fr; height: 1; padding: 0 1; color: #c8ccd6; }
-    .cmd-row.cmd-active { background: #2b3444; }
-    .cmd-usage { color: $accent; }
-    .cmd-desc { color: $faint; }
+    /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语 */
+    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round #2a2b30; padding: 0 1; display: none; }
+    .cmd-row { width: 1fr; height: 1; padding: 0 1; color: #b9babd; }
+    .cmd-row.cmd-active { background: #24262c; }
+    .cmd-usage { color: #8a8b90; }
+    .cmd-desc { color: #6f7076; }
 
-    #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round $dim; padding: 1 2; }
+    #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round #2a2b30; padding: 1 2; }
     #picker-input { width: 1fr; margin-bottom: 1; }
     #picker-list { height: auto; max-height: 16; }
     .pick-title { color: $accent; text-style: bold; margin-bottom: 1; }
@@ -140,7 +146,7 @@ class ChatApp(ChatCommandsMixin, App):
                 yield SidebarToggle("»", id="show-sidebar")
                 yield VerticalScroll(id="chat")
                 yield CommandPalette()
-                yield BarInput(placeholder="Message, / commands, Ctrl+B sidebar", id="input")
+                yield BarInput(placeholder="Message or /command", id="input")
                 yield Static("", id="status")
 
     def on_mount(self) -> None:
@@ -452,11 +458,21 @@ class ChatApp(ChatCommandsMixin, App):
 
     def add_welcome(self) -> None:
         total = self.service.config.chat.context_window
-        self.add_card(
-            "A quiet personal memory vault · a session is created after your first message\n"
-            f"◆ {self.runtime.model_label} · {self.service.retrieval_mode}"
-            f" · context {format_tokens(total)}\n"
-            "/help commands · /models models · Ctrl+B sidebar · Ctrl+Q quit"
+        chat = self._chat()
+        chat.mount(Static("quiet-memo", classes="welcome-brand"))
+        chat.mount(Static("A quiet personal memory vault", classes="welcome-line"))
+        chat.mount(
+            Static(
+                f"{self.runtime.model_label} · {self.service.retrieval_mode}"
+                f" · {format_tokens(total)} context",
+                classes="welcome-meta",
+            )
+        )
+        chat.mount(
+            Static(
+                "/help commands · Ctrl+B sidebar · Ctrl+Q quit",
+                classes="welcome-hint",
+            )
         )
 
     def build_transcript(self) -> None:
@@ -536,16 +552,16 @@ class ChatApp(ChatCommandsMixin, App):
         blocks = min(10, max(0, round(percent * 10)))
         # 用量条用制表横线（━ 已用 / ─ 剩余）：块/阴影字符在部分 CJK 字体会画成竖线；
         # 低占用时百分比恒为 0%，直接展示“已用/上限”数字。
-        bar = f"[#8FAECB]{'━' * blocks}[/][#4a4f5a]{'─' * (10 - blocks)}[/]"
+        bar = f"[#8a8b90]{'━' * blocks}[/][#2f3035]{'─' * (10 - blocks)}[/]"
         used_text = format_tokens(used) if used else "0"
         text = (
-            f"[#d0d0d0]◆ {self.runtime.model_label}[/] [#5a5f6c]·[/] [#8a8f9c]{self.service.retrieval_mode}[/]"
-            f"   [#5a5f6c]Context[/] {bar} [#8a8f9c]{used_text}/{format_tokens(total)}[/]"
+            f"[#c2c3c7]◆ {self.runtime.model_label}[/] [#5f6068]·[/] "
+            f"[#8a8b90]Context[/] {bar} [#8a8b90]{used_text}/{format_tokens(total)}[/]"
         )
         if self.pending_count:
-            text += f"   [#D9A66C]Pending {self.pending_count}[/]"
+            text += f"   [#b08a6a]Pending {self.pending_count}[/]"
         if percent >= self.runtime.config.compact_threshold:
-            text += " [#D9A66C]⚠ compact next turn[/]"
+            text += " [#b08a6a]⚠ compact next turn[/]"
         self.query_one("#status", Static).update(text)
 
     def _set_busy(self, busy: bool) -> None:

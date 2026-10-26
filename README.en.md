@@ -29,34 +29,19 @@ Local Markdown · Git-reversible · MCP-callable
 ## Interface preview
 
 ```text
- quiet-memo «        ◆ deepseek-flash · hybrid · context 200K
-
- Sessions (Ctrl+B to collapse)      ＋ New session
- Today     ▌14:32 Recent plans · 4 msgs
-           10:02 Java Q&A · 6 msgs
- Yesterday 21:47 Internship · 12 msgs
-           09:15 Weekly review · 3 msgs
-
-──────────────────────────────────────────────────────────────
-                                                me · 14:32
-      ╭──────────────────────────────────────╮
-      │  What have I been busy with lately?  │
-      ╰──────────────────────────────────────╯
-quiet-memo · 14:32
-┃ recalled 「recent plans」: 3 entries
-Three things going on: wrapping up the final project,
-job hunting, and a fixed study rhythm — don't add more.
-2 steps · 3.2K tok · $0.0018 · 4.2s
-──────────────────────────────────────────────────────────────
-                                                me · 14:34
-╭─────────────────────────────────────────────╮
-│  I added one more study day, remember that  │
-╰─────────────────────────────────────────────╯
-✓ remembered [schedule] one extra library day midweek
-Noted. No clash with Sunday rest — three on, one off.
-
-❯ Send a message, / commands, Ctrl+B sidebar▊
-◆ deepseek-flash · hybrid   context ━━──── 3.2K/200K   pending 2
+ quiet-memo             │  quiet-memo · 14:32
+ + New session          │  ┃ recalled "recent plans": 3 hits
+                        │  Three things going on: wrapping up the final project,
+ 2026-10-26             │  job hunting, and a fixed study rhythm.
+   14:32 · 4 msgs       │  2 steps · 3.2K tok · $0.0018 · 4.2s
+                        │
+                        │                    You · 14:34
+                        │      I added one more study day, remember that
+                        │
+                        │  ✓ remembered [schedule] one extra library day midweek
+                        │
+                        │  > Message or /command
+                        │  ◆ deepseek-flash · Context ━───────── 3.2K/200K
 ```
 
 ## Quick start
@@ -140,7 +125,7 @@ Web search is enabled by default but requires a local open-websearch daemon; see
 
 ## Chat agent
 
-Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
+Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model, context usage as a progress line with used/total numbers, and the pending count; retrieval mode and shortcut hints live in the empty-session welcome, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.

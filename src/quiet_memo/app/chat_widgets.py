@@ -11,23 +11,23 @@ from textual.widgets import Input, Label, ListView, ListItem, Static
 
 SLASH_COMMANDS = [
     ("new", "/new", "New session"),
-    ("sessions", "/sessions", "Jump to the session list"),
-    ("resume", "/resume [id|query]", "Resume a session; opens the list without an argument"),
-    ("compact", "/compact", "Compact the context now"),
-    ("summary", "/summary", "Show the current session summary"),
-    ("status", "/status", "Session and memory status"),
-    ("model", "/model [refresh]", "Switch model; refresh forces a list refresh"),
-    ("think", "/think", "Set reasoning effort (low/medium/high, model-dependent)"),
-    ("context", "/context", "Set context window (presets follow the model limit)"),
-    ("setup", "/setup", "Configure model / API key"),
-    ("rename", "/rename <title>", "Rename the current session"),
-    ("recall", "/recall <query>", "Search memories directly"),
-    ("remember", "/remember <text>", "Write a memory directly"),
-    ("pending", "/pending", "Review pending items: approve / reject / edit"),
-    ("topics", "/topics [name]", "Browse memory topics and entries"),
-    ("help", "/help", "Show command help"),
+    ("sessions", "/sessions", "Browse sessions"),
+    ("resume", "/resume [id|query]", "Resume a session"),
+    ("compact", "/compact", "Compact context"),
+    ("summary", "/summary", "Show summary"),
+    ("status", "/status", "Session status"),
+    ("model", "/model [refresh]", "Switch model"),
+    ("think", "/think", "Reasoning effort"),
+    ("context", "/context", "Context window"),
+    ("setup", "/setup", "Configure provider"),
+    ("rename", "/rename <title>", "Rename session"),
+    ("recall", "/recall <query>", "Search memories"),
+    ("remember", "/remember <text>", "Save memory"),
+    ("pending", "/pending", "Review pending"),
+    ("topics", "/topics [name]", "Browse topics"),
+    ("help", "/help", "Show commands"),
     ("exit", "/exit", "Quit"),
-    ("quit", "/quit", "Same as /exit"),
+    ("quit", "/quit", "Quit"),
 ]
 
 
@@ -105,7 +105,7 @@ class CommandRow(Static):
 
     def __init__(self, command: str, usage: str, description: str) -> None:
         self.command = command
-        super().__init__(f"[cmd-usage]{usage:<20}[/] [cmd-desc]{description}[/]")
+        super().__init__(f"[cmd-usage]{usage:<18}[/] [cmd-desc]{description}[/]")
         self.add_class("cmd-row")
 
     def on_click(self) -> None:
