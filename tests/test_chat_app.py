@@ -434,6 +434,47 @@ def test_slash_commands_cover_aliases():
     assert "quit" in commands and "model" in commands
 
 
+async def test_session_picker_focus_bar_follows_selection(tmp_path):
+    # 回归：左侧竖线要跟着焦点走，同时所有行文字保持同一列。
+    from textual.color import Color
+    from textual.widgets import ListView
+
+    from quiet_memo.app.chat_widgets import SessionPickerScreen
+
+    app = build_app(tmp_path, [])
+    store = app.sessions
+    ids = []
+    for title in ("当前会话", "另一条会话"):
+        session = store.create()
+        store.rename(session, title)
+        store.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": title},
+        )
+        ids.append(session.id)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.runtime.resume(ids[0])
+        app.open_session_picker()
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, SessionPickerScreen)
+        rows = list(picker.query("#picker-list SessionItem"))
+        assert len(rows) == 2
+        current = next(row for row in rows if row.has_class("current"))
+        other = next(row for row in rows if not row.has_class("current"))
+
+        listing = picker.query_one("#picker-list", ListView)
+        listing.index = rows.index(other)
+        await pilot.pause()
+
+        assert other.has_class("-highlight")
+        assert other.styles.border_left[1] == Color.parse("#d2d3d7")  # 焦点强调色
+        assert current.styles.border_left[1] == Color.parse("#96979c")  # 当前会话弱色
+        assert len({row.query_one(".session-title").region.x for row in rows}) == 1
+
+
 async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
     # 回归：没有漏沉淀会话时，启动检查仍应提交未保存的 vault 变更。
     import asyncio

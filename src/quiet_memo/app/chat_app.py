@@ -105,9 +105,9 @@ class ChatApp(ChatCommandsMixin, App):
     #picker-input { width: 1fr; margin-bottom: 1; }
     #picker-list { height: auto; max-height: 16; }
     /* 与侧栏一致：SessionItem 内层 Vertical 默认 1fr 会把整行撑满 */
-    #picker-list > ListItem { padding: 0 1; height: auto; }
+    #picker-list > ListItem { padding: 0 1; height: auto; border-left: heavy transparent; }
     #picker-list > ListItem > Vertical { height: auto; }
-    #picker-list > ListItem.-highlight { background: #22242a; }
+    #picker-list > ListItem.-highlight { background: #22242a; border-left: heavy $accent; }
     #picker-list > ListItem.current { background: #1b1c21; border-left: heavy $muted; }
     #picker-list > ListItem.current.-highlight { background: #22242a; border-left: heavy $accent; }
     .pick-title { color: $accent; text-style: bold; margin-bottom: 1; }
