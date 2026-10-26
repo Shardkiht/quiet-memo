@@ -178,7 +178,7 @@ class SessionPickerScreen(ModalScreen):
         with Vertical(id="pick-card"):
             yield Input(placeholder="Search session title or ID…", id="picker-input")
             yield ListView(id="picker-list")
-            yield Static("↑↓ select · Enter resume · Del delete · ESC cancel", classes="pick-hint")
+            yield Static("↓ list · Enter resume · Del delete · ESC cancel", classes="pick-hint")
 
     def on_mount(self) -> None:
         self._rebuild()

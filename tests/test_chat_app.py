@@ -436,13 +436,19 @@ def test_slash_commands_cover_aliases():
 
 async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
     # 回归：没有漏沉淀会话时，启动检查仍应提交未保存的 vault 变更。
+    import asyncio
+    import time
+
     app = build_app(tmp_path, [])
     app.service.note("启动前未提交的变更", topic="misc")
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(300):
+        # 后台 git 提交耗时受机器负载影响，不能只等固定帧数。
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
             await pilot.pause()
             if not app.service.repo.has_changes():
                 break
+            await asyncio.sleep(0.02)
         assert app.busy is False
         assert not app.service.repo.has_changes()
 
@@ -740,6 +746,10 @@ async def test_session_picker_search_resume_and_delete(tmp_path):
         picker = app.screen
         assert isinstance(picker, SessionPickerScreen)
         assert len(list(picker.query("#picker-list ListItem"))) == 2
+        # 回归：SessionItem 内层 Vertical 不能撑满列表，否则高亮变成整块、底部提示被挤掉。
+        assert all(item.size.height <= 3 for item in picker.query("#picker-list ListItem"))
+        hint = picker.query_one(".pick-hint", Static)
+        assert hint.region.bottom <= picker.query_one("#pick-card").region.bottom
 
         picker.query_one("#picker-input", Input).value = "java"
         await pilot.pause()
