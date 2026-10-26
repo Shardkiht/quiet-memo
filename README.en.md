@@ -162,17 +162,17 @@ In-session commands:
 
 ```mermaid
 flowchart TD
-    U[User message] --> Q[Query building<br/>follow-ups carry context]
-    Q --> R[Hybrid retrieval<br/>BM25 + vector RRF]
-    R --> C[Agent loop<br/>LLM + tools]
-    C -- recall / memorize /<br/>correct / forget --> C
-    C --> A[Reply]
-    C -- user says "remember" --> W[Write adjudication<br/>confidence / conflict / secrets]
-    X[Exit extraction<br/>pre-compaction flush<br/>startup catch-up] --> W
-    W -- trusted --> V[(vault<br/>memories/*.md)]
-    W -- low confidence / conflict / sensitive --> P[(Pending queue<br/>pending.jsonl)]
-    P -- qm approve / reject --> V
-    V --> G[(Git commit<br/>auto Chinese summary)]
+    U["User message"] --> Q["Query building / follow-ups carry context"]
+    Q --> R["Hybrid retrieval / BM25 + vector RRF"]
+    R --> C["Agent loop / LLM + tools"]
+    C -->|"recall / memorize / correct / forget"| C
+    C --> A["Reply"]
+    C -->|"user says 'remember'"| W["Write adjudication / confidence / conflict / secrets"]
+    X["Exit extraction / pre-compaction flush / startup catch-up"] --> W
+    W -->|"trusted"| V["vault / memories/*.md"]
+    W -->|"low confidence / conflict / sensitive"| P["Pending queue / pending.jsonl"]
+    P -->|"qm approve / reject"| V
+    V --> G["Git commit / auto Chinese summary"]
 ```
 
 ### Context compaction
