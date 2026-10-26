@@ -155,3 +155,37 @@ def test_append_retries_duplicate_entry_id(tmp_path, monkeypatch):
     assert first.id.endswith("175a")
     assert second.id.endswith("beef")
     assert len({entry.id for entry in store.entries()}) == 2
+
+
+def test_trailing_tag_like_text_is_not_metadata(tmp_path):
+    store = MemoryStore(tmp_path)
+    entry = store.append("misc", "临时记录 `status=deleted`")
+
+    loaded = store.entries()[0]
+    assert loaded.status == "active"
+    assert loaded.text == "临时记录 `status=deleted`"
+    assert loaded.id == entry.id
+
+
+def test_trailing_fake_id_does_not_replace_entry_id(tmp_path):
+    store = MemoryStore(tmp_path)
+    entry = store.append("misc", "记录 `id=mem-fake`")
+
+    loaded = store.entries()[0]
+    assert loaded.id == entry.id
+    assert loaded.text == "记录 `id=mem-fake`"
+
+
+def test_legacy_comment_without_id_has_stable_id(tmp_path):
+    path = tmp_path / "memories" / "old.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "- <!-- status=active --> 2026-10-01T09:00:00 — 无 ID 的旧条目\n",
+        encoding="utf-8",
+    )
+    store = MemoryStore(tmp_path)
+
+    first = store.entries()[0]
+    second = store.entries()[0]
+    assert first.id == second.id
+    assert store.find(first.id) is not None

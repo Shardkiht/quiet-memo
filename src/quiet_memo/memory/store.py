@@ -73,12 +73,16 @@ def _render_tags(fields: dict[str, str]) -> str:
 
 
 def _split_tags(rest: str) -> tuple[str, dict[str, str]]:
-    # 只从行尾逐个剥离已知键，避免把正文里的行内代码误判为元数据。
+    # 只从行尾逐个剥离已知键；生成的标签以 id 开头，剥到 id 即停，
+    # 否则正文末尾同形的 `status=...`/`id=...` 会被当成元数据覆盖真实值。
     tags: dict[str, str] = {}
     text = rest.rstrip()
     while (match := TAG_AT_END_RE.search(text)) and match.group(1) in KNOWN_TAG_KEYS:
-        tags[match.group(1)] = match.group(2)
+        key = match.group(1)
+        tags[key] = match.group(2)
         text = text[: match.start()].rstrip()
+        if key == "id":
+            break
     return text, dict(reversed(list(tags.items())))
 
 
@@ -188,7 +192,7 @@ class MemoryStore:
             fields = _parse_comment(comment.group(1))
             text, metadata = _split_metadata(comment.group(3))
             return Entry(
-                id=fields.get("id") or self.new_entry_id(),
+                id=fields.get("id") or self._legacy_id(comment.group(2), text),
                 topic=topic,
                 text=text,
                 timestamp=comment.group(2),

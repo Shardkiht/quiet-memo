@@ -18,7 +18,7 @@ def now_iso() -> str:
 
 def new_message_id() -> str:
     stamp = datetime.now()
-    return f"m-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+    return f"m-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(4)}"
 
 
 @dataclass
@@ -82,24 +82,12 @@ class Session:
         ]
 
     def needs_consolidation(self) -> bool:
-        """位置感知判定：晚于上次 consolidated 记录的 deferred/error 标记算欠账，
-        或从未正常关闭过（异常终止）。同会话多轮"切走→补沉淀"循环因此可用。
+        """以沉淀游标为准：游标后还有用户消息就需要补记。
+
+        正常退出/补记成功会推进游标；异常退出、抽取失败或恢复后再次崩溃时
+        游标不动，因此不依赖 closed/consolidated 标记的历史顺序。
         """
-        last_consolidated = -1
-        pending_after = False
-        has_closed = False
-        for index, record in enumerate(self.records):
-            record_type = record.get("type")
-            if record_type == "consolidated":
-                last_consolidated = index
-                pending_after = False
-            elif record_type in ("distill_deferred", "extraction_error"):
-                pending_after = index > last_consolidated
-            elif record_type == "closed":
-                has_closed = True
-        if pending_after:
-            return True
-        return last_consolidated == -1 and not has_closed
+        return bool(self.user_texts_after_distilled())
 
     def user_texts_after_summary(self) -> list[str]:
         return [
@@ -146,9 +134,13 @@ class SessionStore:
 
     def create(self) -> Session:
         stamp = datetime.now()
-        session_id = f"s-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
         self.root.mkdir(parents=True, exist_ok=True)
+        session_id = f"s-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
         path = self.root / f"{session_id}.jsonl"
+        # 同秒创建可能撞 16 位后缀：撞了重摇，不能覆盖已有会话文件。
+        while path.exists():
+            session_id = f"s-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}"
+            path = self.root / f"{session_id}.jsonl"
         meta = {
             "type": "meta",
             "id": session_id,

@@ -178,6 +178,9 @@ class MemoryService:
             ]
             if missing:
                 with open(gitignore, "a", encoding="utf-8") as handle:
+                    # 旧文件可能没有末尾换行，直接追加会把规则拼到上一行。
+                    if existing and not existing.endswith("\n"):
+                        handle.write("\n")
                     handle.write("\n".join(missing) + "\n")
         created = self.repo.ensure_init()
         self.repo.stage_all()
@@ -320,6 +323,8 @@ class MemoryService:
         text = text.strip()
         if not text:
             raise ValueError("内容为空。")
+        if contains_secret(text):
+            raise ValueError("检测到密钥或敏感信息，已拦截写入。")
         with self.write_lock:
             if self.store.has_text(text):
                 raise ValueError("相同内容已存在。")
@@ -332,6 +337,8 @@ class MemoryService:
                 raise KeyError(f"记忆不存在：{entry_id}")
             if old.status != STATUS_ACTIVE:
                 raise ValueError(f"记忆当前状态为 {old.status}，不能更正。")
+            if contains_secret(text):
+                raise ValueError("检测到密钥或敏感信息，已拦截写入。")
             entry = self.store.append(
                 old.topic,
                 text.strip(),
@@ -375,6 +382,8 @@ class MemoryService:
         item = self.queue.get(item_id)
         if item is None:
             raise KeyError(f"待确认项不存在：{item_id}")
+        if contains_secret(item.text):
+            raise ValueError("检测到密钥或敏感信息，已拦截写入。")
         supersedes = item.conflict_with
         if supersedes:
             old = self.store.find(supersedes)

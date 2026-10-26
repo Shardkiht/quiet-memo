@@ -44,7 +44,7 @@ class PendingQueue:
         target = next((item for item in items if item.id == item_id), None)
         if target is None:
             return None
-        self._save([item for item in items if item.id != item_id])
+        self._save([item for item in items if item is not target])
         self.dir.mkdir(parents=True, exist_ok=True)
         record = target.model_dump()
         record.update(status=status, resolved_at=datetime.now().isoformat(timespec="seconds"))

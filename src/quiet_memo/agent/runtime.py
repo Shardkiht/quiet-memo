@@ -14,12 +14,16 @@ from ..llm import (
     Summarizer,
     Usage,
 )
+from ..memory.extractor import split_chunks
 from ..memory.service import MemoryService, load_persona
 from .context import ContextManager
 from .prompts import build_system_prompt
 from .recall import RecallQueryBuilder
 from .session import Session, SessionStore, new_message_id
 from .tools import build_tools, compact_tool_outputs
+
+
+DISTILL_MAX_CHARS = 12000
 
 
 @dataclass
@@ -261,20 +265,20 @@ class AgentRuntime:
             self.sessions.append(session, {"type": "closed"})
             return stats
         if self.config.extract_on_exit and user_texts:
-            joined = "\n---\n".join(user_texts)[-12000:]
+            joined = "\n---\n".join(user_texts)
             try:
-                result = self.service.memorize(
-                    joined,
-                    source=f"session:{session.id}:exit",
-                    session_id=session.id,
-                    message_id=session.last_user_message_id(),
-                )
-                stats.update(
-                    admitted=len(result.admitted),
-                    queued=len(result.queued),
-                    duplicates=len(result.duplicates),
-                    blocked=len(result.blocked),
-                )
+                # 分块抽完再推进游标；直接截断会把最旧的内容永久跳过。
+                for chunk in split_chunks(joined, max_chars=DISTILL_MAX_CHARS):
+                    result = self.service.memorize(
+                        chunk,
+                        source=f"session:{session.id}:exit",
+                        session_id=session.id,
+                        message_id=session.last_user_message_id(),
+                    )
+                    stats["admitted"] += len(result.admitted)
+                    stats["queued"] += len(result.queued)
+                    stats["duplicates"] += len(result.duplicates)
+                    stats["blocked"] += len(result.blocked)
                 self.sessions.append(
                     session,
                     {"type": "distilled", "up_to": session.last_user_message_id()},
@@ -308,22 +312,23 @@ class AgentRuntime:
             if len(texts) < min_new_messages:
                 continue
             if texts:
-                joined = "\n---\n".join(texts)[-12000:]
+                joined = "\n---\n".join(texts)
                 try:
-                    extracted = self.service.memorize(
-                        joined,
-                        source=f"session:{session.id}:catchup",
-                        session_id=session.id,
-                        message_id=session.last_user_message_id(),
-                    )
+                    for chunk in split_chunks(joined, max_chars=DISTILL_MAX_CHARS):
+                        extracted = self.service.memorize(
+                            chunk,
+                            source=f"session:{session.id}:catchup",
+                            session_id=session.id,
+                            message_id=session.last_user_message_id(),
+                        )
+                        result["admitted"] += len(extracted.admitted)
+                        result["queued"] += len(extracted.queued)
                 except Exception as exc:
                     result["errors"].append(f"{session.id}: {exc}")
                     self.sessions.append(
                         session, {"type": "extraction_error", "error": str(exc)[:200]}
                     )
                     continue
-                result["admitted"] += len(extracted.admitted)
-                result["queued"] += len(extracted.queued)
                 self.sessions.append(
                     session,
                     {"type": "distilled", "up_to": session.last_user_message_id()},
@@ -372,19 +377,18 @@ class AgentRuntime:
         return "\n".join(f"- [{hit.topic}] ({hit.timestamp}) {hit.text}" for hit in hits)
 
     def _flush_memories(self, texts: list[str]) -> dict:
-        joined = "\n---\n".join(texts)[-12000:]
-        result = self.service.memorize(
-            joined,
-            source=f"session:{self.current.id}:compact",
-            session_id=self.current.id,
-            message_id=self.current.last_user_message_id(),
-        )
-        return {
-            "admitted": len(result.admitted),
-            "queued": len(result.queued),
-            "duplicates": len(result.duplicates),
-            "blocked": len(result.blocked),
-        }
+        joined = "\n---\n".join(texts)
+        totals = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0}
+        for chunk in split_chunks(joined, max_chars=DISTILL_MAX_CHARS):
+            result = self.service.memorize(
+                chunk,
+                source=f"session:{self.current.id}:compact",
+                session_id=self.current.id,
+                message_id=self.current.last_user_message_id(),
+            )
+            for key in totals:
+                totals[key] += len(getattr(result, key))
+        return totals
 
     def _append_assistant(self, session: Session, turn: AssistantTurn) -> dict:
         return self.sessions.append(

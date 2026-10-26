@@ -82,3 +82,26 @@ def test_delete_session_file(tmp_path):
     assert not session.path.exists()
     assert store.list() == []
     assert store.delete(session.id) is False
+
+
+def test_create_retries_id_collision_without_overwrite(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    from quiet_memo.agent import session as session_module
+
+    class FixedDateTime:
+        @staticmethod
+        def now():
+            return datetime(2026, 1, 1, 0, 0, 0)
+
+    monkeypatch.setattr(session_module, "datetime", FixedDateTime)
+    tokens = iter(["aaaa", "aaaa", "ffff"])
+    monkeypatch.setattr(session_module.secrets, "token_hex", lambda _: next(tokens))
+    store = SessionStore(tmp_path)
+
+    first = store.create()
+    second = store.create()
+
+    assert first.id == "s-20260101-000000-aaaa"
+    assert second.id == "s-20260101-000000-ffff"
+    assert store.load(first.id).records[0]["id"] == first.id

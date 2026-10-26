@@ -48,7 +48,7 @@ class PendingItem(BaseModel):
     ) -> "PendingItem":
         stamp = datetime.now()
         return cls(
-            id=f"p-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(2)}",
+            id=f"p-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(4)}",
             created_at=stamp.isoformat(timespec="seconds"),
             source=source,
             text=candidate.text,

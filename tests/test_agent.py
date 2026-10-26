@@ -481,18 +481,71 @@ def test_consolidate_pending_catches_crashed_session(tmp_path):
     assert runtime.consolidate_pending()["scanned"] == 0
 
 
-def test_consolidate_marks_empty_session_without_extraction(tmp_path):
+def test_catchup_covers_messages_added_after_resume_then_crash(tmp_path):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
+    store = runtime.sessions
+    session = store.create()
+    store.append(session, {"type": "message", "id": new_message_id(), "role": "user", "content": "第一轮内容"})
+    runtime.resume(session.id)
+    runtime.close()  # 正常退出：游标推进并留下 closed
+
+    runtime.resume(session.id)
+    store.append(
+        runtime.current,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "恢复后补充的新事实"},
+    )
+    # 模拟再次异常退出：没有 close()，直接以新进程姿态扫描。
+    runtime.start()
+    service.extractor = StaticExtractor(
+        ExtractionResult(memories=[Candidate(text="恢复后补充的事实", topic="misc", confidence=0.95)])
+    )
+
+    assert store.load(session.id).needs_consolidation()
+    result = runtime.consolidate_pending()
+    assert result["consolidated"] == 1
+    assert service.store.has_text("恢复后补充的事实")
+
+
+def test_close_distills_all_chunks_instead_of_truncating(tmp_path):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
+
+    class RecordingExtractor:
+        def __init__(self):
+            self.texts = []
+
+        def extract(self, text, context=""):
+            self.texts.append(text)
+            return ExtractionResult(memories=[])
+
+    extractor = RecordingExtractor()
+    service.extractor = extractor
+    session = runtime.sessions.create()
+    contents = [f"第{index}段" + "长" * 8000 for index in range(3)]
+    for content in contents:
+        runtime.sessions.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": content},
+        )
+    runtime.resume(session.id)
+    runtime.close()
+
+    joined = "\n---\n".join(contents)
+    assert len(extractor.texts) >= 2
+    assert "".join(extractor.texts) == joined
+    types = [record["type"] for record in runtime.sessions.load(session.id).records]
+    assert "distilled" in types
+
+
+def test_consolidate_ignores_session_without_user_messages(tmp_path):
     runtime, service = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
     session = runtime.sessions.create()
 
     result = runtime.consolidate_pending()
 
-    assert result["scanned"] == 1
+    # 没有用户消息的会话没有可沉淀内容，游标判空后直接跳过，无需再写收尾标记。
+    assert result["scanned"] == 0
     assert result["consolidated"] == 0
-    records = runtime.sessions.load(session.id).records
-    assert any(record.get("type") == "consolidated" for record in records)
     assert not runtime.sessions.load(session.id).needs_consolidation()
-    assert runtime.consolidate_pending()["scanned"] == 0
     assert service.store.entries() == []
 
 

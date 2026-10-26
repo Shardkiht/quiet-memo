@@ -4,7 +4,7 @@ import pytest
 
 from quiet_memo.infra.config import Config, LLMConfig
 from quiet_memo.memory.extractor import StaticExtractor
-from quiet_memo.memory.models import Candidate, ExtractionResult
+from quiet_memo.memory.models import Candidate, ExtractionResult, PendingItem
 from quiet_memo.memory.service import MemoryService
 
 
@@ -168,3 +168,29 @@ def test_commit_pending_changes_auto_commits_without_llm(tmp_path):
     assert commit
     assert not service.repo.has_changes()
     assert any("自动提交" in item["subject"] for item in service.history(3))
+
+
+def test_note_and_correct_reject_secrets(tmp_path):
+    service = make_service(tmp_path, [])
+    with pytest.raises(ValueError):
+        service.note("api_key=abcd1234")
+    assert service.store.entries() == []
+
+    entry = service.note("普通偏好", topic="preferences")
+    with pytest.raises(ValueError):
+        service.correct(entry.id, "password=abcd1234")
+    assert service.store.find(entry.id).status == "active"
+    assert [item.text for item in service.store.entries()] == ["普通偏好"]
+
+
+def test_approve_rejects_secret_and_keeps_pending(tmp_path):
+    service = make_service(tmp_path, [])
+    item = PendingItem.from_candidate(
+        Candidate(text="api_key=abcd1234", topic="misc", confidence=0.5), "chat", "low confidence"
+    )
+    service.queue.add(item)
+
+    with pytest.raises(ValueError):
+        service.approve(item.id)
+    assert service.store.entries() == []
+    assert [pending.id for pending in service.pending()] == [item.id]

@@ -40,3 +40,14 @@ def test_resolve_removes_and_logs(tmp_path):
 
 def test_resolve_missing_returns_none(tmp_path):
     assert PendingQueue(tmp_path).resolve("nope", "rejected") is None
+
+
+def test_resolve_only_removes_the_targeted_duplicate(tmp_path):
+    queue = PendingQueue(tmp_path)
+    queue.add(make_item("p-dup"))
+    queue.add(make_item("p-dup"))
+
+    queue.resolve("p-dup", "approved")
+
+    # 历史数据若出现同 ID，只处理目标那一条，不能把另一条一并抹掉。
+    assert len(queue.all()) == 1
