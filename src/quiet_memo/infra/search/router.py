@@ -30,6 +30,8 @@ def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
                 base_url=config.base_url,
                 timeout=config.timeout,
                 transport=config.transport,
+                engines=config.engines,
+                fetch_timeout=config.fetch_timeout,
             )
     return registry
 
@@ -46,6 +48,7 @@ def build_search_router(
         order=config.providers,
         max_results=config.max_results,
         cache=cache,
+        engines=config.engines,
     )
 
 
@@ -59,11 +62,13 @@ class SearchRouter:
         order: list[str] | None = None,
         max_results: int = 5,
         cache: SearchCache | None = None,
+        engines: list[str] | tuple[str, ...] | None = None,
     ):
         self.registry = registry
         self.order = list(dict.fromkeys(order or list(registry)))
         self.max_results = max(1, max_results)
         self.cache = cache
+        self.engines = tuple(engines or ())
 
     @property
     def supports_fetch(self) -> bool:
@@ -78,7 +83,11 @@ class SearchRouter:
         limit = max(1, min(query.limit or self.max_results, self.max_results))
         engine = (query.engine or "auto").strip()
         names = [engine] if engine != "auto" else self.order
-        cache_key = self._cache_key(text, limit, engine, query.lang, query.freshness, names)
+        # 缓存必须区分实际使用的上游引擎，否则改配置后会命中旧引擎的结果。
+        engines = tuple(query.engines) or self.engines
+        cache_key = self._cache_key(
+            text, limit, engine, query.lang, query.freshness, names, engines
+        )
         if self.cache is not None:
             cached = self.cache.get(cache_key)
             if cached is not None:
@@ -104,6 +113,7 @@ class SearchRouter:
                         engine=engine,
                         lang=query.lang,
                         freshness=query.freshness,
+                        engines=query.engines,
                     )
                 )
             except ProviderError as exc:
@@ -146,8 +156,9 @@ class SearchRouter:
                 failures.append(SearchFailure(name, "unavailable", str(exc)))
         if failures:
             detail = "；".join(f"{item.provider}: {item.detail}" for item in failures)
-            raise ProviderError("search", "unavailable", detail)
-        raise ProviderError("search", "unavailable", "没有支持网页抓取的 provider")
+            # 这里失败的是抓取而不是搜索；provider 标明 fetch，避免上层误判成搜索故障。
+            raise ProviderError("fetch", "unavailable", detail)
+        raise ProviderError("fetch", "unavailable", "没有支持网页抓取的 provider")
 
     def _cache_key(
         self,
@@ -157,9 +168,10 @@ class SearchRouter:
         lang: str | None,
         freshness: str | None,
         names: list[str],
+        engines: tuple[str, ...],
     ) -> str:
         raw = "\x1f".join(
-            [text, str(limit), engine, lang or "", freshness or "", *names]
+            [text, str(limit), engine, lang or "", freshness or "", *engines, *names]
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

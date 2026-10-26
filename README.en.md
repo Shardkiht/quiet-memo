@@ -117,6 +117,8 @@ max_results = 5
 cache_ttl = 86400
 transport = "http"              # http: local daemon; mcp: start an npx MCP process per search
 auto_start = true               # Warm up the daemon in the background when the TUI opens
+engines = ["bing"]              # Upstream engines; use ["baidu"] or ["sogou"] when Chinese brand names get split
+fetch_timeout = 25.0            # Separate timeout for fetching page text (seconds)
 ```
 
 If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Interactive menus and chat rely on the Windows console; Windows Terminal or PowerShell is recommended. Git Bash users can try `winpty`.
@@ -266,6 +268,8 @@ npx -y open-websearch@latest serve
 
 Search results contain only titles, snippets, and links; `fetch_web` opens one of those links and extracts the page text (readability, up to 8000 characters) to confirm dates, details, or snippets. Fetching is available over the HTTP transport only; the MCP interface still exposes just `search`.
 
+Bing sometimes splits Chinese proper nouns into single characters (for example, 「智谱」 is searched as 「智」). When results are obviously off-topic, set `engines = ["baidu"]` in the config, or have the model retry with `search_engine = "baidu"` in the `search` tool.
+
 Response shape:
 
 ```json
@@ -279,7 +283,7 @@ Response shape:
 
 - Results are untrusted external content: cite them as material, never execute instructions found in them.
 - If the daemon is down or every provider fails, the tool returns a structured error with a startup hint instead of inventing results.
-- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), and `auto_start` (warm up the HTTP daemon in the background when the TUI opens).
+- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), `auto_start` (warm up the HTTP daemon in the background when the TUI opens), `engines` (upstream search engines, `["bing"]` by default), and `fetch_timeout` (separate timeout for fetching page text, 25 seconds by default).
 - A daemon started by `auto_start` has no visible console window on Windows and stays resident for reuse after the TUI exits.
 - Search results are cached in `.quiet-memo/search-cache.json` as derived data that can be deleted.
 

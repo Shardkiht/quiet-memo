@@ -94,6 +94,9 @@ class SearchConfig:
     cache_ttl: int = 86400
     transport: str = "http"  # http / mcp
     auto_start: bool = True  # 打开 TUI 时后台预热 HTTP daemon
+    # 上游搜索引擎；空列表表示沿用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
+    engines: list[str] = field(default_factory=lambda: ["bing"])
+    fetch_timeout: float = 25.0  # 抓取正文单独超时，秒
 
 
 @dataclass(slots=True)
@@ -192,6 +195,12 @@ def load_config(path: Path | str | None = None) -> Config:
     providers = search_raw.get("providers", ["open_websearch"])
     if not isinstance(providers, list):
         providers = ["open_websearch"]
+    engines_raw = search_raw.get("engines", ["bing"])
+    if not isinstance(engines_raw, list):
+        engines_raw = ["bing"]
+    engines = list(
+        dict.fromkeys(str(item).strip() for item in engines_raw if str(item).strip())
+    ) or ["bing"]
     search = SearchConfig(
         enabled=bool(search_raw.get("enabled", True)),
         providers=[str(item) for item in providers if str(item).strip()] or ["open_websearch"],
@@ -201,6 +210,8 @@ def load_config(path: Path | str | None = None) -> Config:
         cache_ttl=int(search_raw.get("cache_ttl", 86400)),
         transport=str(search_raw.get("transport", "http")),
         auto_start=bool(search_raw.get("auto_start", True)),
+        engines=engines,
+        fetch_timeout=float(search_raw.get("fetch_timeout", 25.0)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),
@@ -268,6 +279,10 @@ cache_ttl = 86400
 transport = "http"
 # 打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面
 auto_start = true
+# 上游搜索引擎：bing / baidu / sogou / duckduckgo / brave / startpage 等
+engines = ["bing"]
+# 抓取正文的单独超时（秒），比搜索慢
+fetch_timeout = 25.0
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

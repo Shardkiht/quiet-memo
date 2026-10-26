@@ -53,11 +53,12 @@ def raw_result(title: str, url: str, description: str = "") -> dict:
     }
 
 
-def mock_provider(handler, timeout: float = 1.0) -> OpenWebSearchProvider:
+def mock_provider(handler, timeout: float = 1.0, **kwargs) -> OpenWebSearchProvider:
     return OpenWebSearchProvider(
         "http://127.0.0.1:3000",
         timeout=timeout,
         client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
+        **kwargs,
     )
 
 
@@ -106,6 +107,23 @@ def test_router_fetch_uses_fetch_capable_provider():
     assert router.fetch("https://example.com", 1000).content == "正文内容"
 
 
+def test_router_fetch_failure_is_labeled_as_fetch():
+    class BrokenFetch:
+        name = "fake"
+        capabilities = {"fetch"}
+
+        def fetch(self, query):
+            raise ProviderError("open_websearch", ProviderErrorKind.UNAVAILABLE, "HTTP 502")
+
+    router = SearchRouter({"fake": BrokenFetch()}, order=["fake"])
+    with pytest.raises(ProviderError) as caught:
+        router.fetch("https://example.com", 1000)
+
+    assert caught.value.provider == "fetch"
+    assert "open_websearch" in caught.value.detail
+    assert "502" in caught.value.detail
+
+
 class FakeProvider:
     name = "fake"
     capabilities = {"search"}
@@ -114,9 +132,11 @@ class FakeProvider:
         self.results = list(results or [])
         self.error = error
         self.calls = 0
+        self.queries: list[SearchQuery] = []
 
     def search(self, query):
         self.calls += 1
+        self.queries.append(query)
         if self.error is not None:
             raise self.error
         return list(self.results)
@@ -145,6 +165,51 @@ def test_http_provider_maps_real_schema():
     assert results[0].snippet == "摘要"
     assert results[0].published is None
     assert results[0].provider == "open_websearch"
+
+
+def test_search_sends_configured_and_per_query_engines():
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json=envelope([]))
+
+    provider = mock_provider(handler, engines=["bing", "baidu"])
+    provider.search(SearchQuery("q"))
+    provider.search(SearchQuery("q", engines=("sogou",)))
+
+    assert bodies[0]["engines"] == ["bing", "baidu"]
+    assert bodies[1]["engines"] == ["sogou"]
+
+
+def test_fetch_clamps_max_chars_and_uses_fetch_timeout():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        seen["timeout"] = request.extensions.get("timeout")
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "url": "https://example.com/news",
+                    "finalUrl": "https://example.com/news",
+                    "title": "News",
+                    "content": "正文",
+                    "truncated": False,
+                    "siteName": "Example",
+                },
+                "error": None,
+                "hint": None,
+            },
+        )
+
+    provider = mock_provider(handler, fetch_timeout=12.0)
+    provider.fetch(FetchQuery("https://example.com/news", 500))
+
+    assert seen["body"]["maxChars"] == 1000
+    assert seen["timeout"]["read"] == 12.0
 
 
 def test_missing_fields_are_tolerated():
@@ -315,6 +380,21 @@ def test_cache_expires(tmp_path):
     assert provider.calls == 2
 
 
+def test_cache_key_separates_search_engines(tmp_path):
+    provider = FakeProvider([SearchResult("ok", "https://example.com", "")])
+    cache = SearchCache(tmp_path / "cache.json", ttl=60)
+    router = SearchRouter(
+        {"fake": provider}, order=["fake"], cache=cache, engines=["bing"]
+    )
+
+    router.search(SearchQuery("q"))
+    router.search(SearchQuery("q", engines=("baidu",)))
+    router.search(SearchQuery("q"))
+
+    assert provider.calls == 2
+    assert provider.queries[1].engines == ("baidu",)
+
+
 def test_ensure_daemon_reuses_running_process():
     spawns = []
     result = ensure_daemon(
@@ -443,6 +523,49 @@ def test_agent_search_tool_returns_notice_and_results(tmp_path):
     assert "1 results" in outcome.display
 
 
+def test_agent_search_tool_passes_search_engine(tmp_path):
+    provider = FakeProvider([SearchResult("标题", "https://example.com", "摘要")])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=router)
+
+    outcome = tools.execute(
+        "search", {"query": "智谱 GLM 最新消息", "search_engine": "baidu"}
+    )
+
+    assert outcome.ok is True
+    assert provider.queries[-1].engines == ("baidu",)
+
+
+def test_agent_search_tool_rejects_unknown_search_engine(tmp_path):
+    provider = FakeProvider([SearchResult("标题", "https://example.com", "摘要")])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=router)
+
+    outcome = tools.execute("search", {"query": "查询", "search_engine": "notreal"})
+
+    assert outcome.ok is False
+    assert "unsupported search engine" in outcome.display
+    assert provider.calls == 0
+
+
 def test_agent_fetch_tool_returns_page_content(tmp_path):
     class FetchRouter:
         supports_fetch = True
@@ -493,6 +616,10 @@ async def test_mcp_exposes_search_when_enabled(tmp_path):
         assert "search" in {tool.name for tool in tools}
         result = await client.call_tool("search", {"query": "查询"})
         assert result.data["results"][0]["url"] == "https://example.com"
+        await client.call_tool(
+            "search", {"query": "智谱 GLM", "search_engine": "baidu"}
+        )
+        assert provider.queries[-1].engines == ("baidu",)
 
 
 async def test_mcp_omits_search_when_disabled(tmp_path):

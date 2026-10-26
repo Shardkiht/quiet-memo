@@ -57,3 +57,8 @@ cache_ttl = 86400
 transport = "http"
 # 打开 TUI 时在后台探测并拉起 HTTP daemon（不阻塞界面）。
 auto_start = true
+# 上游搜索引擎；可选 bing / baidu / sogou / duckduckgo / brave / startpage 等。
+# 中文品牌名被拆词时可改用 ["baidu"]；多引擎会平分结果条数。
+engines = ["bing"]
+# 抓取正文的单独超时（秒）；搜索用上面的 timeout。
+fetch_timeout = 25.0

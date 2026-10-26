@@ -30,6 +30,20 @@ DAEMON_HINT = (
 )
 MAX_DAEMON_LIMIT = 50
 MAX_FETCH_CHARS = 8000
+MIN_FETCH_CHARS = 1000
+SEARCH_ENGINES = (
+    "bing",
+    "baidu",
+    "sogou",
+    "duckduckgo",
+    "brave",
+    "startpage",
+    "csdn",
+    "juejin",
+    "linuxdo",
+    "hackernews",
+    "exa",
+)
 ClientFactory = Callable[[], httpx.Client]
 
 
@@ -101,27 +115,40 @@ class HttpTransport:
         base_url: str,
         timeout: float = 10.0,
         client_factory: ClientFactory | None = None,
+        engines: list[str] | tuple[str, ...] | None = None,
+        fetch_timeout: float = 25.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.engines = list(engines or [])
+        self.fetch_timeout = max(float(fetch_timeout), self.timeout)
         self._client_factory = client_factory or (
             # localhost 不走系统代理；否则开了代理时可能连不上本地 daemon。
             lambda: httpx.Client(timeout=timeout, trust_env=False)
         )
 
-    def search(self, query: str, limit: int) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        limit: int,
+        engines: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict]:
         body = {"query": query, "limit": max(1, min(limit, MAX_DAEMON_LIMIT))}
+        selected = list(engines) if engines else self.engines
+        if selected:
+            # 不传时用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
+            body["engines"] = selected
         return self._parse(self._post("/search", body))
 
     def fetch(self, url: str, max_chars: int) -> dict:
         body = {
             "url": url,
-            "maxChars": max(500, min(max_chars, MAX_FETCH_CHARS)),
+            "maxChars": max(MIN_FETCH_CHARS, min(max_chars, MAX_FETCH_CHARS)),
             "readability": True,
             "renderMode": "request",
         }
         # 抓正文比搜索慢，给它单独的请求超时，避免 10s 默认值过早中断。
-        response = self._post("/fetch-web", body, timeout=max(self.timeout, 25.0))
+        response = self._post("/fetch-web", body, timeout=self.fetch_timeout)
         return self._parse_data(response)
 
     def _post(self, path: str, body: dict, timeout: float | None = None) -> httpx.Response:
@@ -200,16 +227,27 @@ class McpStdioTransport:
         timeout: float = 10.0,
         command: str = "npx",
         args: tuple[str, ...] = ("-y", "open-websearch@latest"),
+        engines: list[str] | tuple[str, ...] | None = None,
     ):
         self.timeout = timeout
         self.command = command
         self.args = args
+        self.engines = list(engines or [])
 
-    def search(self, query: str, limit: int) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        limit: int,
+        engines: list[str] | tuple[str, ...] | None = None,
+    ) -> list[dict]:
         command = self._command_line()
         env = os.environ.copy()
         env["MODE"] = "stdio"
         env.setdefault("OPEN_WEBSEARCH_QUIET_STARTUP", "true")
+        arguments = {"query": query, "limit": max(1, min(limit, MAX_DAEMON_LIMIT))}
+        selected = list(engines) if engines else self.engines
+        if selected:
+            arguments["engines"] = selected
         try:
             process = subprocess.Popen(
                 command,
@@ -257,10 +295,7 @@ class McpStdioTransport:
                 "tools/call",
                 {
                     "name": "search",
-                    "arguments": {
-                        "query": query,
-                        "limit": max(1, min(limit, MAX_DAEMON_LIMIT)),
-                    },
+                    "arguments": arguments,
                 },
                 deadline,
             )
@@ -385,20 +420,28 @@ class OpenWebSearchProvider:
         client_factory: ClientFactory | None = None,
         mcp_command: str = "npx",
         mcp_args: tuple[str, ...] = ("-y", "open-websearch@latest"),
+        engines: list[str] | tuple[str, ...] | None = None,
+        fetch_timeout: float = 25.0,
     ):
         if transport == "mcp":
             self.transport: HttpTransport | McpStdioTransport = McpStdioTransport(
-                timeout=timeout, command=mcp_command, args=mcp_args
+                timeout=timeout, command=mcp_command, args=mcp_args, engines=engines
             )
             # MCP 传输暂未接 fetchWebContent，只暴露搜索能力。
             self.capabilities = {"search"}
         else:
-            self.transport = HttpTransport(base_url, timeout=timeout, client_factory=client_factory)
+            self.transport = HttpTransport(
+                base_url,
+                timeout=timeout,
+                client_factory=client_factory,
+                engines=engines,
+                fetch_timeout=fetch_timeout,
+            )
             self.capabilities = {"search", "fetch"}
 
     def search(self, query: SearchQuery) -> list[SearchResult]:
         try:
-            raw = self.transport.search(query.query, query.limit)
+            raw = self.transport.search(query.query, query.limit, query.engines or None)
         except ProviderError:
             raise
         except Exception as exc:

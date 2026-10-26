@@ -102,6 +102,8 @@ def test_vault_precedence_config_then_env(tmp_path, monkeypatch):
 
 def test_search_auto_start_defaults_match_example(tmp_path):
     assert SearchConfig().auto_start is True
+    assert SearchConfig().engines == ["bing"]
+    assert SearchConfig().fetch_timeout == 25.0
     assert load_config(tmp_path / "missing.toml").search.auto_start is True
 
 
@@ -136,6 +138,8 @@ def test_search_config_roundtrip(tmp_path):
             cache_ttl=0,
             transport="mcp",
             auto_start=True,
+            engines=["baidu", "sogou"],
+            fetch_timeout=15.0,
         ),
     )
 
@@ -150,6 +154,8 @@ def test_search_config_roundtrip(tmp_path):
     assert loaded.search.cache_ttl == 0
     assert loaded.search.transport == "mcp"
     assert loaded.search.auto_start is True
+    assert loaded.search.engines == ["baidu", "sogou"]
+    assert loaded.search.fetch_timeout == 15.0
 
 
 def test_resolve_config_path_env_wins_over_cwd(tmp_path, monkeypatch):

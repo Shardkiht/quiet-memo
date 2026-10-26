@@ -117,6 +117,8 @@ max_results = 5
 cache_ttl = 86400
 transport = "http"            # http：本地 daemon；mcp：每次启动 npx MCP 进程
 auto_start = true             # 打开 TUI 时后台预热 daemon，不阻塞界面
+engines = ["bing"]            # 上游引擎；中文品牌名被拆词时可换 ["baidu"] 或 ["sogou"]
+fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
 ```
 
 如果 Windows Git Bash 里中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，推荐 Windows Terminal 或 PowerShell；Git Bash 用户可尝试 `winpty`。
@@ -265,6 +267,8 @@ npx -y open-websearch@latest serve
 
 搜索结果只有标题、摘要和链接；`fetch_web` 会打开其中某个链接并提取正文（readability，最多 8000 字符），用于核对发布日期、原文细节或摘要。抓取只通过 HTTP transport 提供，MCP 接口仍只有 `search`。
 
+Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「智」检索）；遇到明显跑题时，可在配置里把 `engines` 改为 `["baidu"]`，或让模型在 `search` 工具里传 `search_engine = "baidu"` 重试。
+
 返回结构：
 
 ```json
@@ -278,7 +282,7 @@ npx -y open-websearch@latest serve
 
 - 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
 - daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
-- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）。
+- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）、`engines`（上游搜索引擎，默认 `["bing"]`）、`fetch_timeout`（抓取正文的单独超时，默认 25 秒）。
 - `auto_start` 启动的 daemon 在 Windows 下隐藏控制台窗口；退出 TUI 后继续常驻，下次直接复用。
 - 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
 

@@ -31,6 +31,8 @@ class SearchQuery:
     engine: str = "auto"
     lang: str | None = None
     freshness: str | None = None
+    # 指定上游搜索引擎（bing/baidu/sogou...）；空表示用 provider 的默认配置。
+    engines: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)

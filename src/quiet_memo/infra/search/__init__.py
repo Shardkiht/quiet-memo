@@ -9,7 +9,7 @@ from .base import (
     SearchQuery,
     SearchResult,
 )
-from .open_websearch import OpenWebSearchProvider
+from .open_websearch import OpenWebSearchProvider, SEARCH_ENGINES
 from .router import SearchRouter, build_search_router
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "OpenWebSearchProvider",
     "ProviderError",
     "ProviderErrorKind",
+    "SEARCH_ENGINES",
     "SearchFailure",
     "SearchOutcome",
     "SearchProvider",
