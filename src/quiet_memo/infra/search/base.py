@@ -43,6 +43,22 @@ class SearchResult:
 
 
 @dataclass(slots=True)
+class FetchQuery:
+    url: str
+    max_chars: int = 4000
+
+
+@dataclass(slots=True)
+class FetchResult:
+    url: str
+    final_url: str
+    title: str
+    content: str
+    truncated: bool = False
+    site_name: str = ""
+
+
+@dataclass(slots=True)
 class SearchFailure:
     provider: str
     kind: str

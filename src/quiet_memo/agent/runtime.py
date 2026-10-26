@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 
 from ..infra.config import ChatConfig, Config
 from ..infra.tokens import truncate_to_tokens
@@ -364,7 +365,9 @@ class AgentRuntime:
 
     def _system_prompt(self) -> str:
         """每轮读 vault/SOUL.md，人设改动下一轮即生效；拼接规则见 prompts.py。"""
-        return build_system_prompt(load_persona(self.service.config.vault))
+        prompt = build_system_prompt(load_persona(self.service.config.vault))
+        # 联网结果常只给到月/日；给出当前日期，模型才能判断“最新”是否成立。
+        return f"{prompt}\n\n当前日期：{date.today().isoformat()}"
 
     def _auto_recall(self, text: str) -> str:
         if self.config.auto_recall <= 0:

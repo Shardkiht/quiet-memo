@@ -143,7 +143,7 @@ Web search is enabled by default but requires a local open-websearch daemon; see
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
-- The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information, and treats the results as external material without executing any instructions in them.
+- The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done.
 - On exit, extracts user statements from the turn that have not yet been persisted.
@@ -278,6 +278,8 @@ The `search` tool queries public web pages through a local [open-websearch](http
 npx -y open-websearch@latest serve
 # or: npm i -g open-websearch && open-websearch serve
 ```
+
+Search results contain only titles, snippets, and links; `fetch_web` opens one of those links and extracts the page text (readability, up to 8000 characters) to confirm dates, details, or snippets. Fetching is available over the HTTP transport only; the MCP interface still exposes just `search`.
 
 Response shape:
 

@@ -81,6 +81,16 @@ def test_close_without_session_is_noop(tmp_path):
     assert runtime.close()["admitted"] == 0
 
 
+def test_system_prompt_includes_current_date(tmp_path):
+    from datetime import date
+
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="好")]))
+    runtime.ask("今天几号")
+
+    system_message = runtime.model.calls[0][0][0]["content"]
+    assert date.today().isoformat() in system_message
+
+
 def test_resume_restores_prior_messages_for_model(tmp_path):
     runtime, service = build_runtime(
         tmp_path, FakeChatModel([AssistantTurn(content="第一次回答")])

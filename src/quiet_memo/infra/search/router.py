@@ -6,6 +6,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..config import SearchConfig
 from .base import (
+    FetchQuery,
+    FetchResult,
     ProviderError,
     SearchFailure,
     SearchOutcome,
@@ -63,6 +65,12 @@ class SearchRouter:
         self.max_results = max(1, max_results)
         self.cache = cache
 
+    @property
+    def supports_fetch(self) -> bool:
+        return any(
+            "fetch" in provider.capabilities for provider in self.registry.values()
+        )
+
     def search(self, query: SearchQuery) -> SearchOutcome:
         text = query.query.strip()
         if not text:
@@ -119,6 +127,27 @@ class SearchRouter:
         if any("open-websearch" in failure.detail or "daemon" in failure.detail for failure in failures):
             hint += " 请确认 open-websearch 已启动：npx open-websearch@latest serve"
         return SearchOutcome(failed=failures, hint=hint)
+
+    def fetch(self, url: str, max_chars: int = 4000) -> FetchResult:
+        """抓取搜索结果正文；按 provider 顺序尝试支持 fetch 的实现。"""
+        text = url.strip()
+        if not text:
+            raise ValueError("抓取地址为空")
+        failures: list[SearchFailure] = []
+        for name in self.order:
+            provider = self.registry.get(name)
+            if provider is None or "fetch" not in provider.capabilities:
+                continue
+            try:
+                return provider.fetch(FetchQuery(text, max_chars))
+            except ProviderError as exc:
+                failures.append(SearchFailure.from_error(exc))
+            except Exception as exc:
+                failures.append(SearchFailure(name, "unavailable", str(exc)))
+        if failures:
+            detail = "；".join(f"{item.provider}: {item.detail}" for item in failures)
+            raise ProviderError("search", "unavailable", detail)
+        raise ProviderError("search", "unavailable", "没有支持网页抓取的 provider")
 
     def _cache_key(
         self,

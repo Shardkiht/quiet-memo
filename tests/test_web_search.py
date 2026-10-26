@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -10,6 +11,8 @@ from quiet_memo.agent.tools import SEARCH_NOTICE, build_tools
 from quiet_memo.app.server import build_server
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, SearchConfig
 from quiet_memo.infra.search import (
+    FetchQuery,
+    FetchResult,
     ProviderError,
     ProviderErrorKind,
     SearchQuery,
@@ -56,6 +59,51 @@ def mock_provider(handler, timeout: float = 1.0) -> OpenWebSearchProvider:
         timeout=timeout,
         client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handler)),
     )
+
+
+def test_http_provider_maps_fetch_result():
+    def handler(request):
+        assert request.url.path == "/fetch-web"
+        body = json.loads(request.content)
+        assert body["url"] == "https://example.com/news"
+        assert body["readability"] is True
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "data": {
+                    "url": "https://example.com/news",
+                    "finalUrl": "https://example.com/news/",
+                    "title": "News",
+                    "content": "发布日期 2026-09-21",
+                    "truncated": False,
+                    "siteName": "Example",
+                },
+                "error": None,
+                "hint": None,
+            },
+        )
+
+    result = mock_provider(handler).fetch(FetchQuery("https://example.com/news", 2000))
+
+    assert result.title == "News"
+    assert result.final_url == "https://example.com/news/"
+    assert result.site_name == "Example"
+    assert "2026-09-21" in result.content
+
+
+def test_router_fetch_uses_fetch_capable_provider():
+    class FetchProvider:
+        name = "fake"
+        capabilities = {"search", "fetch"}
+
+        def fetch(self, query):
+            return FetchResult(query.url, query.url, "Title", "正文内容")
+
+    router = SearchRouter({"fake": FetchProvider()}, order=["fake"])
+
+    assert router.supports_fetch
+    assert router.fetch("https://example.com", 1000).content == "正文内容"
 
 
 class FakeProvider:
@@ -370,6 +418,7 @@ def test_disabled_search_does_not_register_tool(tmp_path):
     tools = build_tools(service, session)
 
     assert "search" not in tools._tools
+    assert "fetch_web" not in tools._tools
 
 
 def test_agent_search_tool_returns_notice_and_results(tmp_path):
@@ -392,6 +441,32 @@ def test_agent_search_tool_returns_notice_and_results(tmp_path):
     assert outcome.content.startswith(SEARCH_NOTICE)
     assert outcome.data["results"][0]["url"] == "https://example.com"
     assert "1 results" in outcome.display
+
+
+def test_agent_fetch_tool_returns_page_content(tmp_path):
+    class FetchRouter:
+        supports_fetch = True
+
+        def fetch(self, url, max_chars=4000):
+            return FetchResult(url, url, "Page", "发布日期 2026-09-21", False, "Example")
+
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=FetchRouter())
+
+    outcome = tools.execute("fetch_web", {"url": "https://example.com/news"})
+
+    assert outcome.ok is True
+    assert outcome.content.startswith(SEARCH_NOTICE)
+    assert "2026-09-21" in outcome.content
+    assert outcome.display == "Fetched example.com"
 
 
 def test_search_router_is_built_from_config(tmp_path):

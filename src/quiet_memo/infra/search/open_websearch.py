@@ -14,6 +14,8 @@ from typing import Any, Callable
 import httpx
 
 from .base import (
+    FetchQuery,
+    FetchResult,
     ProviderError,
     ProviderErrorKind,
     SearchProvider,
@@ -27,6 +29,7 @@ DAEMON_HINT = (
     "`npx open-websearch@latest serve`（或 `open-websearch serve`）。"
 )
 MAX_DAEMON_LIMIT = 50
+MAX_FETCH_CHARS = 8000
 ClientFactory = Callable[[], httpx.Client]
 
 
@@ -108,14 +111,31 @@ class HttpTransport:
 
     def search(self, query: str, limit: int) -> list[dict]:
         body = {"query": query, "limit": max(1, min(limit, MAX_DAEMON_LIMIT))}
+        return self._parse(self._post("/search", body))
+
+    def fetch(self, url: str, max_chars: int) -> dict:
+        body = {
+            "url": url,
+            "maxChars": max(500, min(max_chars, MAX_FETCH_CHARS)),
+            "readability": True,
+            "renderMode": "request",
+        }
+        # 抓正文比搜索慢，给它单独的请求超时，避免 10s 默认值过早中断。
+        response = self._post("/fetch-web", body, timeout=max(self.timeout, 25.0))
+        return self._parse_data(response)
+
+    def _post(self, path: str, body: dict, timeout: float | None = None) -> httpx.Response:
+        kwargs = {"json": body}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         try:
             with self._client_factory() as client:
-                response = client.post(f"{self.base_url}/search", json=body)
+                response = client.post(f"{self.base_url}{path}", **kwargs)
                 if response.status_code == 429:
                     delay = _retry_after_seconds(response.headers.get("Retry-After"))
                     if delay:
                         time.sleep(min(delay, 5.0))
-                    response = client.post(f"{self.base_url}/search", json=body)
+                    response = client.post(f"{self.base_url}{path}", **kwargs)
         except httpx.TimeoutException as exc:
             raise ProviderError(NAME, ProviderErrorKind.TIMEOUT, str(exc)) from exc
         except httpx.RequestError as exc:
@@ -137,9 +157,9 @@ class HttpTransport:
             raise ProviderError(
                 NAME, ProviderErrorKind.BAD_RESPONSE, f"open-websearch HTTP {response.status_code}"
             )
-        return self._parse(response)
+        return response
 
-    def _parse(self, response: httpx.Response) -> list[dict]:
+    def _parse_data(self, response: httpx.Response) -> dict:
         try:
             payload = response.json()
         except ValueError as exc:
@@ -154,7 +174,13 @@ class HttpTransport:
             detail = _text(error.get("message")) if isinstance(error, dict) else code
             raise ProviderError(NAME, _error_kind(code), detail or "open-websearch 调用失败")
         data = payload.get("data")
-        results = data.get("results") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 响应缺少 data")
+        return data
+
+    def _parse(self, response: httpx.Response) -> list[dict]:
+        data = self._parse_data(response)
+        results = data.get("results")
         if not isinstance(results, list):
             raise ProviderError(
                 NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 响应缺少 data.results"
@@ -364,8 +390,11 @@ class OpenWebSearchProvider:
             self.transport: HttpTransport | McpStdioTransport = McpStdioTransport(
                 timeout=timeout, command=mcp_command, args=mcp_args
             )
+            # MCP 传输暂未接 fetchWebContent，只暴露搜索能力。
+            self.capabilities = {"search"}
         else:
             self.transport = HttpTransport(base_url, timeout=timeout, client_factory=client_factory)
+            self.capabilities = {"search", "fetch"}
 
     def search(self, query: SearchQuery) -> list[SearchResult]:
         try:
@@ -376,3 +405,27 @@ class OpenWebSearchProvider:
             raise ProviderError(NAME, ProviderErrorKind.NETWORK, str(exc)) from exc
         results = (_map_result(item) for item in raw)
         return [result for result in results if result is not None]
+
+    def fetch(self, query: FetchQuery) -> FetchResult:
+        if "fetch" not in self.capabilities:
+            raise ProviderError(
+                NAME, ProviderErrorKind.UNAVAILABLE, "当前 transport 不支持网页抓取，请改用 http"
+            )
+        try:
+            data = self.transport.fetch(query.url, query.max_chars)
+        except ProviderError:
+            raise
+        except Exception as exc:
+            raise ProviderError(NAME, ProviderErrorKind.NETWORK, str(exc)) from exc
+        content = _text(data.get("content"))
+        if not content:
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 未返回正文")
+        final_url = _text(data.get("finalUrl")) or query.url
+        return FetchResult(
+            url=query.url,
+            final_url=final_url,
+            title=_text(data.get("title")) or final_url,
+            content=content,
+            truncated=bool(data.get("truncated")),
+            site_name=_text(data.get("siteName")),
+        )
