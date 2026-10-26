@@ -1,7 +1,8 @@
 # quiet-memo 配置示例
 # 默认读取顺序：$QUIET_MEMO_CONFIG → ./quiet-memo.toml → ~/.config/quiet-memo/config.toml
 
-# 记忆库位置（Markdown + Git）。环境变量 QUIET_MEMO_VAULT 可覆盖。
+# 记忆库位置（Markdown + Git）。此处配置的 vault 优先；未配置时用 QUIET_MEMO_VAULT，
+# 再缺省 ~/.quiet-memo/vault；命令行 --vault 可临时覆盖。
 vault = "~/.quiet-memo/vault"
 
 # 低于该置信度的候选不直接写入，进入待确认队列。

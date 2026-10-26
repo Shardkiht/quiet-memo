@@ -12,6 +12,13 @@ from .base import SearchResult
 CACHE_VERSION = 1
 
 
+def _expires(entry: dict) -> float:
+    try:
+        return float(entry.get("expires", 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class SearchCache:
     """搜索结果的文件缓存；只是派生数据，损坏或过期都可直接丢弃。"""
 
@@ -31,13 +38,17 @@ class SearchCache:
         entry = self._load().get("entries", {}).get(key)
         if not isinstance(entry, dict):
             return None
-        if float(entry.get("expires", 0)) <= self.clock():
+        if _expires(entry) <= self.clock():
             return None
-        results = [
-            SearchResult(**item)
-            for item in entry.get("results", [])
-            if isinstance(item, dict)
-        ]
+        try:
+            results = [
+                SearchResult(**item)
+                for item in entry.get("results", [])
+                if isinstance(item, dict)
+            ]
+        except (TypeError, ValueError):
+            # 派生缓存字段损坏时按未命中处理，不能让搜索整体失败。
+            return None
         return results, str(entry.get("provider", ""))
 
     def set(self, key: str, results: list[SearchResult], provider: str) -> None:
@@ -48,7 +59,7 @@ class SearchCache:
         entries = {
             item_key: item
             for item_key, item in data.get("entries", {}).items()
-            if isinstance(item, dict) and float(item.get("expires", 0)) > now
+            if isinstance(item, dict) and _expires(item) > now
         }
         entries[key] = {
             "expires": now + self.ttl,

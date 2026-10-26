@@ -58,12 +58,18 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
         return ""
     if estimate_tokens(text) <= max_tokens:
         return text
+    suffix = "\n…（已截断）"
+    # 截断标记也占预算：先预留，否则返回值必然超过 max_tokens。
+    budget = max_tokens - estimate_tokens(suffix)
+    if budget < 1:
+        suffix = ""
+        budget = max_tokens
     encoding = _encoding()
     if encoding is not None:
         try:
             tokens = encoding.encode(text, disallowed_special=())
-            return encoding.decode(tokens[:max_tokens]) + "\n…（已截断）"
+            return encoding.decode(tokens[:budget]) + suffix
         except Exception:
             pass
-    limit = max(1, int(len(text) * max_tokens / max(estimate_tokens(text), 1)))
-    return text[:limit] + "\n…（已截断）"
+    limit = max(1, int(len(text) * budget / max(estimate_tokens(text), 1)))
+    return text[:limit] + suffix

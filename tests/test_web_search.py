@@ -279,6 +279,42 @@ def test_ensure_daemon_reuses_running_process():
     assert spawns == []
 
 
+def test_ensure_daemon_health_uses_spawn_port_when_url_has_no_port(monkeypatch):
+    seen = []
+    monkeypatch.setattr(
+        daemon_module, "daemon_health", lambda base_url: seen.append(base_url) or True
+    )
+
+    result = ensure_daemon("http://127.0.0.1")
+
+    assert result == "running"
+    assert seen == ["http://127.0.0.1:3000"]
+
+
+def test_corrupted_cache_entry_is_treated_as_miss(tmp_path):
+    import json
+
+    path = tmp_path / "cache.json"
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "bad-expiry": {"expires": "not-a-number", "results": []},
+                    "bad-result": {"expires": 9999999999, "results": [{"unexpected": 1}]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    cache = SearchCache(path, ttl=60)
+
+    assert cache.get("bad-expiry") is None
+    assert cache.get("bad-result") is None
+    cache.set("good", [], "fake")
+    assert cache.get("good") == ([], "fake")
+
+
 def test_ensure_daemon_spawns_and_waits_for_health():
     checks = iter([False, False, True])
     spawns = []

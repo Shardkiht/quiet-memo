@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -39,11 +39,17 @@ def ensure_daemon(
     sleep=time.sleep,
 ) -> str:
     """确保 HTTP daemon 可用；返回 running / started，失败抛 ProviderError。"""
+    parts = urlsplit(base_url)
+    port = parts.port or 3000
+    if parts.port is None and parts.hostname:
+        # 未写端口时启动命令回退到 3000，健康检查也必须用同一端口。
+        base_url = urlunsplit(
+            (parts.scheme, f"{parts.hostname}:{port}", parts.path, parts.query, parts.fragment)
+        )
     check = health_check or (lambda: daemon_health(base_url))
     if check():
         return "running"
 
-    port = urlsplit(base_url).port or 3000
     target_log = log_path or DEFAULT_LOG
 
     def default_spawn() -> None:

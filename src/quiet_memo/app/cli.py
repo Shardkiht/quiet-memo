@@ -40,7 +40,7 @@ def _root(ctx: typer.Context) -> None:
         console.print(ctx.get_help())
         return
     service = _service(None, None)
-    if not service.config.llm.api_key():
+    if service.config.llm.requires_api_key() and not service.config.llm.api_key():
         console.print(padded("[#b8b8b8]未配置 API Key，先运行 qm setup。[/]"))
         return
     try:
@@ -66,10 +66,16 @@ def init(
         fail(f"{vault} 非空且不是 quiet-memo 记忆库；确认无误后加 --force。")
     config_path = config.expanduser() if config else default_config_path()
     cfg = load_config(config_path) if config_path.exists() else Config(vault=vault)
+    vault_changed = cfg.vault.expanduser().resolve() != vault
     cfg.vault = vault
     result = MemoryService(cfg).init_vault()
     if not config_path.exists():
         write_example_config(config_path, vault)
+    elif vault_changed:
+        # 已有配置也要跟随 --vault，否则下条命令仍写回旧库。
+        from ..infra.providers import write_config
+
+        write_config(config_path, cfg)
     console.print(f"记忆库已就绪：{result['vault']}")
     console.print(f"配置文件：{config_path}")
     if result["commit"]:
@@ -264,6 +270,9 @@ def approve(
     try:
         entry = _service(config, vault).approve(item_id)
     except KeyError as exc:
+        fail(str(exc))
+        return
+    except ValueError as exc:
         fail(str(exc))
         return
     console.print(f"[bold]已写入[/] [{entry.topic}] {entry.text}")

@@ -28,6 +28,34 @@ def test_format_tokens_uses_km_units():
     assert format_tokens(1500000) == "1.5M"
 
 
+def test_truncate_to_tokens_respects_limit():
+    from quiet_memo.infra.tokens import estimate_tokens, truncate_to_tokens
+
+    text = "清淡咖啡与手冲滤纸" * 50
+    truncated = truncate_to_tokens(text, 20)
+    assert truncated.endswith("（已截断）")
+    assert estimate_tokens(truncated) <= 20
+
+    # 极小预算也不能靠追加标记突破上限。
+    assert estimate_tokens(truncate_to_tokens(text, 1)) <= 1
+    assert truncate_to_tokens("短文本", 20) == "短文本"
+
+
+def test_init_vault_updates_existing_config(tmp_path):
+    import tomllib
+
+    config = tmp_path / "quiet-memo.toml"
+    old_vault = tmp_path / "old-vault"
+    new_vault = tmp_path / "new-vault"
+    assert invoke(["init", "--vault", str(old_vault), "--config", str(config)]).exit_code == 0
+
+    result = invoke(["init", "--vault", str(new_vault), "--config", str(config)])
+    assert result.exit_code == 0, result.output
+
+    data = tomllib.loads(config.read_text(encoding="utf-8"))
+    assert data["vault"] == new_vault.as_posix()
+
+
 def test_layout_widths_wide_left():
     from quiet_memo.infra.layout import widths
 

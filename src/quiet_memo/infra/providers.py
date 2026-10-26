@@ -15,6 +15,7 @@ from .config import (
     Config,
     LLMConfig,
     default_config_path,
+    default_vault_path,
     load_config,
     write_example_config,
 )
@@ -320,7 +321,10 @@ cache_ttl = {config.search.cache_ttl}
 transport = "{config.search.transport}"
 auto_start = {str(config.search.auto_start).lower()}
 '''
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    # 先写临时文件再替换，避免中断时把现有配置截成空文件。
+    os.replace(tmp, path)
 
 
 def resolve_config_path(config_path: Path | None) -> Path:
@@ -339,7 +343,7 @@ def resolve_config_path(config_path: Path | None) -> Path:
 
 def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dict:
     path = resolve_config_path(config_path)
-    config = load_config(path) if path.exists() else Config(vault=Path.home() / ".quiet-memo" / "vault")
+    config = load_config(path) if path.exists() else Config(vault=default_vault_path())
     if vault is not None:
         config.vault = vault.expanduser().resolve()
 

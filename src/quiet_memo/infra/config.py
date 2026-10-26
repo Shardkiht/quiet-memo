@@ -92,7 +92,7 @@ class SearchConfig:
     max_results: int = 5
     cache_ttl: int = 86400
     transport: str = "http"  # http / mcp
-    auto_start: bool = False  # 打开 TUI 时后台预热 HTTP daemon
+    auto_start: bool = True  # 打开 TUI 时后台预热 HTTP daemon
 
 
 @dataclass(slots=True)
@@ -144,6 +144,7 @@ def load_config(path: Path | str | None = None) -> Config:
     if config_path.exists():
         data = tomllib.loads(config_path.read_text(encoding="utf-8"))
 
+    # 配置里的 vault 优先；QUIET_MEMO_VAULT 只在未配置时提供默认（也是测试隔离闸）。
     vault_raw = data.get("vault") or str(default_vault_path())
     llm_raw = data.get("llm", {})
     base_url = llm_raw.get("base_url", DEFAULT_BASE_URL)
@@ -198,7 +199,7 @@ def load_config(path: Path | str | None = None) -> Config:
         max_results=int(search_raw.get("max_results", 5)),
         cache_ttl=int(search_raw.get("cache_ttl", 86400)),
         transport=str(search_raw.get("transport", "http")),
-        auto_start=bool(search_raw.get("auto_start", False)),
+        auto_start=bool(search_raw.get("auto_start", True)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),
@@ -268,4 +269,6 @@ transport = "http"
 auto_start = true
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)

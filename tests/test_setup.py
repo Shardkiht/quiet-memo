@@ -76,6 +76,7 @@ def test_write_config_roundtrip(tmp_path):
     assert loaded.retrieval.embedding.model == "BAAI/bge-m3"
     assert loaded.retrieval.embedding.api_key_env == "DASHSCOPE_API_KEY"
     assert loaded.vault == config.vault
+    assert not (tmp_path / "quiet-memo.toml.tmp").exists()
 
 
 def test_load_config_defaults_to_hybrid_local(tmp_path):
@@ -84,6 +85,42 @@ def test_load_config_defaults_to_hybrid_local(tmp_path):
     assert loaded.retrieval.method == "hybrid"
     assert loaded.retrieval.embedding.backend == "local"
     assert loaded.retrieval.embedding.model == "BAAI/bge-small-zh-v1.5"
+
+
+def test_vault_precedence_config_then_env(tmp_path, monkeypatch):
+    path = tmp_path / "quiet-memo.toml"
+    configured = tmp_path / "configured"
+    path.write_text(f'vault = "{configured.as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setenv("QUIET_MEMO_VAULT", str(tmp_path / "from-env"))
+
+    # 与测试隔离口径一致：显式配置的 vault 优先，环境变量只补默认值。
+    assert load_config(path).vault == configured
+
+    path.write_text("confidence_threshold = 0.8\n", encoding="utf-8")
+    assert load_config(path).vault == tmp_path / "from-env"
+
+
+def test_search_auto_start_defaults_match_example(tmp_path):
+    assert SearchConfig().auto_start is True
+    assert load_config(tmp_path / "missing.toml").search.auto_start is True
+
+
+def test_local_provider_without_key_reaches_backend(monkeypatch):
+    import pytest
+
+    from quiet_memo.llm.client import LiteLLMChatModel
+
+    model = LiteLLMChatModel(LLMConfig(provider="ollama", api_key_env="MISSING_LOCAL_KEY"))
+    called = []
+
+    def fake_complete(*args, **kwargs):
+        called.append(True)
+        raise RuntimeError("backend reached")
+
+    monkeypatch.setattr("quiet_memo.llm.client.complete", fake_complete)
+    with pytest.raises(RuntimeError, match="backend reached"):
+        model.chat([], [])
+    assert called
 
 
 def test_search_config_roundtrip(tmp_path):
