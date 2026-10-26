@@ -45,6 +45,7 @@ VAULT_GITIGNORE = """__pycache__/
 .DS_Store
 Thumbs.db
 .quiet-memo/vectors.npz
+.quiet-memo/search-cache.json
 """
 
 # 默认人设兼作 init 写入 SOUL.md 的模板；放 memory 层是因为 agent/prompts.py 可以引 memory，
@@ -167,10 +168,17 @@ class MemoryService:
         gitignore = self.config.vault / ".gitignore"
         if not gitignore.exists():
             gitignore.write_text(VAULT_GITIGNORE, encoding="utf-8")
-        elif "vectors.npz" not in gitignore.read_text(encoding="utf-8"):
-            # 老记忆库补一行忽略规则；向量缓存是派生数据，不进 Git 历史。
-            with open(gitignore, "a", encoding="utf-8") as handle:
-                handle.write(".quiet-memo/vectors.npz\n")
+        else:
+            # 老记忆库补齐派生缓存忽略规则；这些文件可重建，不进 Git 历史。
+            existing = gitignore.read_text(encoding="utf-8")
+            missing = [
+                line
+                for line in (".quiet-memo/vectors.npz", ".quiet-memo/search-cache.json")
+                if line not in existing
+            ]
+            if missing:
+                with open(gitignore, "a", encoding="utf-8") as handle:
+                    handle.write("\n".join(missing) + "\n")
         created = self.repo.ensure_init()
         self.repo.stage_all()
         commit_hash = self.repo.commit("memory: 初始化记忆库")

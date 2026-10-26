@@ -9,6 +9,7 @@ from quiet_memo.infra.config import (
     EmbeddingConfig,
     LLMConfig,
     RetrievalConfig,
+    SearchConfig,
     load_config,
 )
 from quiet_memo.infra.providers import PRESETS, write_config
@@ -83,6 +84,44 @@ def test_load_config_defaults_to_hybrid_local(tmp_path):
     assert loaded.retrieval.method == "hybrid"
     assert loaded.retrieval.embedding.backend == "local"
     assert loaded.retrieval.embedding.model == "BAAI/bge-small-zh-v1.5"
+
+
+def test_search_config_roundtrip(tmp_path):
+    path = tmp_path / "quiet-memo.toml"
+    config = Config(
+        vault=tmp_path / "vault",
+        search=SearchConfig(
+            enabled=False,
+            providers=["open_websearch"],
+            base_url="http://127.0.0.1:3210",
+            timeout=4.0,
+            max_results=2,
+            cache_ttl=0,
+            transport="mcp",
+        ),
+    )
+
+    write_config(path, config)
+    loaded = load_config(path)
+
+    assert loaded.search.enabled is False
+    assert loaded.search.providers == ["open_websearch"]
+    assert loaded.search.base_url == "http://127.0.0.1:3210"
+    assert loaded.search.timeout == 4.0
+    assert loaded.search.max_results == 2
+    assert loaded.search.cache_ttl == 0
+    assert loaded.search.transport == "mcp"
+
+
+def test_resolve_config_path_env_wins_over_cwd(tmp_path, monkeypatch):
+    from quiet_memo.infra.providers import resolve_config_path
+
+    (tmp_path / "quiet-memo.toml").write_text("vault = 'local'\n", encoding="utf-8")
+    env_path = tmp_path / "isolated.toml"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("QUIET_MEMO_CONFIG", str(env_path))
+
+    assert resolve_config_path(None) == env_path
 
 
 def test_env_key_takes_precedence_over_keyring(monkeypatch):

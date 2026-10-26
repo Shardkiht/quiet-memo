@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -308,6 +309,15 @@ model = "{config.retrieval.embedding.model}"
 provider = "{config.retrieval.embedding.provider}"
 base_url = "{config.retrieval.embedding.base_url}"
 api_key_env = "{config.retrieval.embedding.api_key_env}"
+
+[search]
+enabled = {str(config.search.enabled).lower()}
+providers = [{", ".join(f'"{item}"' for item in config.search.providers)}]
+base_url = "{config.search.base_url}"
+timeout = {config.search.timeout}
+max_results = {config.search.max_results}
+cache_ttl = {config.search.cache_ttl}
+transport = "{config.search.transport}"
 '''
     path.write_text(content, encoding="utf-8")
 
@@ -315,6 +325,10 @@ api_key_env = "{config.retrieval.embedding.api_key_env}"
 def resolve_config_path(config_path: Path | None) -> Path:
     if config_path:
         return config_path.expanduser()
+    env_path = os.environ.get("QUIET_MEMO_CONFIG")
+    if env_path:
+        # 环境变量优先于 CWD：测试隔离与显式选择配置都不应被仓库里的本地配置抢走。
+        return Path(env_path).expanduser()
     local = Path.cwd() / CONFIG_FILENAME
     if local.exists():
         return local

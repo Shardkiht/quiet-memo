@@ -19,7 +19,7 @@ uv run qm setup      # 配置模型与 API Key
 
 ## 技术栈
 
-Python 3.12+、uv、hatchling、Typer、FastMCP、LiteLLM、Pydantic v2、pytest + pytest-asyncio（`asyncio_mode = "auto"`）、jieba + rank-bm25 + numpy（BM25 与向量余弦、RRF 混合检索）、fastembed（本地 embedding，可选 extra `local-embed`）、Textual（全屏 TUI）、rich（CLI 输出）、questionary（CLI 配置向导）、keyring、tiktoken。
+Python 3.12+、uv、hatchling、Typer、FastMCP、LiteLLM、Pydantic v2、pytest + pytest-asyncio（`asyncio_mode = "auto"`）、jieba + rank-bm25 + numpy（BM25 与向量余弦、RRF 混合检索）、fastembed（本地 embedding，可选 extra `local-embed`）、Textual（全屏 TUI）、rich（CLI 输出）、questionary（CLI 配置向导）、keyring、tiktoken、httpx（联网搜索）。
 
 非核心能力优先复用现成库（分词、检索、CLI、密钥、模型适配）；自研只保留核心差异：记忆裁决、上下文压缩、来源链。
 
@@ -35,10 +35,11 @@ memory/agent → llm → infra
 - `memory/`：抽取、裁决、存储、队列、审计。
 - `retrieval/`：检索接口与实现，`Retriever` 是替换点。
 - `llm/`：LiteLLM 适配、摘要。
-- `infra/`：配置、供应商、Git、token 估算、终端交互。
+- `infra/`：配置、供应商、Git、token 估算、终端交互、联网搜索。
 
 新增代码不要制造新的反向依赖或循环依赖；跨模块使用相对导入。
 现有 `retrieval` 只读 `memory` 的 `models`、`store`、`detect` 获取条目与字面覆盖，这是已知例外；新增检索实现不要反向依赖 memory 的写入逻辑。
+`infra/search/` 包含 SearchQuery/SearchResult/Provider 契约、open-websearch adapter、registry/router/cache；上层只依赖 router，供应商字段映射只放在 adapter，HTTP 直接用 httpx，不引入 LangChain/LlamaIndex。
 
 ## 代码风格
 
@@ -57,6 +58,7 @@ memory/agent → llm → infra
 - 更正采用“新条目 + `supersedes`”，旧条目置为 `superseded`；删除是软删除 `deleted`，不物理移除。
 - 待确认候选写 `.quiet-memo/pending.jsonl`，处理结果追加到 `resolved.jsonl`；更正、删除等操作写 `audit.jsonl`。
 - `.quiet-memo/vectors.npz` 是向量检索的派生缓存（含 `model_id`，换模型自动失效），vault 内 gitignore，可删除重建，不进 Git 历史。
+- `.quiet-memo/search-cache.json` 是联网搜索的派生缓存（按 TTL 过期），vault 内 gitignore，可删除重建，不进 Git 历史。
 - `sessions/<id>.jsonl` 是追加写的事件流，不重写旧行；上下文压缩只追加 `summary` 记录，不删除原文。
 - `vault/SOUL.md` 是可选自定义人设：存在时替换系统提示词的人设段，机制规则固定拼接在后不可覆盖；它是指令不是记忆，不参与抽取与检索。
 - 密钥、验证码、API Key 在写入前拦截；不把密钥写入 vault、配置示例或测试。

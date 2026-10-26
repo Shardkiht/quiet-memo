@@ -84,11 +84,23 @@ class RetrievalConfig:
 
 
 @dataclass(slots=True)
+class SearchConfig:
+    enabled: bool = True
+    providers: list[str] = field(default_factory=lambda: ["open_websearch"])
+    base_url: str = "http://127.0.0.1:3000"
+    timeout: float = 10.0
+    max_results: int = 5
+    cache_ttl: int = 86400
+    transport: str = "http"  # http / mcp
+
+
+@dataclass(slots=True)
 class Config:
     vault: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    search: SearchConfig = field(default_factory=SearchConfig)
     confidence_threshold: float = 0.8
     auto_push: bool = False
 
@@ -173,11 +185,25 @@ def load_config(path: Path | str | None = None) -> Config:
             api_key_env=str(embedding_raw.get("api_key_env", "SILICONFLOW_API_KEY")),
         ),
     )
+    search_raw = data.get("search", {})
+    providers = search_raw.get("providers", ["open_websearch"])
+    if not isinstance(providers, list):
+        providers = ["open_websearch"]
+    search = SearchConfig(
+        enabled=bool(search_raw.get("enabled", True)),
+        providers=[str(item) for item in providers if str(item).strip()] or ["open_websearch"],
+        base_url=str(search_raw.get("base_url", "http://127.0.0.1:3000")),
+        timeout=float(search_raw.get("timeout", 10.0)),
+        max_results=int(search_raw.get("max_results", 5)),
+        cache_ttl=int(search_raw.get("cache_ttl", 86400)),
+        transport=str(search_raw.get("transport", "http")),
+    )
     return Config(
         vault=Path(vault_raw).expanduser(),
         llm=llm,
         chat=chat,
         retrieval=retrieval,
+        search=search,
         confidence_threshold=float(data.get("confidence_threshold", 0.8)),
         auto_push=bool(data.get("auto_push", False)),
     )
@@ -226,6 +252,16 @@ model = "{DEFAULT_EMBEDDING_MODEL}"
 # provider = "siliconflow"
 # base_url = "{DEFAULT_EMBEDDING_BASE_URL}"
 # api_key_env = "SILICONFLOW_API_KEY"
+
+[search]
+enabled = true
+providers = ["open_websearch"]
+base_url = "http://127.0.0.1:3000"
+timeout = 10.0
+max_results = 5
+cache_ttl = 86400
+# http：调用本地 daemon；mcp：每次搜索启动 npx MCP 进程
+transport = "http"
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")

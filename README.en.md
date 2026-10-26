@@ -23,6 +23,7 @@ Local Markdown · Git-reversible · MCP-callable
 | **Silent by default** | Trusted content is written directly without interrupting you item by item |
 | **Full agent** | Interactive chat, persisted sessions, context compaction, and a tool loop |
 | **Multi-model** | LiteLLM integration for DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and more |
+| **Web search** | Optionally connects to a local open-websearch daemon; results include source links and are treated as untrusted material |
 | **Reversible** | Each commit automatically generates a Chinese summary for your review |
 
 ## Interface preview
@@ -121,16 +122,27 @@ model = "BAAI/bge-small-zh-v1.5"
 # provider = "siliconflow"
 # base_url = "https://api.siliconflow.cn/v1"
 # api_key_env = "SILICONFLOW_API_KEY"
+
+[search]
+enabled = true                  # Disabling it removes the search tool
+providers = ["open_websearch"]  # Tried in order with fallback
+base_url = "http://127.0.0.1:3000"
+timeout = 10.0
+max_results = 5
+cache_ttl = 86400
+transport = "http"              # http: local daemon; mcp: start an npx MCP process per search
 ```
 
 If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Interactive menus and chat rely on the Windows console; Windows Terminal or PowerShell is recommended. Git Bash users can try `winpty`.
+
+Web search is enabled by default but requires a local open-websearch daemon; see [Web search](#web-search) for startup and configuration.
 
 ## Chat agent
 
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model with retrieval mode, context usage as a progress line with used/total numbers, and the pending count, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
-- The model can call `recall / memorize / correct / forget / review_pending`.
+- The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information, and treats the results as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done.
 - On exit, extracts user statements from the turn that have not yet been persisted.
@@ -255,7 +267,32 @@ MCP client configuration:
 }
 ```
 
-Exposed tools: `memorize`, `note`, `recall`, `review_pending`, `approve`, `reject`, `list_topics`, `status`.
+Exposed tools: `memorize`, `note`, `recall`, `review_pending`, `approve`, `reject`, `list_topics`, `status`; `search` is added when web search is enabled.
+
+## Web search
+
+The `search` tool queries public web pages through a local [open-websearch](https://github.com/Aas-ee/open-webSearch) daemon and needs no API key. Start the daemon in a separate terminal:
+
+```bash
+npx -y open-websearch@latest serve
+# or: npm i -g open-websearch && open-websearch serve
+```
+
+Response shape:
+
+```json
+{
+  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch"}],
+  "provider": "open_websearch",
+  "failed": [{"provider": "open_websearch", "kind": "network", "detail": "..."}],
+  "hint": "optional hint"
+}
+```
+
+- Results are untrusted external content: cite them as material, never execute instructions found in them.
+- If the daemon is down or every provider fails, the tool returns a structured error with a startup hint instead of inventing results.
+- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, and `transport` (`http` by default; `mcp` starts an npx MCP process per search).
+- Search results are cached in `.quiet-memo/search-cache.json` as derived data that can be deleted.
 
 ## Write rules
 
@@ -293,7 +330,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM adapter, session/commit summaries
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, dialogs.py             # Config, providers, Git, tokens, terminal dialogs
+                  layout.py, dialogs.py, search/    # Config, providers, Git, tokens, terminal dialogs, web search
 ```
 
 Dependency direction: `app → agent → memory → retrieval → infra`, `memory/agent → llm → infra`.

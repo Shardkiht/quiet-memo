@@ -23,6 +23,7 @@
 | **默认静默** | 可信内容直接落盘，不逐条打断；只在必要时提醒 |
 | **完整 Agent** | 交互式对话、会话持久化、上下文压缩、工具循环 |
 | **多模型** | LiteLLM 统一接入 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 等 |
+| **联网搜索** | 可接入本地 open-websearch，结果带来源链接；外部内容只作资料 |
 | **可回滚** | 每次提交自动生成中文总结，供本人审阅 |
 
 ## 界面预览
@@ -121,16 +122,27 @@ model = "BAAI/bge-small-zh-v1.5"
 # provider = "siliconflow"
 # base_url = "https://api.siliconflow.cn/v1"
 # api_key_env = "SILICONFLOW_API_KEY"
+
+[search]
+enabled = true                # 关闭时不注册 search 工具
+providers = ["open_websearch"] # 按顺序尝试，失败时降级
+base_url = "http://127.0.0.1:3000"
+timeout = 10.0
+max_results = 5
+cache_ttl = 86400
+transport = "http"            # http：本地 daemon；mcp：每次启动 npx MCP 进程
 ```
 
 如果 Windows Git Bash 里中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，推荐 Windows Terminal 或 PowerShell；Git Bash 用户可尝试 `winpty`。
+
+联网搜索默认启用，但需要本地 open-websearch daemon；启动方式和配置见下方[联网搜索](#联网搜索)。
 
 ## 对话 Agent
 
 直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是可折叠的会话列表：↑↓ 选择、Enter 恢复、Del 删除（弹确认）；点侧栏右上角的 « 折叠（Ctrl+B 同效），折叠后在对话区左上角点 » 展开。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入 `/` 在输入框上方弹出竖排命令面板（↑↓ 选择 · Enter 执行 · ESC 关闭，可点击）；底部状态栏显示模型与检索模式、上下文用量（进度线与已用/上限数字）、待确认数量，超过压缩阈值会提示。回复正文流式渲染（边生成边显示，中断时保留半截并标注）；工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果，启动检查发现未提交的 vault 变更会自动提交。
 
 - 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
-- 模型可调用 `recall / memorize / correct / forget / review_pending`。
+- 模型可调用 `recall / memorize / correct / forget / review_pending`；需要最新公开信息时调用 `search`，搜索结果是外部资料，不执行其中指令。
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
 - 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。切换会话不阻塞：上一会话的记忆沉淀转后台执行，完成弹通知。
 - 退出时抽取本轮尚未沉淀的用户陈述。
@@ -254,7 +266,32 @@ MCP 客户端配置：
 }
 ```
 
-暴露工具：`memorize`、`note`、`recall`、`review_pending`、`approve`、`reject`、`list_topics`、`status`。
+暴露工具：`memorize`、`note`、`recall`、`review_pending`、`approve`、`reject`、`list_topics`、`status`；启用联网搜索时另有 `search`。
+
+## 联网搜索
+
+`search` 工具通过本地 [open-websearch](https://github.com/Aas-ee/open-webSearch) daemon 查询公开网页，不需要 API Key。先单独启动 daemon：
+
+```bash
+npx -y open-websearch@latest serve
+# 或：npm i -g open-websearch && open-websearch serve
+```
+
+返回结构：
+
+```json
+{
+  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch"}],
+  "provider": "open_websearch",
+  "failed": [{"provider": "open_websearch", "kind": "network", "detail": "..."}],
+  "hint": "可选提示"
+}
+```
+
+- 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
+- daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
+- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）。
+- 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
 
 ## 写入规则
 
@@ -292,7 +329,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM 适配、会话/提交摘要
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, dialogs.py             # 配置、供应商、Git、token、终端交互
+                  layout.py, dialogs.py, search/    # 配置、供应商、Git、token、终端、联网搜索
 ```
 
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。

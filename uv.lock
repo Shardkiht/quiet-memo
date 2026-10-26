@@ -2694,6 +2694,7 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
+    { name = "httpx" },
     { name = "jieba" },
     { name = "keyring" },
     { name = "litellm" },
@@ -2725,6 +2726,7 @@ dev = [
 requires-dist = [
     { name = "fastembed", marker = "extra == 'local-embed'", specifier = ">=0.3" },
     { name = "fastmcp", specifier = ">=2.12" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "jieba", specifier = ">=0.42" },
     { name = "keyring", specifier = ">=25.5" },
     { name = "litellm", specifier = ">=1.60" },
