@@ -128,7 +128,7 @@ def test_memorize_tool_writes_with_session_provenance(tmp_path):
 
     assert reply.content == "记下了。"
     assert reply.steps == 2
-    assert any("写入 1 条" in event for event in reply.events)
+    assert any("Saved 1" in event for event in reply.events)
     entries = service.store.entries()
     assert entries[0].text == "住在市区"
     assert entries[0].metadata["source"] == f"session:{runtime.current.id}"
@@ -155,7 +155,7 @@ def test_recall_tool_result_reaches_model(tmp_path):
     second_call_messages = model.calls[1][0]
     tool_messages = [message for message in second_call_messages if message["role"] == "tool"]
     assert tool_messages and "清淡" in tool_messages[0]["content"]
-    assert any("检索" in event for event in reply.events)
+    assert any("Recalled" in event for event in reply.events)
 
 
 def test_auto_recall_injects_long_term_memory(tmp_path):
@@ -226,7 +226,7 @@ def test_force_conclude_after_max_steps(tmp_path):
 
     assert reply.content == "收敛回答"
     assert model.tool_rounds == [True, False]
-    assert any("强制收敛" in event for event in reply.events)
+    assert any("forced wrap-up" in event for event in reply.events)
 
 
 def test_retries_transient_model_failure(tmp_path):
@@ -346,7 +346,7 @@ def test_context_options_and_apply(tmp_path, monkeypatch, service):
     assert "16K" in actions.apply_context(service, 16000)
     assert service.config.chat.context_window == 16000
     assert (tmp_path / "quiet-memo.toml").exists()
-    assert "至少" in actions.apply_context(service, 1000)
+    assert "at least" in actions.apply_context(service, 1000)
 
 
 
@@ -366,7 +366,7 @@ def test_ask_streams_events_to_callback(tmp_path):
     received = []
     reply = runtime.ask("我喜欢什么风味？", on_event=received.append)
 
-    assert any("检索" in event for event in received)
+    assert any("Recalled" in event for event in received)
     assert received == reply.events
 
 

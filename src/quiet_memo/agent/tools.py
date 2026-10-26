@@ -59,7 +59,7 @@ class ToolRegistry:
             return ToolOutcome(
                 ok=False,
                 content=json.dumps({"error": f"未知工具：{name}"}, ensure_ascii=False),
-                display=f"未知工具 {name}",
+                display=f"Unknown tool {name}",
             )
         started = time.monotonic()
         future = self._executor.submit(spec.handler, arguments)
@@ -69,13 +69,13 @@ class ToolRegistry:
             outcome = ToolOutcome(
                 ok=False,
                 content=json.dumps({"error": f"{name} 执行超时"}, ensure_ascii=False),
-                display=f"{name} 超时（{spec.timeout:.0f}s）",
+                display=f"{name} timed out ({spec.timeout:.0f}s)",
             )
         except Exception as exc:
             outcome = ToolOutcome(
                 ok=False,
                 content=json.dumps({"error": str(exc)}, ensure_ascii=False),
-                display=f"{name} 失败：{exc}",
+                display=f"{name} failed: {exc}",
             )
         outcome.duration_ms = int((time.monotonic() - started) * 1000)
         return outcome
@@ -114,7 +114,7 @@ def build_tools(
         return ToolOutcome(
             ok=True,
             content=content,
-            display=f"检索「{query}」：{len(hits)} 条",
+            display=f"Recalled \"{query}\": {len(hits)} hits",
             data={"results": results},
         )
 
@@ -124,7 +124,7 @@ def build_tools(
             return ToolOutcome(
                 ok=False,
                 content=json.dumps({"error": "text 为空"}, ensure_ascii=False),
-                display="记忆写入失败：空文本",
+                display="Memory write failed: empty text",
             )
         result = service.memorize(
             text,
@@ -144,11 +144,11 @@ def build_tools(
             "duplicates": result.duplicates,
             "blocked": result.blocked,
         }
-        display = f"写入 {len(result.admitted)} 条"
+        display = f"Saved {len(result.admitted)}"
         if result.queued:
-            display += f"，待确认 {len(result.queued)} 条"
+            display += f", {len(result.queued)} pending"
         if result.blocked:
-            display += f"，拦截敏感内容 {len(result.blocked)} 条"
+            display += f", {len(result.blocked)} sensitive blocked"
         return ToolOutcome(
             ok=True,
             content=json.dumps(payload, ensure_ascii=False),
@@ -163,14 +163,14 @@ def build_tools(
             return ToolOutcome(
                 ok=False,
                 content=json.dumps({"error": "entry_id 和 text 必填"}, ensure_ascii=False),
-                display="更正失败：参数缺失",
+                display="Correction failed: missing arguments",
             )
         entry = service.correct(entry_id, text, reason=str(arguments.get("reason", "")))
         payload = {"id": entry.id, "topic": entry.topic, "text": entry.text, "supersedes": entry.supersedes}
         return ToolOutcome(
             ok=True,
             content=json.dumps(payload, ensure_ascii=False),
-            display=f"已更正 {entry_id} → {entry.id}",
+            display=f"Corrected {entry_id} → {entry.id}",
             data=payload,
         )
 
@@ -181,7 +181,7 @@ def build_tools(
         return ToolOutcome(
             ok=True,
             content=json.dumps(payload, ensure_ascii=False),
-            display=f"已删除记忆 {entry.id}（软删除，可审计）",
+            display=f"Deleted memory {entry.id} (soft delete, auditable)",
             data=payload,
         )
 
@@ -200,7 +200,7 @@ def build_tools(
         return ToolOutcome(
             ok=True,
             content=json.dumps({"pending": payload}, ensure_ascii=False),
-            display=f"待确认 {len(items)} 条",
+            display=f"{len(items)} pending",
             data={"pending": payload},
         )
 
@@ -292,7 +292,7 @@ def build_tools(
                 return ToolOutcome(
                     ok=False,
                     content=SEARCH_NOTICE + "\n" + json.dumps(payload, ensure_ascii=False),
-                    display="搜索失败：空查询",
+                    display="Search failed: empty query",
                     data=payload,
                 )
             try:
@@ -312,7 +312,7 @@ def build_tools(
                 return ToolOutcome(
                     ok=False,
                     content=SEARCH_NOTICE + "\n" + json.dumps(payload, ensure_ascii=False),
-                    display=f"搜索失败：不支持的 engine {engine}",
+                    display=f"Search failed: unsupported engine {engine}",
                     data=payload,
                 )
             try:
@@ -329,7 +329,7 @@ def build_tools(
                 return ToolOutcome(
                     ok=False,
                     content=SEARCH_NOTICE + "\n" + json.dumps(payload, ensure_ascii=False),
-                    display=f"搜索失败：{exc}",
+                    display=f"Search failed: {exc}",
                     data=payload,
                 )
 
@@ -340,8 +340,8 @@ def build_tools(
                     ok=True,
                     content=content,
                     display=(
-                        f"搜索「{query[:20]}」：{len(outcome.results)} 条"
-                        f"（{outcome.provider}）"
+                        f"Search \"{query[:20]}\": {len(outcome.results)} results"
+                        f" ({outcome.provider})"
                     ),
                     data=payload,
                 )
@@ -349,13 +349,13 @@ def build_tools(
                 return ToolOutcome(
                     ok=False,
                     content=content,
-                    display=f"搜索「{query[:20]}」失败：{outcome.failed[0].kind}",
+                    display=f"Search \"{query[:20]}\" failed: {outcome.failed[0].kind}",
                     data=payload,
                 )
             return ToolOutcome(
                 ok=True,
                 content=content,
-                display=f"搜索「{query[:20]}」：0 条",
+                display=f"Search \"{query[:20]}\": 0 results",
                 data=payload,
             )
 

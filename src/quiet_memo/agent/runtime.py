@@ -158,11 +158,11 @@ class AgentRuntime:
         if plan.flushed:
             flushed = plan.flushed
             if flushed.get("error"):
-                emit(f"记忆沉淀失败：{flushed['error']}")
+                emit(f"Memory distillation failed: {flushed['error']}")
             elif flushed.get("admitted") or flushed.get("queued"):
                 emit(
-                    f"压缩前沉淀记忆：写入 {flushed.get('admitted', 0)} 条，"
-                    f"待确认 {flushed.get('queued', 0)} 条"
+                    f"Distilled before compaction: {flushed.get('admitted', 0)} written, "
+                    f"{flushed.get('queued', 0)} pending"
                 )
 
         tools = build_tools(self.service, session, timeout=self.config.tool_timeout)
@@ -214,8 +214,8 @@ class AgentRuntime:
             usage.add(turn.usage)
             steps += 1
             record = self._append_assistant(session, turn)
-            final = turn.content or "（未能生成回答）"
-            emit("达到工具调用上限，已强制收敛")
+            final = turn.content or "(no answer generated)"
+            emit("Tool-step limit reached; forced wrap-up")
 
         return AgentReply(
             content=final,
@@ -228,7 +228,7 @@ class AgentRuntime:
 
     def force_compact(self) -> list[str]:
         if self.session is None:
-            return ["新会话还没有记录，无需压缩。"]
+            return ["This session has no records to compact."]
         plan = self.context.prepare(
             self.current,
             self._system_prompt(),
@@ -238,11 +238,11 @@ class AgentRuntime:
         events = list(plan.events)
         if plan.flushed and plan.flushed.get("admitted") is not None:
             events.append(
-                f"压缩前沉淀记忆：写入 {plan.flushed.get('admitted', 0)} 条，"
-                f"待确认 {plan.flushed.get('queued', 0)} 条"
+                f"Distilled before compaction: {plan.flushed.get('admitted', 0)} written, "
+                f"{plan.flushed.get('queued', 0)} pending"
             )
         if not events:
-            events.append("没有可压缩的早期记录。")
+            events.append("No earlier records to compact.")
         return events
 
     def close(self, distill: bool = True) -> dict:
@@ -419,7 +419,7 @@ class AgentRuntime:
             except ChatModelError:
                 raise
             except Exception as exc:
-                raise ChatModelError(f"LLM 调用失败：{exc}") from exc
+                raise ChatModelError(f"LLM call failed: {exc}") from exc
         last_error: Exception | None = None
         for attempt in range(3):
             try:
@@ -430,4 +430,4 @@ class AgentRuntime:
                 last_error = exc
                 if attempt < 2:
                     time.sleep(0.5 * (attempt + 1))
-        raise ChatModelError(f"LLM 调用失败：{last_error}")
+        raise ChatModelError(f"LLM call failed: {last_error}")

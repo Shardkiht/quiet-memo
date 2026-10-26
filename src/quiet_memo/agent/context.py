@@ -193,7 +193,7 @@ class ContextManager:
                 try:
                     flushed = self.flush(user_texts)
                 except Exception as exc:
-                    events.append(f"上下文压缩时记忆沉淀失败：{exc}")
+                    events.append(f"Memory distillation during compaction failed: {exc}")
                     flushed = {"error": str(exc)}
 
             summary_text = self.summarizer.summarize(
@@ -215,7 +215,7 @@ class ContextManager:
             )
             history = history[cutoff:]
             evicted_total += cutoff
-            events.append(f"上下文压缩：{cutoff} 条早期记录 → 摘要 {len(summary_text)} 字")
+            events.append(f"Context compacted: {cutoff} earlier records → {len(summary_text)}-character summary")
             if self._fits(history, summary_text, base_tokens):
                 break
             keep_tokens = max(400, keep_tokens // 2)

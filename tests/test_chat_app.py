@@ -77,7 +77,7 @@ async def test_chat_roundtrip(tmp_path):
         assert app.query(".reply")  # 助手 Markdown 回复已渲染
         assert app.runtime.has_session
         assert app.query("SessionItem")  # 侧栏出现当前会话
-        assert "上下文" in str(app.query_one("#status", Static).content)
+        assert "Context" in str(app.query_one("#status", Static).content)
 
 
 async def test_slash_help_card(tmp_path):
@@ -90,7 +90,7 @@ async def test_slash_help_card(tmp_path):
 
         cards = app.query(".card")
         assert cards
-        assert "命令" in str(cards[0].content)
+        assert "Commands" in str(cards[-1].content)
 
 
 async def test_command_palette_filter_navigate_execute(tmp_path):
@@ -210,7 +210,7 @@ async def test_compact_failure_releases_busy(tmp_path):
         assert app.busy is False
         input_widget = app.query_one("#input", Input)
         assert input_widget.disabled is False
-        assert "压缩失败" in str(app.query(".card")[-1].render())
+        assert "Compaction failed" in str(app.query(".card")[-1].render())
 
 
 async def test_session_switch_failure_releases_busy(tmp_path):
@@ -230,7 +230,7 @@ async def test_session_switch_failure_releases_busy(tmp_path):
                 break
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
-        assert "会话切换失败" in str(app.query(".card")[-1].render())
+        assert "Session switch failed" in str(app.query(".card")[-1].render())
 
 
 async def test_delete_session_uses_captured_row(tmp_path):
@@ -263,7 +263,7 @@ async def test_delete_session_uses_captured_row(tmp_path):
         # 模态打开期间模拟列表刷新（如后台回复完成后的 refresh_sessions）。
         app.refresh_sessions()
         # 走真实模态交互：高亮默认在第一项"确认删除"上，Enter 触发回调。
-        assert "不可恢复" in str(app.screen.query_one(".pick-title").render())
+        assert "cannot be undone" in str(app.screen.query_one(".pick-title").render())
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause()
@@ -285,10 +285,10 @@ async def test_context_custom_rejects_unicode_digits(tmp_path):
         await pilot.pause()
         app._context_custom("①")
         await pilot.pause()
-        assert "正整数" in str(app.query(".card")[-1].render())
+        assert "positive integer" in str(app.query(".card")[-1].render())
         app._context_custom("16x")
         await pilot.pause()
-        assert "正整数" in str(app.query(".card")[-1].render())
+        assert "positive integer" in str(app.query(".card")[-1].render())
 
 
 def test_slash_commands_cover_aliases():
@@ -382,7 +382,7 @@ async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
         cards = [str(widget.render()) for widget in app.query(".card")]
-        assert any("补记 1 个未收尾会话" in card for card in cards)
+        assert any("Consolidated 1 unfinished session(s)" in card for card in cards)
         assert app.runtime.consolidate_pending()["scanned"] == 0  # 已标记，不会重复
 
 
@@ -419,7 +419,7 @@ async def test_pending_interactive_approve(tmp_path):
         assert not app.service.pending()
         assert app.service.store.has_text("低置信的偏好内容")
         cards = [str(w.render()) for w in app.query(".card")]
-        assert any("已写入" in c for c in cards)
+        assert any("Saved" in c for c in cards)
 
 
 async def test_topics_command_lists_and_drills(tmp_path):
@@ -430,7 +430,7 @@ async def test_topics_command_lists_and_drills(tmp_path):
         app._show_topics()
         await pilot.pause()
         cards = [str(w.render()) for w in app.query(".card")]
-        assert any("preferences" in c and "记忆主题" in c for c in cards)
+        assert any("preferences" in c and "Memory topics" in c for c in cards)
         app._show_topics("preferences")
         await pilot.pause()
         cards = [str(w.render()) for w in app.query(".card")]

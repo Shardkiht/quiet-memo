@@ -10,31 +10,31 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListView, ListItem, Static
 
 SLASH_COMMANDS = [
-    ("new", "/new", "新建会话"),
-    ("sessions", "/sessions", "跳到左侧会话列表"),
-    ("resume", "/resume [id|query]", "恢复会话，无参数跳到会话列表"),
-    ("compact", "/compact", "立即压缩上下文"),
-    ("summary", "/summary", "查看当前会话摘要"),
-    ("status", "/status", "会话与记忆状态"),
-    ("model", "/model [refresh]", "切换模型，refresh 强制刷新列表"),
-    ("think", "/think", "切换思考强度（low/medium/high，按模型支持）"),
-    ("context", "/context", "切换上下文长度（档位按模型上限生成）"),
-    ("setup", "/setup", "完整配置模型 / API Key"),
-    ("rename", "/rename <title>", "重命名当前会话"),
-    ("recall", "/recall <query>", "直接检索记忆"),
-    ("remember", "/remember <text>", "直接写入记忆"),
-    ("pending", "/pending", "逐条处理待确认：确认 / 拒绝 / 改写"),
-    ("topics", "/topics [name]", "浏览记忆主题与条目"),
-    ("help", "/help", "查看命令帮助"),
-    ("exit", "/exit", "退出"),
-    ("quit", "/quit", "同 /exit"),
+    ("new", "/new", "New session"),
+    ("sessions", "/sessions", "Jump to the session list"),
+    ("resume", "/resume [id|query]", "Resume a session; opens the list without an argument"),
+    ("compact", "/compact", "Compact the context now"),
+    ("summary", "/summary", "Show the current session summary"),
+    ("status", "/status", "Session and memory status"),
+    ("model", "/model [refresh]", "Switch model; refresh forces a list refresh"),
+    ("think", "/think", "Set reasoning effort (low/medium/high, model-dependent)"),
+    ("context", "/context", "Set context window (presets follow the model limit)"),
+    ("setup", "/setup", "Configure model / API key"),
+    ("rename", "/rename <title>", "Rename the current session"),
+    ("recall", "/recall <query>", "Search memories directly"),
+    ("remember", "/remember <text>", "Write a memory directly"),
+    ("pending", "/pending", "Review pending items: approve / reject / edit"),
+    ("topics", "/topics [name]", "Browse memory topics and entries"),
+    ("help", "/help", "Show command help"),
+    ("exit", "/exit", "Quit"),
+    ("quit", "/quit", "Same as /exit"),
 ]
 
 
 class OptionItem(ListItem):
     def __init__(self, label: str, value, marker: bool = False) -> None:
         self.value = value
-        super().__init__(Label(f"{label}  ← 当前" if marker else label))
+        super().__init__(Label(f"{label}  ← current" if marker else label))
 
 
 class SessionItem(ListItem):
@@ -51,7 +51,7 @@ class SessionItem(ListItem):
 class PickScreen(ModalScreen):
     """单选模态：ESC 取消（回调收到 None），Enter/点击确认。"""
 
-    BINDINGS = [("escape", "cancel", "取消")]
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, title: str, options: list[tuple], on_result) -> None:
         super().__init__()
@@ -66,7 +66,7 @@ class PickScreen(ModalScreen):
                 *[OptionItem(*option) for option in self._options],
                 id="pick-list",
             )
-            yield Static("↑↓ 选择 · Enter 确认 · ESC 取消", classes="pick-hint")
+            yield Static("↑↓ select · Enter confirm · ESC cancel", classes="pick-hint")
 
     def on_mount(self) -> None:
         self.query_one("#pick-list", ListView).focus()
@@ -161,7 +161,7 @@ class CommandPalette(Vertical):
 class SessionPickerScreen(ModalScreen):
     """OpenCode 风格会话选择器：搜索过滤、Enter 恢复、Del 删除（带确认）、ESC 取消。"""
 
-    BINDINGS = [("escape", "cancel", "取消"), ("down", "focus_list", "选择")]
+    BINDINGS = [("escape", "cancel", "Cancel"), ("down", "focus_list", "Select")]
 
     def __init__(self, rows: list[dict], current_id: str | None, on_result) -> None:
         super().__init__()
@@ -172,9 +172,9 @@ class SessionPickerScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="pick-card"):
-            yield Input(placeholder="搜索会话标题或 ID…", id="picker-input")
+            yield Input(placeholder="Search session title or ID…", id="picker-input")
             yield ListView(id="picker-list")
-            yield Static("↑↓ 选择 · Enter 恢复 · Del 删除 · ESC 取消", classes="pick-hint")
+            yield Static("↑↓ select · Enter resume · Del delete · ESC cancel", classes="pick-hint")
 
     def on_mount(self) -> None:
         self._rebuild()
@@ -201,9 +201,9 @@ class SessionPickerScreen(ModalScreen):
         listing.clear()
         for row in self._filtered:
             time_text = (row.get("updated_at") or "")[11:16]
-            meta = f"{time_text} · {row['messages']} 条".lstrip("· ")
+            meta = f"{time_text} · {row['messages']} msgs".lstrip("· ")
             if row["id"] == self._current_id:
-                meta += " · ← 当前"
+                meta += " · ← current"
             item = SessionItem({**row, "meta": meta})
             if row["id"] == self._current_id:
                 item.add_class("current")
@@ -251,7 +251,7 @@ class SessionPickerScreen(ModalScreen):
 class TextInputScreen(ModalScreen):
     """单行输入模态：ESC 取消（None），Enter 提交。"""
 
-    BINDINGS = [("escape", "cancel", "取消")]
+    BINDINGS = [("escape", "cancel", "Cancel")]
 
     def __init__(self, title: str, default: str = "", on_result=None) -> None:
         super().__init__()
@@ -263,7 +263,7 @@ class TextInputScreen(ModalScreen):
         with Vertical(id="pick-card"):
             yield Static(self._title, classes="pick-title")
             yield Input(value=self._default, id="pick-input")
-            yield Static("Enter 确认 · ESC 取消", classes="pick-hint")
+            yield Static("Enter confirm · ESC cancel", classes="pick-hint")
 
     def on_mount(self) -> None:
         self.query_one("#pick-input", Input).focus()

@@ -94,7 +94,7 @@ def apply_model(
         api_key_env=preset.api_key_env if preset else current.api_key_env,
     )
     if new_llm.provider != current.provider and not new_llm.api_key():
-        return f"{provider} 还没有 API Key，请先在终端运行 qm setup 配置该供应商。"
+        return f"{provider} has no API key yet; run qm setup in a terminal to configure it."
 
     info = model_metadata(new_llm.litellm_model())
     if new_llm.reasoning_effort and "reasoning_effort" not in supported_params(
@@ -119,9 +119,9 @@ def apply_model(
     # 传当前配置对象热更新，不重读文件：写盘与重读之间没有竞态。
     runtime.reload_llm(service.config)
     return (
-        f"模型已切换：{runtime.model_label}"
-        f" · 上下文 {format_tokens(context_window)}"
-        f" · 思考强度 {new_llm.reasoning_effort or '默认'}"
+        f"Model switched: {runtime.model_label}"
+        f" · context {format_tokens(context_window)}"
+        f" · reasoning {new_llm.reasoning_effort or 'default'}"
     )
 
 
@@ -133,7 +133,7 @@ def reasoning_options(service: MemoryService) -> list[tuple[str, str]]:
     """(值, 标签) 列表，空串表示默认；模型不支持时返回空。"""
     if not supports_reasoning(service):
         return []
-    return [("", "默认"), ("low", "low"), ("medium", "medium"), ("high", "high")]
+    return [("", "default"), ("low", "low"), ("medium", "medium"), ("high", "high")]
 
 
 def apply_reasoning(service: MemoryService, value: str) -> str:
@@ -143,7 +143,7 @@ def apply_reasoning(service: MemoryService, value: str) -> str:
     # 热更新写回 service 记住的加载路径；未记录时（内存构造的 service）跳过落盘。
     if service.config_path:
         write_config(service.config_path, service.config)
-    return f"思考强度已切换：{value or '默认'}"
+    return f"Reasoning effort: {value or 'default'}"
 
 
 def context_options(service: MemoryService) -> list[int]:
@@ -174,16 +174,16 @@ def apply_context(service: MemoryService, value: int) -> str:
     except (TypeError, ValueError):
         max_input = None
     if value < 2000:
-        return "上下文至少需要 2000 token。"
+        return "Context window must be at least 2000 tokens."
     if max_input and value > max_input:
         value = max_input
-        note = f"超过模型上限，已压到 {format_tokens(max_input)}。"
+        note = f"Exceeds the model limit; capped at {format_tokens(max_input)}."
     else:
         note = ""
     if value == service.config.chat.context_window:
-        return "上下文长度未变化。"
+        return "Context window unchanged."
     service.config.chat.context_window = value
     # 热更新写回 service 记住的加载路径；未记录时（内存构造的 service）跳过落盘。
     if service.config_path:
         write_config(service.config_path, service.config)
-    return f"上下文已切换：{format_tokens(value)} · 下一轮生效。{note}".strip()
+    return f"Context window set to {format_tokens(value)} · applies next turn. {note}".strip()

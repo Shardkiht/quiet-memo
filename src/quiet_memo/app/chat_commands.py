@@ -23,7 +23,7 @@ class ChatCommandsMixin:
         if command in ("/exit", "/quit"):
             self.exit()
         elif command == "/help":
-            self.add_card("\n".join(f"{usage:<24}{description}" for _, usage, description in SLASH_COMMANDS), "命令")
+            self.add_card("\n".join(f"{usage:<24}{description}" for _, usage, description in SLASH_COMMANDS), "Commands")
         elif command == "/model":
             self._open_models(argument.lower() in ("refresh", "--refresh", "-r"))
         elif command == "/think":
@@ -31,7 +31,7 @@ class ChatCommandsMixin:
         elif command == "/context":
             self._pick_context()
         elif command == "/setup":
-            self.add_card("完整配置需在终端运行 qm setup，当前界面内无法启动配置向导。")
+            self.add_card("Full configuration requires qm setup in a terminal; the wizard cannot start inside this UI.")
         elif command == "/new":
             self._new_session()
         elif command in ("/sessions", "/resume"):
@@ -43,34 +43,34 @@ class ChatCommandsMixin:
             self._run_compact()
         elif command == "/summary":
             if not self.runtime.has_session:
-                self.add_card("新会话还没有摘要。")
+                self.add_card("This new session has no summary yet.")
             else:
                 summary = self.runtime.summary_text()
-                self.add_markdown_card(summary, "会话摘要") if summary else self.add_card("当前会话还没有摘要。")
+                self.add_markdown_card(summary, "Session summary") if summary else self.add_card("This session has no summary yet.")
         elif command == "/status":
             self._show_status()
         elif command == "/rename":
             if not argument:
-                self.add_card("用法：/rename <title>")
+                self.add_card("Usage: /rename <title>")
             elif not self.runtime.has_session:
-                self.add_card("新会话尚未创建，发送第一条消息后再重命名。")
+                self.add_card("The session is not created yet; send a message first, then rename.")
             else:
                 self.runtime.rename(argument)
                 self.refresh_sessions()
-                self.add_card(f"已重命名为：{argument}")
+                self.add_card(f"Renamed to: {argument}")
         elif command == "/recall":
             if not argument:
-                self.add_card("用法：/recall <query>")
+                self.add_card("Usage: /recall <query>")
             else:
                 hits = self.service.recall(argument, 10)
                 self.add_card(
                     "\n".join(f"[{hit.topic}] {hit.score:.2f} · {hit.text}" for hit in hits)
                     if hits
-                    else "未找到相关记忆。"
+                    else "No matching memories."
                 )
         elif command == "/remember":
             if not argument:
-                self.add_card("用法：/remember <text>")
+                self.add_card("Usage: /remember <text>")
             else:
                 self._run_remember(argument)
         elif command == "/pending":
@@ -78,7 +78,7 @@ class ChatCommandsMixin:
         elif command == "/topics":
             self._show_topics(argument.strip() or None)
         else:
-            self.add_card(f"未知命令：{command}，输入 /help 查看帮助。")
+            self.add_card(f"Unknown command: {command}. Type /help for help.")
 
     # ---------- 待确认交互处理（issue #1） ----------
 
@@ -89,13 +89,13 @@ class ChatCommandsMixin:
     def _open_pending(self) -> None:
         items = self.service.pending()
         if not items:
-            self.add_card("没有待确认项。")
+            self.add_card("No pending items.")
             return
         options = [
             (f"{item.id}  [{item.topic}] {self._truncate(item.text, 36)}", item.id)
             for item in items
         ]
-        self.push_screen(PickScreen(f"待确认 {len(items)} 条", options, self._pending_picked))
+        self.push_screen(PickScreen(f"Pending items: {len(items)}", options, self._pending_picked))
 
     def _pending_picked(self, item_id) -> None:
         if item_id is None:
@@ -103,12 +103,12 @@ class ChatCommandsMixin:
             return
         item = next((i for i in self.service.pending() if i.id == item_id), None)
         if item is None:
-            self.notify("该待确认项已不存在。")
+            self.notify("That pending item no longer exists.")
             return
         options = [
-            ("确认写入", ("approve", item_id, None)),
-            ("改写后写入", ("edit", item_id, None)),
-            ("拒绝", ("reject", item_id, None)),
+            ("Approve", ("approve", item_id, None)),
+            ("Edit and approve", ("edit", item_id, None)),
+            ("Reject", ("reject", item_id, None)),
         ]
         self.push_screen(PickScreen(f"[{item.topic}] {self._truncate(item.text, 44)}", options, self._pending_action))
 
@@ -121,7 +121,7 @@ class ChatCommandsMixin:
             item = next((i for i in self.service.pending() if i.id == item_id), None)
             default = item.text if item else ""
             self.push_screen(
-                TextInputScreen("改写后的完整表述", default=default, on_result=lambda v: self._pending_edited(item_id, v))
+                TextInputScreen("Full revised text", default=default, on_result=lambda v: self._pending_edited(item_id, v))
             )
             return
         self._pending_apply(action, item_id, None)
@@ -138,10 +138,10 @@ class ChatCommandsMixin:
                 entry = self.service.approve(item_id)
                 if override and override != entry.text:
                     entry = self.service.correct(entry.id, override, reason="人工改写后写入")
-                message = f"已写入 [{entry.topic}] {entry.text}"
+                message = f"Saved [{entry.topic}] {entry.text}"
             else:
                 item = self.service.reject(item_id)
-                message = f"已拒绝 {item.id} {self._truncate(item.text, 40)}"
+                message = f"Rejected {item.id} {self._truncate(item.text, 40)}"
         except (KeyError, ValueError) as exc:
             self.add_card(str(exc))
             return
@@ -152,13 +152,13 @@ class ChatCommandsMixin:
             # 队列里还有：自动进入下一条，ESC 随时退出循环。
             self.call_after_refresh(self._open_pending)
         else:
-            self.add_card("待确认队列已清空。")
+            self.add_card("Pending queue is empty.")
             self.query_one("#input", Input).focus()
 
     def _show_topics(self, name: str | None = None) -> None:
         topics = self.service.topics()
         if not topics:
-            self.add_card("记忆库为空。")
+            self.add_card("The memory vault is empty.")
             return
         if name:
             needle = name.lower()
@@ -167,24 +167,24 @@ class ChatCommandsMixin:
                 None,
             )
             if matched is None:
-                self.add_card(f"没有匹配的主题：{name}")
+                self.add_card(f"No matching topic: {name}")
                 return
             entries = self.service.store.entries(topic=matched["topic"])
-            lines = [f"{matched['title']}（{matched['topic']}）· {len(entries)} 条", ""]
+            lines = [f"{matched['title']} ({matched['topic']}) · {len(entries)} entries", ""]
             for entry in entries:
-                tag = "" if entry.status == "active" else f"（{entry.status}）"
+                tag = "" if entry.status == "active" else f" ({entry.status})"
                 lines.append(f"{entry.id[:26]}  {self._truncate(entry.text, 56)}{tag}")
-            self.add_card("\n".join(lines), "主题条目")
+            self.add_card("\n".join(lines), "Topic entries")
             return
         self.add_card(
-            "\n".join(f"{t['topic']:<24} {t['title']} · {t['entries']} 条 · 更新 {t['updated']}" for t in topics),
-            "记忆主题",
+            "\n".join(f"{t['topic']:<24} {t['title']} · {t['entries']} entries · updated {t['updated']}" for t in topics),
+            "Memory topics",
         )
 
     def open_session_picker(self) -> None:
         rows = visible_sessions(self.sessions.list(100, with_tokens=False))
         if not rows:
-            self.add_card("没有可选择的会话。")
+            self.add_card("No sessions to choose from.")
             return
         current_id = self.runtime.current.id if self.runtime.has_session else None
         self.push_screen(
@@ -196,7 +196,7 @@ class ChatCommandsMixin:
             self.query_one("#input", Input).focus()
             return
         if self.runtime.has_session and session_id == self.runtime.current.id:
-            self.notify("已经是当前会话。")
+            self.notify("Already the current session.")
             self.query_one("#input", Input).focus()
             return
         if self.busy:
@@ -214,27 +214,27 @@ class ChatCommandsMixin:
             None,
         )
         if matched is None:
-            self.notify("没有匹配的会话。")
+            self.notify("No matching session.")
             return
         if self.runtime.has_session and matched["id"] == self.runtime.current.id:
-            self.notify("已经是当前会话。")
+            self.notify("Already the current session.")
             return
         self._switch_session(matched["id"])
 
     def _show_status(self) -> None:
         if not self.runtime.has_session:
-            self.add_card("新会话尚未创建，发送第一条消息后生成。")
+            self.add_card("The session is not created yet; it appears after your first message.")
             return
         info = self.runtime.status()
         percent = info["estimated_tokens"] / max(info["context_window"], 1)
         self.add_card(
-            f"会话：{info['session_id']} · {info['title']}\n"
-            f"模型：{info['model']}\n"
-            f"检索：{info['retrieval']}\n"
-            f"上下文：{format_tokens(info['estimated_tokens'])}/{format_tokens(info['context_window'])}（{percent:.0%}）\n"
-            f"摘要：{info['summaries']} 段 / {info['summary_chars']} 字 · 已覆盖 {info['covered_records']} 条记录\n"
-            f"待确认：{info['pending']} 条",
-            "状态",
+            f"Session: {info['session_id']} · {info['title']}\n"
+            f"Model: {info['model']}\n"
+            f"Retrieval: {info['retrieval']}\n"
+            f"Context: {format_tokens(info['estimated_tokens'])}/{format_tokens(info['context_window'])} ({percent:.0%})\n"
+            f"Summary: {info['summaries']} segments / {info['summary_chars']} chars · covering {info['covered_records']} records\n"
+            f"Pending: {info['pending']}",
+            "Status",
         )
 
     def _run_compact(self) -> None:
@@ -247,7 +247,7 @@ class ChatCommandsMixin:
         try:
             events = self.runtime.force_compact()
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"压缩失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Compaction failed: {exc}")
             return
         self.call_from_thread(self._after_compact, events)
 
@@ -273,11 +273,11 @@ class ChatCommandsMixin:
         try:
             result = self.service.memorize(text, source=source)
             message = (
-                f"写入 {len(result.admitted)} 条，待确认 {len(result.queued)} 条，"
-                f"重复 {len(result.duplicates)} 条，拦截 {len(result.blocked)} 条"
+                f"Wrote {len(result.admitted)}, pending {len(result.queued)}, "
+                f"duplicates {len(result.duplicates)}, blocked {len(result.blocked)}"
             )
         except Exception as exc:
-            message = f"写入失败：{exc}"
+            message = f"Write failed: {exc}"
         self.call_from_thread(self._after_remember, message)
 
     def _after_remember(self, message: str) -> None:
@@ -303,17 +303,17 @@ class ChatCommandsMixin:
         try:
             options = actions.model_options(self.service, refresh=refresh)
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"获取模型列表失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Failed to fetch models: {exc}")
             return
         entries = [(option.label, (option.provider, option.model), option.current) for option in options]
-        entries.append(("↻ 刷新模型列表", ("__refresh__", ""), False))
-        entries.append(("自定义模型…", ("__custom__", ""), False))
+        entries.append(("↻ Refresh models", ("__refresh__", ""), False))
+        entries.append(("Custom model…", ("__custom__", ""), False))
         self.call_from_thread(self._show_model_picker, entries)
 
     def _show_model_picker(self, entries: list[tuple]) -> None:
         self._set_busy(False)
         self.push_screen(
-            PickScreen(f"当前模型：{self.runtime.model_label}", entries, self._model_picked)
+            PickScreen(f"Current model: {self.runtime.model_label}", entries, self._model_picked)
         )
 
     def _model_picked(self, value) -> None:
@@ -327,7 +327,7 @@ class ChatCommandsMixin:
         if provider == "__custom__":
             current = self.service.config.llm
             self.push_screen(
-                TextInputScreen("模型名称", default=current.model, on_result=self._model_custom)
+                TextInputScreen("Model name", default=current.model, on_result=self._model_custom)
             )
             return
         message = actions.apply_model(self.service, self.runtime, provider, model)
@@ -348,11 +348,11 @@ class ChatCommandsMixin:
     def _pick_reasoning(self) -> None:
         options = actions.reasoning_options(self.service)
         if not options:
-            self.add_card(f"{self.runtime.model_label} 不支持思考强度参数，可用 /models 换支持 reasoning 的模型。")
+            self.add_card(f"{self.runtime.model_label} does not support reasoning effort; use /models to switch to a reasoning-capable model.")
             return
         current = self.service.config.llm.reasoning_effort or ""
         entries = [(label, value, value == current) for value, label in options]
-        self.push_screen(PickScreen(f"当前思考强度：{current or '默认'}", entries, self._reasoning_picked))
+        self.push_screen(PickScreen(f"Reasoning effort: {current or 'default'}", entries, self._reasoning_picked))
 
     def _reasoning_picked(self, value) -> None:
         if value is None:
@@ -364,8 +364,8 @@ class ChatCommandsMixin:
     def _pick_context(self) -> None:
         current = self.service.config.chat.context_window
         entries = [(format_tokens(size), size, size == current) for size in actions.context_options(self.service)]
-        entries.append(("自定义…", 0, False))
-        self.push_screen(PickScreen(f"当前上下文：{format_tokens(current)}", entries, self._context_picked))
+        entries.append(("Custom…", 0, False))
+        self.push_screen(PickScreen(f"Context window: {format_tokens(current)}", entries, self._context_picked))
 
     def _context_picked(self, value) -> None:
         if value is None:
@@ -374,7 +374,7 @@ class ChatCommandsMixin:
         if value == 0:
             current = self.service.config.chat.context_window
             self.push_screen(
-                TextInputScreen("上下文长度（token）", default=str(current), on_result=self._context_custom)
+                TextInputScreen("Context window (tokens)", default=str(current), on_result=self._context_custom)
             )
             return
         self.add_card(actions.apply_context(self.service, value))
@@ -388,7 +388,7 @@ class ChatCommandsMixin:
         except ValueError:
             size = 0
         if size <= 0:
-            self.add_card("上下文需要是正整数（token）。")
+            self.add_card("Context window must be a positive integer (tokens).")
             self.query_one("#input", Input).focus()
             return
         self.add_card(actions.apply_context(self.service, size))

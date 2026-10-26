@@ -355,7 +355,7 @@ def test_agent_search_tool_returns_notice_and_results(tmp_path):
     assert outcome.ok is True
     assert outcome.content.startswith(SEARCH_NOTICE)
     assert outcome.data["results"][0]["url"] == "https://example.com"
-    assert "1 条" in outcome.display
+    assert "1 results" in outcome.display
 
 
 def test_search_router_is_built_from_config(tmp_path):

@@ -32,7 +32,7 @@ from .session_ui import visible_sessions
 
 
 class ChatApp(ChatCommandsMixin, App):
-    TITLE = "quiet-memo — 个人记忆"
+    TITLE = "quiet-memo — Personal Memory"
 
     CSS = """
     $accent: #8FAECB;
@@ -104,8 +104,8 @@ class ChatApp(ChatCommandsMixin, App):
     """
 
     BINDINGS = [
-        ("ctrl+q", "quit", "退出"),
-        ("ctrl+b", "toggle_sidebar", "折叠/展开会话栏"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+b", "toggle_sidebar", "Toggle sidebar"),
     ]
 
     def __init__(
@@ -134,13 +134,13 @@ class ChatApp(ChatCommandsMixin, App):
                 with Horizontal(id="sidebar-head"):
                     yield Static("quiet-memo", id="brand")
                     yield SidebarToggle("«", id="hide-sidebar")
-                yield NewSessionButton("＋ 新会话", id="new-session")
+                yield NewSessionButton("+ New session", id="new-session")
                 yield ListView(id="sessions")
             with Vertical(id="main"):
                 yield SidebarToggle("»", id="show-sidebar")
                 yield VerticalScroll(id="chat")
                 yield CommandPalette()
-                yield BarInput(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
+                yield BarInput(placeholder="Message, / commands, Ctrl+B sidebar", id="input")
                 yield Static("", id="status")
 
     def on_mount(self) -> None:
@@ -167,10 +167,10 @@ class ChatApp(ChatCommandsMixin, App):
         try:
             result = ensure_search_daemon(self.service.config.search.base_url)
         except Exception as exc:
-            self.call_from_thread(self.notify, f"联网搜索未启动：{exc}")
+            self.call_from_thread(self.notify, f"Web search did not start: {exc}")
             return
         if result == "started":
-            self.call_from_thread(self.notify, "联网搜索已启动")
+            self.call_from_thread(self.notify, "Web search started")
 
     def _run_catchup(self) -> None:
         """启动补沉淀：扫描异常终止/抽取失败的会话并补记，同时提交未保存的 vault 变更。
@@ -194,7 +194,7 @@ class ChatApp(ChatCommandsMixin, App):
             result = self.runtime.consolidate_pending()
             auto_commit = self.service.commit_pending_changes()
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"启动补记检查失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Startup catch-up failed: {exc}")
             return
         self.call_from_thread(self._after_catchup, result, auto_commit)
 
@@ -202,30 +202,30 @@ class ChatApp(ChatCommandsMixin, App):
         try:
             commit = self.service.commit_pending_changes()
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"启动自动提交失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Startup auto-commit failed: {exc}")
             return
         if commit:
             self.call_from_thread(self._after_background_commit, commit)
 
     def _after_background_commit(self, commit: str) -> None:
-        self.notify(f"已自动提交 vault 未保存变更：{commit}")
+        self.notify(f"Auto-committed uncommitted vault changes: {commit}")
         self.refresh_sessions()
 
     def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
         self._set_busy(False)
         if auto_commit:
-            self.notify(f"已自动提交 vault 未保存变更：{auto_commit}")
+            self.notify(f"Auto-committed uncommitted vault changes: {auto_commit}")
             self.refresh_sessions()
         if result["consolidated"] or result["errors"]:
             parts = []
             if result["consolidated"]:
                 parts.append(
-                    f"补记 {result['consolidated']} 个未收尾会话："
-                    f"写入 {result['admitted']} 条，待确认 {result['queued']} 条"
+                    f"Consolidated {result['consolidated']} unfinished session(s): "
+                    f"{result['admitted']} written, {result['queued']} pending"
                 )
             for error in result["errors"]:
-                parts.append(f"补记失败 {error}")
-            self.add_card("\n".join(parts), "启动检查")
+                parts.append(f"Catch-up failed: {error}")
+            self.add_card("\n".join(parts), "Startup check")
             self.refresh_sessions()
             self.refresh_pending()
             self.update_status()
@@ -256,12 +256,12 @@ class ChatApp(ChatCommandsMixin, App):
         last_date = None
         for row in visible_sessions(self.sessions.list(100, with_tokens=False)):
             stamp = row.get("updated_at") or row.get("started_at") or ""
-            date = stamp[:10] or "未知日期"
+            date = stamp[:10] or "Unknown date"
             if date != last_date:
                 view.append(ListItem(Label(date, classes="group-label"), disabled=True))
                 last_date = date
             time_text = stamp[11:16] if len(stamp) >= 16 else ""
-            meta = f"{time_text} · {row['messages']} 条" if time_text else f"{row['messages']} 条"
+            meta = f"{time_text} · {row['messages']} msgs" if time_text else f"{row['messages']} msgs"
             item = SessionItem({**row, "meta": meta})
             if row["id"] == current_id:
                 item.add_class("current")
@@ -277,7 +277,7 @@ class ChatApp(ChatCommandsMixin, App):
             return
         row = event.item.row
         if self.runtime.has_session and row["id"] == self.runtime.current.id:
-            self.notify("已经是当前会话。")
+            self.notify("Already the current session.")
             self.query_one("#input", Input).focus()
             return
         self._switch_session(row["id"])
@@ -361,7 +361,7 @@ class ChatApp(ChatCommandsMixin, App):
                 label = f"{session.id} · {session.title()}"
         except Exception as exc:
             # 会话文件损坏/被删等异常不能让 busy 卡死：留在原会话并提示。
-            self.call_from_thread(self._finish_error, f"会话切换失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Session switch failed: {exc}")
             return
         self.call_from_thread(self._after_session_switch, stats, label)
         # 沉淀延后到后台：刚切走的会话标记 distill_deferred，这里立即补；
@@ -381,21 +381,21 @@ class ChatApp(ChatCommandsMixin, App):
         self.update_status()
         if deferred["consolidated"]:
             self.notify(
-                f"上一会话已后台沉淀：写入 {deferred['admitted']} 条，待确认 {deferred['queued']} 条"
+                f"Previous session distilled in background: {deferred['admitted']} written, {deferred['queued']} pending"
             )
         for error in deferred["errors"]:
-            self.notify(f"后台沉淀失败：{error}")
+            self.notify(f"Background distillation failed: {error}")
 
     def _after_session_switch(self, stats: dict, label: str | None) -> None:
         self._clear_chat()
         if label is None:
             self.add_welcome()
-            message = "新会话 · 发送第一条消息后创建"
+            message = "New session · created after your first message"
         else:
             self.build_transcript()
-            message = f"已恢复 {label}"
+            message = f"Resumed {label}"
         if stats.get("admitted") or stats.get("queued"):
-            message += f"（上一会话沉淀：写入 {stats['admitted']} 条，待确认 {stats['queued']} 条）"
+            message += f" (previous session distilled: {stats['admitted']} written, {stats['queued']} pending)"
         self.refresh_sessions()
         self.refresh_pending()
         self.update_status()
@@ -406,12 +406,12 @@ class ChatApp(ChatCommandsMixin, App):
 
     def confirm_delete_session(self, row: dict) -> None:
         if self.runtime.has_session and row["id"] == self.runtime.current.id:
-            self.notify("当前会话不能删除，先 /new 再处理。")
+            self.notify("Cannot delete the current session; use /new first.")
             return
         self.push_screen(
             PickScreen(
-                f"删除会话「{row['title']}」？不可恢复",
-                [("确认删除", True), ("取消", False)],
+                f"Delete session \"{row['title']}\"? This cannot be undone",
+                [("Delete", True), ("Cancel", False)],
                 partial(self._delete_session_result, row),
             )
         )
@@ -424,9 +424,9 @@ class ChatApp(ChatCommandsMixin, App):
         if self.sessions.exists(row["id"]):
             self.sessions.delete(row["id"])
             self.refresh_sessions()
-            self.notify("已删除会话。")
+            self.notify("Session deleted.")
         else:
-            self.notify("会话已不存在。")
+            self.notify("Session no longer exists.")
         # 从会话选择器里删除时，同步刷新底层选择器的列表
         for screen in self.screen_stack:
             if isinstance(screen, SessionPickerScreen):
@@ -448,17 +448,17 @@ class ChatApp(ChatCommandsMixin, App):
     def add_welcome(self) -> None:
         total = self.service.config.chat.context_window
         self.add_card(
-            "安静的个人记忆库 · 发送第一条消息后创建会话\n"
+            "A quiet personal memory vault · a session is created after your first message\n"
             f"◆ {self.runtime.model_label} · {self.service.retrieval_mode}"
-            f" · 上下文 {format_tokens(total)}\n"
-            "/help 命令 · /models 模型 · Ctrl+B 折叠侧栏 · Ctrl+Q 退出"
+            f" · context {format_tokens(total)}\n"
+            "/help commands · /models models · Ctrl+B sidebar · Ctrl+Q quit"
         )
 
     def build_transcript(self) -> None:
         session = self.runtime.current
         summary = session.summary_text()
         if summary:
-            self.add_markdown_card(summary, title="此前摘要")
+            self.add_markdown_card(summary, title="Earlier summary")
         records = [
             record
             for record in session.records_after_summary()
@@ -466,7 +466,7 @@ class ChatApp(ChatCommandsMixin, App):
             and str(record.get("content") or "").strip()
         ]
         if len(records) > 40:
-            self.add_card(f"更早的 {len(records) - 40} 条记录已省略")
+            self.add_card(f"{len(records) - 40} earlier records omitted")
             records = records[-40:]
         for record in records:
             content = str(record.get("content"))
@@ -482,7 +482,7 @@ class ChatApp(ChatCommandsMixin, App):
     def add_user_turn(self, content: str, stamp: str | None = None) -> None:
         chat = self._chat()
         if stamp:
-            chat.mount(Static(f"我 · {stamp}", classes="who-user"))
+            chat.mount(Static(f"You · {stamp}", classes="who-user"))
         # 容器构造时直接带子组件，避免“先挂载容器再补挂子组件”的时序问题。
         chat.mount(Vertical(Static(content, classes="bubble"), classes="user-turn"))
         self._scroll_end()
@@ -490,14 +490,14 @@ class ChatApp(ChatCommandsMixin, App):
     def add_assistant_turn(self, content: str, stamp: str, meta: str | None = None) -> None:
         chat = self._chat()
         chat.mount(Static(f"quiet-memo · {stamp}", classes="who-ai"))
-        chat.mount(Markdown(content or "（空回复）", classes="reply"))
+        chat.mount(Markdown(content or "(empty reply)", classes="reply"))
         if meta:
             chat.mount(Static(meta, classes="meta"))
         chat.mount(Static("", classes="divider"))
         self._scroll_end()
 
     def add_event(self, event: str) -> None:
-        memo = event.startswith(("写入", "已更正", "已删除"))
+        memo = event.startswith(("Saved", "Corrected", "Deleted"))
         self._chat().mount(
             Static(f"✓ {event}" if memo else f"┃ {event}", classes="event-card memo" if memo else "event-card")
         )
@@ -531,12 +531,12 @@ class ChatApp(ChatCommandsMixin, App):
         used_text = format_tokens(used) if used else "0"
         text = (
             f"[#d0d0d0]◆ {self.runtime.model_label}[/] [#5a5f6c]·[/] [#8a8f9c]{self.service.retrieval_mode}[/]"
-            f"   [#5a5f6c]上下文[/] {bar} [#8a8f9c]{used_text}/{format_tokens(total)}[/]"
+            f"   [#5a5f6c]Context[/] {bar} [#8a8f9c]{used_text}/{format_tokens(total)}[/]"
         )
         if self.pending_count:
-            text += f"   [#D9A66C]待确认 {self.pending_count}[/]"
+            text += f"   [#D9A66C]Pending {self.pending_count}[/]"
         if percent >= self.runtime.config.compact_threshold:
-            text += " [#D9A66C]⚠ 下轮压缩[/]"
+            text += " [#D9A66C]⚠ compact next turn[/]"
         self.query_one("#status", Static).update(text)
 
     def _set_busy(self, busy: bool) -> None:
@@ -595,10 +595,10 @@ class ChatApp(ChatCommandsMixin, App):
             self.call_from_thread(self._finish_error, str(exc))
             return
         except Exception as exc:  # 界面不因单轮失败退出
-            self.call_from_thread(self._finish_error, f"调用失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Request failed: {exc}")
             return
         elapsed = time.monotonic() - started
-        meta = [f"{reply.steps} 步", f"{reply.estimated_tokens} tok"]
+        meta = [f"{reply.steps} steps", f"{reply.estimated_tokens} tok"]
         if reply.usage.cost_usd:
             meta.append(f"${reply.usage.cost_usd:.4f}")
         meta.append(f"{elapsed:.1f}s")
@@ -634,7 +634,7 @@ class ChatApp(ChatCommandsMixin, App):
     def _finish_reply(self, content: str, stamp: str, meta: str) -> None:
         if self._stream_widget is not None:
             # 流式已实时渲染正文：就地定稿并补 meta/分隔线，不再重复挂载。
-            self._stream_close(content or "（空回复）")
+            self._stream_close(content or "(empty reply)")
             chat = self._chat()
             if meta:
                 chat.mount(Static(meta, classes="meta"))
@@ -651,7 +651,7 @@ class ChatApp(ChatCommandsMixin, App):
     def _finish_error(self, message: str) -> None:
         if self._stream_widget is not None:
             # 中途断流：保留已生成的半截并显式标注，不静默吞掉。
-            interrupted = self._stream_buffer + "\n\n*（生成中断）*"
+            interrupted = self._stream_buffer + "\n\n*(generation interrupted)*"
             self._stream_close(interrupted)
             self._chat().mount(Static("", classes="divider"))
             self._scroll_end()

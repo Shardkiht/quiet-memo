@@ -244,8 +244,8 @@ class LiteLLMChatModel:
     def chat(self, messages: list[dict], tools: list[dict], on_delta=None) -> AssistantTurn:
         if not self.config.api_key():
             raise ChatModelError(
-                f"未配置 LLM API Key，请设置环境变量 {self.config.api_key_env}，"
-                "或运行 qm setup 保存到系统凭据。"
+                f"LLM API key is not configured. Set {self.config.api_key_env} "
+                "or run qm setup to save it to system credentials."
             )
         litellm = _litellm()
         if on_delta is None:
