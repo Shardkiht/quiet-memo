@@ -74,6 +74,47 @@ def model_options(service: MemoryService, refresh: bool = False) -> list[ModelOp
     return options
 
 
+def provider_options(service: MemoryService) -> list[tuple[str, tuple[str, str], bool]]:
+    """供应商配置项：(菜单文案, (provider key, 短名), 是否当前供应商)。"""
+    from ..infra.providers import PRESETS, has_api_key, provider_label
+
+    current = service.config.llm.provider
+    options: list[tuple[str, tuple[str, str], bool]] = []
+    for preset in PRESETS:
+        if preset.key == "custom":
+            continue
+        state = "configured" if has_api_key(preset) else "add API key"
+        label = provider_label(preset.key)
+        options.append(
+            (f"{label} · {state}", (preset.key, label), preset.key == current)
+        )
+    return options
+
+
+def configure_provider(
+    service: MemoryService,
+    runtime: AgentRuntime,
+    provider: str,
+    api_key: str,
+) -> str:
+    """保存厂商 Key 后切到其默认模型；不把 Key 写进配置文件。"""
+    from ..infra.providers import PRESETS, provider_label, save_api_key
+
+    preset = next((item for item in PRESETS if item.key == provider), None)
+    if preset is None or preset.key == "custom":
+        return f"Unknown provider: {provider}"
+    key = api_key.strip()
+    if not key:
+        return "API key is empty; nothing changed."
+    if not save_api_key(preset.api_key_env, key):
+        return (
+            "Could not save the API key to system credentials. "
+            f"Set {preset.api_key_env} in your environment instead."
+        )
+    message = apply_model(service, runtime, preset.key, preset.model)
+    return f"{provider_label(preset.key)} API key saved. {message}"
+
+
 def apply_model(
     service: MemoryService,
     runtime: AgentRuntime,

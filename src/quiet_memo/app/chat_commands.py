@@ -31,7 +31,7 @@ class ChatCommandsMixin:
         elif command == "/context":
             self._pick_context()
         elif command == "/setup":
-            self.add_card("Full configuration requires qm setup in a terminal; the wizard cannot start inside this UI.")
+            self.add_card("Preset providers can be configured in /model; full setup (custom endpoints, vault) requires qm setup in a terminal.")
         elif command == "/new":
             self._new_session()
         elif command in ("/sessions", "/resume"):
@@ -308,6 +308,7 @@ class ChatCommandsMixin:
         entries = [(option.label, (option.provider, option.model), option.current) for option in options]
         entries.append(("↻ Refresh models", ("__refresh__", ""), False))
         entries.append(("Custom model…", ("__custom__", ""), False))
+        entries.append(("Configure provider…", ("__provider__", ""), False))
         self.call_from_thread(self._show_model_picker, entries)
 
     def _show_model_picker(self, entries: list[tuple]) -> None:
@@ -331,7 +332,38 @@ class ChatCommandsMixin:
                 TextInputScreen("Model name", default=current.model, on_result=self._model_custom)
             )
             return
+        if provider == "__provider__":
+            self.push_screen(
+                PickScreen(
+                    "Configure provider",
+                    actions.provider_options(self.service),
+                    self._provider_picked,
+                )
+            )
+            return
         message = actions.apply_model(self.service, self.runtime, provider, model)
+        self.add_card(message)
+        self.update_status()
+        self.query_one("#input", Input).focus()
+
+    def _provider_picked(self, value) -> None:
+        if value is None:
+            self.query_one("#input", Input).focus()
+            return
+        provider_key, label = value
+        self.push_screen(
+            TextInputScreen(
+                f"{label} API key",
+                password=True,
+                on_result=partial(self._provider_key_entered, provider_key),
+            )
+        )
+
+    def _provider_key_entered(self, provider_key: str, api_key) -> None:
+        if not api_key:
+            self.query_one("#input", Input).focus()
+            return
+        message = actions.configure_provider(self.service, self.runtime, provider_key, api_key)
         self.add_card(message)
         self.update_status()
         self.query_one("#input", Input).focus()
@@ -349,7 +381,7 @@ class ChatCommandsMixin:
     def _pick_reasoning(self) -> None:
         options = actions.reasoning_options(self.service)
         if not options:
-            self.add_card(f"{self.runtime.model_label} does not support reasoning effort; use /models to switch to a reasoning-capable model.")
+            self.add_card(f"{self.runtime.model_label} does not support reasoning effort; use /model to switch to a reasoning-capable model.")
             return
         current = self.service.config.llm.reasoning_effort or ""
         entries = [(label, value, value == current) for value, label in options]

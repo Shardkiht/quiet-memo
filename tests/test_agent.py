@@ -323,6 +323,71 @@ def test_model_options_lists_current_first(service, monkeypatch):
     assert {option.provider for option in options} == {"deepseek"}
 
 
+def test_provider_options_mark_current_and_unconfigured(service):
+    from quiet_memo.app import actions
+
+    options = actions.provider_options(service)
+    by_key = {value[0]: (label, current) for label, value, current in options}
+
+    assert by_key["deepseek"][1] is True
+    assert by_key["siliconflow"] == ("SiliconFlow · add API key", False)
+
+
+def test_configure_provider_saves_key_and_switches_model(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from quiet_memo.app import actions
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    config_path = tmp_path / "quiet-memo.toml"
+    service.config_path = config_path
+    keys: dict[str, str] = {}
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service_name, name: keys.get(name)
+    fake.set_password = lambda service_name, name, value: keys.__setitem__(name, value)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    message = actions.configure_provider(service, runtime, "siliconflow", "sk-test")
+
+    assert "SiliconFlow" in message
+    assert keys["SILICONFLOW_API_KEY"] == "sk-test"
+    assert service.config.llm.provider == "siliconflow"
+    assert service.config.llm.model == "deepseek-ai/DeepSeek-V3"
+    assert runtime.model_label == "siliconflow/deepseek-ai/DeepSeek-V3"
+    config_text = config_path.read_text(encoding="utf-8")
+    assert 'provider = "siliconflow"' in config_text
+    assert "sk-test" not in config_text
+
+
+def test_configure_provider_keeps_state_when_keyring_fails(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from quiet_memo.app import actions
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    config_path = tmp_path / "quiet-memo.toml"
+    service.config_path = config_path
+    fake = types.ModuleType("keyring")
+
+    def locked(service_name, name):
+        return None
+
+    def fail(service_name, name, value):
+        raise RuntimeError("keyring locked")
+
+    fake.get_password = locked
+    fake.set_password = fail
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    message = actions.configure_provider(service, runtime, "siliconflow", "sk-test")
+
+    assert "Could not save" in message and "SILICONFLOW_API_KEY" in message
+    assert service.config.llm.provider == "deepseek"
+    assert not config_path.exists()
+
+
 def test_apply_reasoning_updates_config_hot(tmp_path, monkeypatch, service):
     from quiet_memo.app import actions
 

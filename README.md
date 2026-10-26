@@ -59,7 +59,7 @@ uv run qm
 uv run quietmemo        # 同上，等价别名
 ```
 
-首次使用先运行 `uv run qm setup` 配置模型和 API Key，也可以在对话里输入 `/setup`。
+首次使用先运行 `uv run qm setup` 配置模型和 API Key；进入对话后也可以在任何时候用 `/model` 为内置厂商补录或更新 API Key。
 
 `qm setup` 会写入配置文件（默认 `quiet-memo.toml`），初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
 
@@ -145,10 +145,10 @@ auto_start = true             # 打开 TUI 时后台预热 daemon，不阻塞界
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
-| `/model` | 在 TUI 内切换模型（只列已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/model refresh` 强制刷新） |
+| `/model` | 在 TUI 内切换模型，或选择内置供应商录入/更新 API Key；模型列表只显示已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/model refresh` 强制刷新 |
 | `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
-| `/setup` | 提示在终端运行 `qm setup`（配置向导不在对话界面内） |
+| `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 可直接在 `/model` 配置） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |

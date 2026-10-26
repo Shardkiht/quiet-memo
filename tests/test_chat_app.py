@@ -152,6 +152,61 @@ async def test_command_palette_columns_align(tmp_path):
         assert len(starts) == 1
 
 
+async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from textual.widgets import Label, ListView
+
+    keys: dict[str, str] = {}
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service_name, name: keys.get(name)
+    fake.set_password = lambda service_name, name, value: keys.__setitem__(name, value)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    app = build_app(tmp_path, [])
+    app.service.config_path = tmp_path / "quiet-memo.toml"
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "/model"
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if app.screen.__class__.__name__ == "PickScreen":
+                break
+
+        listing = app.screen.query_one("#pick-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in listing.children]
+        listing.index = labels.index("Configure provider…")
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if "Configure provider" in str(app.screen.query_one(".pick-title").render()):
+                break
+
+        providers = app.screen.query_one("#pick-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in providers.children]
+        providers.index = next(i for i, label in enumerate(labels) if label.startswith("SiliconFlow"))
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if app.screen.__class__.__name__ == "TextInputScreen":
+                break
+
+        key_input = app.screen.query_one("#pick-input", Input)
+        assert key_input.password
+        key_input.value = "sk-test"
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if app.service.config.llm.provider == "siliconflow":
+                break
+
+        assert keys["SILICONFLOW_API_KEY"] == "sk-test"
+        assert app.service.config.llm.model == "deepseek-ai/DeepSeek-V3"
+        assert not app.busy
+
+
 async def test_ctrl_b_toggles_sidebar(tmp_path):
     from textual.containers import Vertical
 

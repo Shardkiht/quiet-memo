@@ -59,7 +59,7 @@ uv run qm
 uv run quietmemo        # Same as above; equivalent alias
 ```
 
-On first use, run `uv run qm setup` to configure the model and API key, or type `/setup` in chat.
+On first use, run `uv run qm setup` to configure the model and API key. Once in a chat, you can also use `/model` at any time to add or update the API key for a built-in provider.
 
 `qm setup` writes the config file (default: `quiet-memo.toml`), initializes the vault, and optionally runs a connection test. Keys can also be provided through environment variables, which take precedence over keyring:
 
@@ -145,10 +145,10 @@ In-session commands:
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
-| `/model` | Switch models inside the TUI (only lists providers with configured keys, showing readable name/context/reasoning; the list is cached for 12 hours; `/model refresh` forces a refresh) |
+| `/model` | Switch models inside the TUI, or select a built-in provider to add/update its API key. The model list only shows providers with configured keys and displays readable names/context/reasoning; the list is cached for 12 hours, and `/model refresh` forces a refresh |
 | `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
-| `/setup` | Reminds you to run `qm setup` in the terminal (the setup wizard is not in the chat UI) |
+| `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (built-in provider keys can be configured directly via `/model`) |
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |

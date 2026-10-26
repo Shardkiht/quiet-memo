@@ -17,10 +17,10 @@ SLASH_COMMANDS = [
     ("compact", "/compact", "Compact context"),
     ("summary", "/summary", "Show summary"),
     ("status", "/status", "Session status"),
-    ("model", "/model [refresh]", "Switch model"),
+    ("model", "/model [refresh]", "Models & providers"),
     ("think", "/think", "Reasoning effort"),
     ("context", "/context", "Context window"),
-    ("setup", "/setup", "Configure provider"),
+    ("setup", "/setup", "Run setup in terminal"),
     ("rename", "/rename <title>", "Rename session"),
     ("recall", "/recall <query>", "Search memories"),
     ("remember", "/remember <text>", "Save memory"),
@@ -264,16 +264,17 @@ class TextInputScreen(ModalScreen):
 
     BINDINGS = [("escape", "cancel", "Cancel")]
 
-    def __init__(self, title: str, default: str = "", on_result=None) -> None:
+    def __init__(self, title: str, default: str = "", on_result=None, password: bool = False) -> None:
         super().__init__()
         self._title = title
         self._default = default
         self._on_result = on_result
+        self._password = password
 
     def compose(self) -> ComposeResult:
         with Vertical(id="pick-card"):
             yield Static(self._title, classes="pick-title")
-            yield Input(value=self._default, id="pick-input")
+            yield Input(value=self._default, id="pick-input", password=self._password)
             yield Static("Enter confirm · ESC cancel", classes="pick-hint")
 
     def on_mount(self) -> None:
