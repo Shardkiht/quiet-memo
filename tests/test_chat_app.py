@@ -5,6 +5,7 @@ from textual.widgets import Input, Static
 from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.app.chat_app import ChatApp, SidebarToggle
+from quiet_memo.app.chat_input import BarInput
 from quiet_memo.app.chat_widgets import SLASH_COMMANDS
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig, SearchConfig
 from quiet_memo.llm import AssistantTurn
@@ -307,6 +308,22 @@ async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
                 break
         assert app.busy is False
         assert not app.service.repo.has_changes()
+
+
+async def test_input_cursor_is_vertical_bar(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", Input)
+        assert isinstance(widget, BarInput)
+        assert "│" in widget.render_line(0).text
+        assert not widget.get_component_rich_style("input--cursor").underline
+
+        widget.value = "测试"
+        await pilot.pause()
+        rendered = widget.render_line(0).text
+        assert "│" in rendered
+        assert "测试" in rendered
 
 
 async def test_auto_start_warms_search_in_background(tmp_path, monkeypatch):

@@ -19,6 +19,7 @@ from ..infra.tokens import format_tokens
 from ..llm import ChatModelError
 from ..memory.service import MemoryService
 from .chat_commands import ChatCommandsMixin
+from .chat_input import BarInput
 from .chat_widgets import (
     CommandPalette,
     NewSessionButton,
@@ -79,6 +80,11 @@ class ChatApp(ChatCommandsMixin, App):
     .card { border: round #262933; background: $panel; padding: 0 2; margin: 1 0; color: #c8ccd6; width: 1fr; }
 
     #input { margin: 0 2; }
+    /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */
+    #input > .input--cursor {
+        background: transparent;
+        color: #d6dae2;
+    }
     #status { width: 1fr; height: 1; background: #181a21; color: $muted; padding: 0 2; }
 
     /* 命令面板：浮在输入框上方（覆盖对话区），OpenCode 风格竖排列表 */
@@ -134,7 +140,7 @@ class ChatApp(ChatCommandsMixin, App):
                 yield SidebarToggle("»", id="show-sidebar")
                 yield VerticalScroll(id="chat")
                 yield CommandPalette()
-                yield Input(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
+                yield BarInput(placeholder="发送消息，/ 命令，Ctrl+B 侧栏", id="input")
                 yield Static("", id="status")
 
     def on_mount(self) -> None:
