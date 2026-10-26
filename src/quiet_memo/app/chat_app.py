@@ -54,7 +54,8 @@ class ChatApp(ChatCommandsMixin, App):
     #show-sidebar:hover { color: $accent; }
     #new-session { width: 1fr; height: 3; margin: 0 1 1 1; background: #17181c; color: $muted; border: none; content-align: left middle; padding: 0 1; }
     #new-session:hover { background: #202127; color: $accent; }
-    #sessions { height: 1fr; }
+    /* 列表与 New session 用同一左右外边距；隐藏滚动条，避免出现滚动条时行宽缩 2 格错位 */
+    #sessions { width: 1fr; height: 1fr; margin: 0 1; scrollbar-size-vertical: 0; }
     /* ListItem 默认高度跟随子容器（Vertical 是 1fr 会撑满列表），必须钉死 auto */
     #sessions > ListItem { padding: 0 1; height: auto; }
     #sessions > ListItem > Vertical { height: auto; }

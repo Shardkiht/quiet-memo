@@ -157,6 +157,32 @@ async def test_ctrl_b_toggles_sidebar(tmp_path):
         assert sidebar.display and not expand.display
 
 
+async def test_sidebar_rows_align_with_new_session(tmp_path):
+    # 回归：New session 与会话列表必须同宽同起点；列表滚动时也不能缩窄。
+    app = build_app(tmp_path, [])
+    store = app.sessions
+    for index in range(12):
+        session = store.create()
+        store.rename(session, f"会话 {index}")
+        store.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": f"内容 {index}"},
+        )
+    async with app.run_test(size=(100, 30)) as pilot:
+        for _ in range(60):
+            await pilot.pause()
+            if app.query("#sessions > ListItem"):
+                break
+        new_session = app.query_one("#new-session").region
+        rows = [
+            item.region
+            for item in app.query("#sessions > ListItem")
+            if hasattr(item, "row")
+        ]
+        assert rows
+        assert all(row.x == new_session.x and row.width == new_session.width for row in rows)
+
+
 async def test_sidebar_items_are_compact_and_clickable(tmp_path):
     from quiet_memo.agent.session import new_message_id
     from quiet_memo.app.chat_app import SessionItem
