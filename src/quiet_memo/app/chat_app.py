@@ -68,7 +68,9 @@ class ChatApp(ChatCommandsMixin, App):
     .group-label { color: $faint; padding: 1 1 0 1; }
 
     #main { width: 1fr; layers: base overlay; }
-    #chat { width: 1fr; height: 1fr; padding: 1 3; scrollbar-size-vertical: 1; }
+    #chat { width: 100%; height: 1fr; padding: 1 0 1 3; scrollbar-size-vertical: 1; }
+    /* 右侧留白改由子元素承担，滚动条才能贴在窗口最右侧 */
+    #chat > * { margin-right: 2; }
     .who-user { content-align: right top; color: $faint; width: 1fr; margin-top: 1; }
     .user-turn { width: 1fr; height: auto; align: right top; }
     .bubble { background: #1e2026; color: #d5d6da; padding: 0 2; width: auto; max-width: 68%; height: auto; }

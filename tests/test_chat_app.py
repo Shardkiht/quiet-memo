@@ -495,12 +495,16 @@ async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
 
 
 async def test_chat_scrollbar_is_thin(tmp_path):
-    from textual.containers import VerticalScroll
+    from textual.containers import Vertical, VerticalScroll
 
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert app.query_one("#chat", VerticalScroll).styles.scrollbar_size_vertical == 1
+        chat = app.query_one("#chat", VerticalScroll)
+        assert chat.styles.scrollbar_size_vertical == 1
+        # 滚动条要贴着窗口右缘，而不是停在对话区右侧留白里。
+        assert chat.region.right == app.query_one("#main", Vertical).region.right
+        assert chat.styles.padding.right == 0
 
 
 async def test_input_cursor_is_vertical_bar(tmp_path):
