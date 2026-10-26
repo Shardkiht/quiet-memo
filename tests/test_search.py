@@ -89,3 +89,22 @@ def test_hybrid_gates_literal_mismatch():
 
     hits = hybrid.search(query, 5)
     assert hits[0].text == target.text
+
+
+def test_hybrid_keeps_keyword_hits_for_non_cjk_query():
+    # 非 CJK 查询没有 bigram 信号，字面闸不应把精确命中过滤掉。
+    from quiet_memo.retrieval import HybridRetriever
+    from quiet_memo.retrieval.base import SearchHit
+
+    class Stub:
+        def __init__(self, hits):
+            self.hits = hits
+
+        def search(self, query, limit=10):
+            return self.hits[:limit]
+
+    target = SearchHit(text="Uses Neovim as the daily editor", topic="devices")
+    hybrid = HybridRetriever(Stub([target]), Stub([]))
+
+    hits = hybrid.search("Neovim", 5)
+    assert [hit.text for hit in hits] == [target.text]

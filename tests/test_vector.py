@@ -106,6 +106,18 @@ def test_vector_search_degrades_to_empty_when_embedder_fails(tmp_path):
     assert retriever.search("房子", 3) == []
 
 
+def test_sync_retries_after_embedding_failure(tmp_path):
+    store = seeded_store(tmp_path)
+    embedder = FakeEmbedder(GROUPS, fail=True)
+    retriever = VectorRetriever(store, embedder)
+    assert retriever.search("房子", 3) == []
+
+    # 后端恢复后，即使记忆文件没变也要重新同步，而不是一直返回空。
+    embedder.fail = False
+    hits = retriever.search("房子", 3)
+    assert hits and hits[0].topic == "housing"
+
+
 def test_search_ignores_deleted_entries(tmp_path):
     store = seeded_store(tmp_path)
     entry = store.append("career", "在找后端工作")
@@ -209,6 +221,21 @@ def test_init_vault_gitignores_vector_cache(tmp_path):
     service.init_vault()
 
     assert "vectors.npz" in (tmp_path / "vault" / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_init_vault_appends_gitignore_after_missing_newline(tmp_path):
+    from quiet_memo.memory.service import MemoryService
+
+    config = Config(vault=tmp_path / "vault", retrieval=RetrievalConfig(method="keyword"))
+    service = MemoryService(config)
+    service.store.ensure()
+    (tmp_path / "vault" / ".gitignore").write_text("*.log", encoding="utf-8")
+
+    service.init_vault()
+
+    lines = (tmp_path / "vault" / ".gitignore").read_text(encoding="utf-8").splitlines()
+    assert "*.log" in lines
+    assert ".quiet-memo/vectors.npz" in lines
 
 
 def test_sync_dedupes_duplicate_entry_ids(tmp_path):

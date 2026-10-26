@@ -60,6 +60,7 @@ class VectorRetriever:
         self._entries: list[Entry] = []
         self._matrix: np.ndarray | None = None
         self._fingerprint: tuple | None = None
+        self._degraded = False
 
     def sync(self) -> None:
         """与记忆条目对齐：复用未变更向量，只为新增/变更条目计算 embedding。"""
@@ -93,9 +94,12 @@ class VectorRetriever:
                     raise ValueError("embedding 返回数量与输入不一致")
                 rows.append(_unit(vectors))
         except Exception:
-            # embedding 失败：保留已缓存子集，缺的条目本轮检索不到，下次再补。
+            # embedding 失败：保留已缓存子集，缺的条目本轮检索不到，下次检索重试同步。
+            self._degraded = True
             fresh = []
             rows = [cached[keep]] if keep else []
+        else:
+            self._degraded = False
 
         matrix = np.vstack(rows) if rows else cached[keep] if keep else None
         kept_ids = {ids[index] for index in keep}
@@ -109,9 +113,9 @@ class VectorRetriever:
         if not query:
             return []
         fingerprint = self._file_fingerprint()
-        if fingerprint != self._fingerprint:
-            self._fingerprint = fingerprint
+        if fingerprint != self._fingerprint or self._degraded:
             self.sync()
+            self._fingerprint = fingerprint
         if self._matrix is None or not self._entries:
             return []
         try:
