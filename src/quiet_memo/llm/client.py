@@ -149,6 +149,10 @@ def model_metadata(model: str) -> dict:
 @lru_cache(maxsize=128)
 def supported_params(model: str) -> tuple[str, ...]:
     """读取 LiteLLM 认为该模型支持的 OpenAI 参数。"""
+    # 自定义 OpenAI 兼容端点统一用 openai/ 前缀；LiteLLM 对未知 id 会回退成
+    # 通用 OpenAI 参数表，不能据此判断供应商真的支持 reasoning_effort 等能力。
+    if model.startswith("openai/") and "/" in model[len("openai/"):]:
+        return ()
     litellm = _litellm()
     try:
         return tuple(litellm.get_supported_openai_params(model=model) or ())

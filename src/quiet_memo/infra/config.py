@@ -32,7 +32,8 @@ class LLMConfig:
     def litellm_model(self) -> str:
         provider = (self.provider or "").strip().lower()
         model = (self.model or "").strip()
-        if provider in ("", "custom", "openai-compatible"):
+        # LiteLLM 没有 siliconflow provider；硅基流动走 OpenAI 兼容协议 + api_base。
+        if provider in ("", "custom", "openai-compatible", "siliconflow"):
             return model if model.startswith("openai/") else f"openai/{model}"
         if model.startswith(f"{provider}/"):
             return model

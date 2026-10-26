@@ -20,7 +20,7 @@ def test_litellm_model_names():
     assert LLMConfig(provider="deepseek", model="deepseek-chat").litellm_model() == "deepseek/deepseek-chat"
     assert (
         LLMConfig(provider="siliconflow", model="deepseek-ai/DeepSeek-V3").litellm_model()
-        == "siliconflow/deepseek-ai/DeepSeek-V3"
+        == "openai/deepseek-ai/DeepSeek-V3"
     )
     assert LLMConfig(provider="openai", model="gpt-4o-mini").litellm_model() == "openai/gpt-4o-mini"
     assert (
@@ -186,6 +186,13 @@ def test_litellm_metadata_exposes_context_and_reasoning():
     info = model_metadata("openai/gpt-4o-mini")
     assert info.get("max_input_tokens", 0) > 0
     assert "reasoning_effort" in supported_params("openai/gpt-4o-mini")
+
+
+def test_openai_compatible_model_does_not_claim_openai_params():
+    from quiet_memo.llm import supported_params
+
+    # 硅基流动等自定义端点用 openai/ 前缀；未知 id 不能套用通用 OpenAI 参数表。
+    assert supported_params("openai/deepseek-ai/DeepSeek-V4.1-Flash") == ()
 
 
 def test_provider_model_list_cache(monkeypatch):
