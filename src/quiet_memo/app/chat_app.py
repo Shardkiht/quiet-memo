@@ -87,7 +87,7 @@ class ChatApp(ChatCommandsMixin, App):
     .welcome-meta { color: $faint; margin-top: 1; }
     .welcome-hint { color: #6f7076; margin-top: 2; }
 
-    #input { margin: 0 3 1 3; background: #16171b; border: round #26272d; }
+    #input { margin: 0 3 1 3; background: #16171b; border: round #26272d; border-title-color: #6f7076; border-title-align: left; }
     #input:focus { border: round #4a4b52; }
     /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */
     #input > .input--cursor {

@@ -158,6 +158,8 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
 
     from textual.widgets import Label, ListView
 
+    from quiet_memo.app.chat_widgets import PickScreen
+
     keys: dict[str, str] = {}
     fake = types.ModuleType("keyring")
     fake.get_password = lambda service_name, name: keys.get(name)
@@ -172,21 +174,32 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause()
-            if app.screen.__class__.__name__ == "PickScreen":
-                break
+            # 等模态挂载完成并拿到焦点，再改高亮；否则 on_mount 可能重置 index。
+            if isinstance(app.screen, PickScreen) and app.screen.query("#pick-list"):
+                if app.screen.query_one("#pick-list", ListView).has_focus:
+                    break
 
-        listing = app.screen.query_one("#pick-list", ListView)
+        model_picker = app.screen
+        listing = model_picker.query_one("#pick-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in listing.children]
-        listing.index = labels.index("Configure provider…")
+        configure_index = labels.index("Configure provider…")
+        listing.index = configure_index
+        await pilot.pause()
+        assert listing.index == configure_index
         await pilot.press("enter")
+        # 第一个选择器 dismiss 与下一个 push 不在同一帧，等新屏幕出现再查询。
         for _ in range(100):
             await pilot.pause()
-            if "Configure provider" in str(app.screen.query_one(".pick-title").render()):
-                break
+            if isinstance(app.screen, PickScreen) and app.screen is not model_picker:
+                if app.screen.query(".pick-title"):
+                    break
+        assert "Configure provider" in str(app.screen.query_one(".pick-title").render())
 
         providers = app.screen.query_one("#pick-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in providers.children]
         providers.index = next(i for i, label in enumerate(labels) if label.startswith("SiliconFlow"))
+        providers.focus()
+        await pilot.pause()
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause()
@@ -199,7 +212,7 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
         await pilot.press("enter")
         for _ in range(100):
             await pilot.pause()
-            if app.service.config.llm.provider == "siliconflow":
+            if app.service.config.llm.provider == "siliconflow" and not app.busy:
                 break
 
         assert keys["SILICONFLOW_API_KEY"] == "sk-test"
@@ -505,6 +518,26 @@ async def test_chat_scrollbar_is_thin(tmp_path):
         # 滚动条要贴着窗口右缘，而不是停在对话区右侧留白里。
         assert chat.region.right == app.query_one("#main", Vertical).region.right
         assert chat.styles.padding.right == 0
+
+
+async def test_input_hint_uses_border_not_text(tmp_path):
+    # 回归：提示词留在文字区会和中文输入法的组字内容重叠。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", BarInput)
+        assert widget.placeholder == "│"
+        assert widget.border_title == "Message or /command"
+        assert "Message or /command" not in widget.render_line(0).text
+
+        widget.value = "你好"
+        await pilot.pause()
+        assert widget.border_title is None
+        assert "Message or /command" not in widget.render_line(0).text
+
+        widget.value = ""
+        await pilot.pause()
+        assert widget.border_title == "Message or /command"
 
 
 async def test_input_cursor_is_vertical_bar(tmp_path):
