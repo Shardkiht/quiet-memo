@@ -89,8 +89,7 @@ class NewSessionButton(Static):
     """＋ 新会话：Button 默认 hover 样式（tall 边框 + 整块背景）会盖过虚线框，改 Static 自绘。"""
 
     def on_click(self) -> None:
-        if not self.app.busy:
-            self.app._new_session()
+        self.app._new_session()
 
 
 class SidebarToggle(Static):

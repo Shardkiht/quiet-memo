@@ -301,6 +301,10 @@ class AgentRuntime:
         for session in self.sessions.unconsolidated(limit, exclude=exclude):
             result["scanned"] += 1
             texts = session.user_texts_after_distilled()
+            if not texts:
+                # 空会话没有可抽取内容，直接标记收尾，避免每次启动都重复扫描。
+                self.sessions.append(session, {"type": "consolidated"})
+                continue
             if len(texts) < min_new_messages:
                 continue
             if texts:

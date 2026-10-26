@@ -481,6 +481,21 @@ def test_consolidate_pending_catches_crashed_session(tmp_path):
     assert runtime.consolidate_pending()["scanned"] == 0
 
 
+def test_consolidate_marks_empty_session_without_extraction(tmp_path):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
+    session = runtime.sessions.create()
+
+    result = runtime.consolidate_pending()
+
+    assert result["scanned"] == 1
+    assert result["consolidated"] == 0
+    records = runtime.sessions.load(session.id).records
+    assert any(record.get("type") == "consolidated" for record in records)
+    assert not runtime.sessions.load(session.id).needs_consolidation()
+    assert runtime.consolidate_pending()["scanned"] == 0
+    assert service.store.entries() == []
+
+
 def test_consolidate_pending_skips_current_and_respects_flag(tmp_path):
     runtime, _ = build_runtime(tmp_path, FakeChatModel([]))
     store = runtime.sessions

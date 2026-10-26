@@ -300,12 +300,32 @@ async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
     app = build_app(tmp_path, [])
     app.service.note("启动前未提交的变更", topic="misc")
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(200):
+        for _ in range(300):
             await pilot.pause()
-            if not app.busy:
+            if not app.service.repo.has_changes():
                 break
         assert app.busy is False
         assert not app.service.repo.has_changes()
+
+
+async def test_new_session_click_queues_while_busy(tmp_path):
+    # 回归：忙碌期间点击新会话不能被静默丢弃。
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._set_busy(True)
+        await pilot.click("#new-session")
+
+        assert app._pending_new is True
+
+        app._set_busy(False)
+        app._drain_pending_intent()
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert app._pending_new is False
+        assert app.busy is False
 
 
 async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
@@ -480,7 +500,7 @@ async def test_switch_defers_distill_then_catches_up_in_background(tmp_path):
         assert "distill_deferred" in types
         for _ in range(300):
             await pilot.pause()
-            if counting.calls:
+            if app.service.store.has_text("后台补记的内容"):
                 break
         assert counting.calls >= 1  # 后台补沉淀已执行
         assert app.service.store.has_text("后台补记的内容")

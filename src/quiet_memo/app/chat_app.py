@@ -114,6 +114,7 @@ class ChatApp(ChatCommandsMixin, App):
         self.busy = False
         self.pending_count = 0
         self._pending_switch: str | None = None
+        self._pending_new = False
         self._stream_widget: Markdown | None = None
         self._stream_buffer = ""
         self._stream_flush_scheduled = False
@@ -149,16 +150,18 @@ class ChatApp(ChatCommandsMixin, App):
     def _run_catchup(self) -> None:
         """启动补沉淀：扫描异常终止/抽取失败的会话并补记，同时提交未保存的 vault 变更。
 
-        先同步快扫（纯文件读取）：既无欠账也无未提交变更时跳过，避免常态下短暂禁用输入。
+        会话扫描很便宜；git 查询和提交都放后台，避免启动时阻塞 UI。
         """
         exclude = self.runtime.current.id if self.runtime.has_session else None
         pending = self.sessions.unconsolidated(limit=3, exclude=exclude)
-        dirty = self.service.repo.is_repo and self.service.repo.has_changes()
-        if not pending and not dirty:
+        if pending:
+            self._set_busy(True)
+            self.run_worker(
+                self._catchup_work, group="ask", thread=True, exclusive=True, exit_on_error=False
+            )
             return
-        self._set_busy(True)
         self.run_worker(
-            self._catchup_work, group="ask", thread=True, exclusive=True, exit_on_error=False
+            self._background_commit_work, group="startup", thread=True, exit_on_error=False
         )
 
     def _catchup_work(self) -> None:
@@ -169,6 +172,19 @@ class ChatApp(ChatCommandsMixin, App):
             self.call_from_thread(self._finish_error, f"启动补记检查失败：{exc}")
             return
         self.call_from_thread(self._after_catchup, result, auto_commit)
+
+    def _background_commit_work(self) -> None:
+        try:
+            commit = self.service.commit_pending_changes()
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"启动自动提交失败：{exc}")
+            return
+        if commit:
+            self.call_from_thread(self._after_background_commit, commit)
+
+    def _after_background_commit(self, commit: str) -> None:
+        self.notify(f"已自动提交 vault 未保存变更：{commit}")
+        self.refresh_sessions()
 
     def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
         self._set_busy(False)
@@ -188,10 +204,7 @@ class ChatApp(ChatCommandsMixin, App):
             self.refresh_sessions()
             self.refresh_pending()
             self.update_status()
-        pending_switch = self._pending_switch
-        self._pending_switch = None
-        if pending_switch:
-            self._switch_session(pending_switch)
+        self._drain_pending_intent()
 
     def action_toggle_sidebar(self) -> None:
         self._set_sidebar_visible(not self.query_one("#sidebar", Vertical).display)
@@ -233,8 +246,9 @@ class ChatApp(ChatCommandsMixin, App):
         if not isinstance(event.item, SessionItem):
             return
         if self.busy:
-            # 启动补沉淀等忙碌期间点击会话：记住意图，结束后自动切换，不静默丢弃。
+            # 忙碌期间点击会话：记住意图，结束后自动切换，不静默丢弃。
             self._pending_switch = event.item.row["id"]
+            self._pending_new = False
             return
         row = event.item.row
         if self.runtime.has_session and row["id"] == self.runtime.current.id:
@@ -270,6 +284,10 @@ class ChatApp(ChatCommandsMixin, App):
             self.confirm_delete_session(item.row)
 
     def _new_session(self) -> None:
+        if self.busy:
+            self._pending_new = True
+            self._pending_switch = None
+            return
         self._set_busy(True)
         self.run_worker(
             partial(self._session_work, None),
@@ -280,6 +298,10 @@ class ChatApp(ChatCommandsMixin, App):
         )
 
     def _switch_session(self, session_id: str) -> None:
+        if self.busy:
+            self._pending_switch = session_id
+            self._pending_new = False
+            return
         self._set_busy(True)
         self.run_worker(
             partial(self._session_work, session_id),
@@ -288,6 +310,19 @@ class ChatApp(ChatCommandsMixin, App):
             exclusive=True,
             exit_on_error=False,
         )
+
+    def _drain_pending_intent(self) -> None:
+        """忙碌期间收到的会话意图在空闲后接续执行，最后一次操作优先。"""
+        if self.busy:
+            return
+        if self._pending_new:
+            self._pending_new = False
+            self._new_session()
+            return
+        if self._pending_switch:
+            session_id = self._pending_switch
+            self._pending_switch = None
+            self._switch_session(session_id)
 
     def _session_work(self, session_id: str | None) -> None:
         try:
@@ -342,6 +377,7 @@ class ChatApp(ChatCommandsMixin, App):
         self._set_busy(False)
         self.notify(message)
         self.query_one("#input", Input).focus()
+        self._drain_pending_intent()
 
     def confirm_delete_session(self, row: dict) -> None:
         if self.runtime.has_session and row["id"] == self.runtime.current.id:
@@ -585,6 +621,7 @@ class ChatApp(ChatCommandsMixin, App):
         self.refresh_pending()
         self.update_status()
         self._set_busy(False)
+        self._drain_pending_intent()
 
     def _finish_error(self, message: str) -> None:
         if self._stream_widget is not None:
@@ -596,3 +633,4 @@ class ChatApp(ChatCommandsMixin, App):
         self.add_card(message)
         self.refresh_sessions()
         self._set_busy(False)
+        self._drain_pending_intent()

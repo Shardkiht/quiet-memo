@@ -33,8 +33,7 @@ class ChatCommandsMixin:
         elif command == "/setup":
             self.add_card("完整配置需在终端运行 qm setup，当前界面内无法启动配置向导。")
         elif command == "/new":
-            if not self.busy:
-                self._new_session()
+            self._new_session()
         elif command in ("/sessions", "/resume"):
             if argument and command == "/resume":
                 self._resume_by_query(argument)
@@ -257,6 +256,7 @@ class ChatCommandsMixin:
             self.add_event(event)
         self.update_status()
         self._set_busy(False)
+        self._drain_pending_intent()
 
     def _run_remember(self, text: str) -> None:
         self._set_busy(True)
@@ -285,6 +285,7 @@ class ChatCommandsMixin:
         self.refresh_pending()
         self.update_status()
         self._set_busy(False)
+        self._drain_pending_intent()
 
     # ---------- 设置类选择器（逻辑在 actions.py） ----------
 
