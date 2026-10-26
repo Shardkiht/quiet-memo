@@ -721,6 +721,36 @@ async def test_streaming_keeps_text_before_tool_calls(tmp_path):
         assert first < event < final
 
 
+async def test_tool_event_rows_use_single_border_and_assistant_is_qmo(tmp_path):
+    # 事件行由 CSS 左边框画一条竖线，正文里不再拼前缀；助手标签统一为 qmo。
+    from quiet_memo.llm import ToolCall
+
+    app = build_app(
+        tmp_path,
+        [
+            AssistantTurn(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="recall", arguments={"query": "清淡"})],
+            ),
+            AssistantTurn(content="最终回答"),
+        ],
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "测试事件样式"
+        await pilot.press("enter")
+        for _ in range(300):
+            await pilot.pause()
+            if not app.busy:
+                break
+
+        events = list(app.query(".event-card"))
+        assert events
+        assert all("┃" not in str(event.render()) for event in events)
+        labels = [str(label.render()) for label in app.query(".who-ai")]
+        assert labels and all(label.startswith("qmo") for label in labels)
+
+
 async def test_streaming_error_marks_interruption(tmp_path):
     # 回归（issue #4）：中途断流保留半截内容并显式标注，不静默吞掉。
     app = build_app(tmp_path, [])

@@ -30,6 +30,8 @@ from .chat_widgets import (
 )
 from .session_ui import visible_sessions
 
+ASSISTANT_NAME = "qmo"
+
 
 class ChatApp(ChatCommandsMixin, App):
     TITLE = "quiet-memo — Personal Memory"
@@ -507,7 +509,7 @@ class ChatApp(ChatCommandsMixin, App):
             if record.get("type") == "message" and record.get("role") == "user":
                 self.add_user_turn(content, stamp)
             else:
-                self._chat().mount(Static(f"quiet-memo · {stamp}" if stamp else "quiet-memo", classes="who-ai"))
+                self._chat().mount(Static(f"{ASSISTANT_NAME} · {stamp}" if stamp else ASSISTANT_NAME, classes="who-ai"))
                 self._chat().mount(Markdown(content, classes="reply"))
         self._scroll_end()
 
@@ -521,7 +523,7 @@ class ChatApp(ChatCommandsMixin, App):
 
     def add_assistant_turn(self, content: str, stamp: str, meta: str | None = None) -> None:
         chat = self._chat()
-        chat.mount(Static(f"quiet-memo · {stamp}", classes="who-ai"))
+        chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))
         chat.mount(Markdown(content or "(empty reply)", classes="reply"))
         if meta:
             chat.mount(Static(meta, classes="meta"))
@@ -535,7 +537,7 @@ class ChatApp(ChatCommandsMixin, App):
             self._stream_close(self._stream_buffer)
         memo = event.startswith(("Saved", "Corrected", "Deleted"))
         self._chat().mount(
-            Static(f"✓ {event}" if memo else f"┃ {event}", classes="event-card memo" if memo else "event-card")
+            Static(f"✓ {event}" if memo else event, classes="event-card memo" if memo else "event-card")
         )
         self._scroll_end()
 
@@ -645,7 +647,7 @@ class ChatApp(ChatCommandsMixin, App):
     def _stream_append(self, stamp: str, delta: str) -> None:
         chat = self._chat()
         if self._stream_widget is None:
-            chat.mount(Static(f"quiet-memo · {stamp}", classes="who-ai"))
+            chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))
             self._stream_buffer = ""
             self._stream_widget = Markdown("", classes="reply")
             chat.mount(self._stream_widget)

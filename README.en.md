@@ -29,7 +29,7 @@ Local Markdown · Git-reversible · MCP-callable
 ## Interface preview
 
 ```text
- quiet-memo             │  quiet-memo · 14:32
+ quiet-memo             │  qmo · 14:32
  + New session          │  ┃ recalled "recent plans": 3 hits
                         │  Three things going on: wrapping up the final project,
  2026-10-26             │  job hunting, and a fixed study rhythm.
