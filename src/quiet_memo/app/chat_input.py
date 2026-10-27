@@ -13,9 +13,8 @@ class BarInput(Input):
 
     def __init__(self, *args, **kwargs) -> None:
         # 提示词放边框：中文输入法组字期间 Textual 仍认为值为空，留在文字区会和组字重叠。
-        # 空值只保留占位竖线，组字内容覆盖它不会留下残影。
         hint = kwargs.pop("placeholder", "")
-        kwargs["placeholder"] = "│"
+        kwargs["placeholder"] = ""
         super().__init__(*args, **kwargs)
         self._hint = hint
         self.border_title = hint or None
@@ -26,7 +25,7 @@ class BarInput(Input):
 
     def render_line(self, y: int) -> Strip:
         strip = super().render_line(y)
-        if y != 0 or not self.value or not self.has_focus or not self._cursor_visible:
+        if y != 0 or not self.has_focus or not self._cursor_visible:
             return strip
 
         # 在渲染结果里插竖线，不能改 _value：额外字符会让 Textual 的输入框重绘

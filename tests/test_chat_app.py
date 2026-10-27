@@ -808,7 +808,7 @@ async def test_input_hint_uses_border_not_text(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         widget = app.query_one("#input", BarInput)
-        assert widget.placeholder == "│"
+        assert widget.placeholder == ""
         assert widget.border_title == "Message or /command"
         assert "Message or /command" not in widget.render_line(0).text
 
@@ -838,6 +838,10 @@ async def test_input_cursor_is_vertical_bar(tmp_path):
         assert "测试" in rendered
         # 光标只在渲染层插入；写进 _value 会让 Textual 把输入背景刷到左侧。
         assert "│" not in widget._value.plain
+
+        widget.blur()
+        await pilot.pause()
+        assert "│" not in widget.render_line(0).text
 
 
 async def test_auto_start_warms_search_in_background(tmp_path, monkeypatch):
