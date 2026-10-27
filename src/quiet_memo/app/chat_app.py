@@ -64,35 +64,40 @@ class ChatApp(ChatCommandsMixin, App):
     #sessions > ListItem { padding: 0 1; height: auto; }
     #sessions > ListItem > Vertical { height: auto; }
     .session-title { color: #c2c3c7; width: 1fr; overflow-x: hidden; text-overflow: ellipsis; }
-    .session-meta { color: $faint; }
+    .session-meta { color: #777980; }
     /* 当前会话只用一条左线和轻微底色，避免整行亮色像误选 */
     #sessions > ListItem.-highlight { background: #1c1d22; }
     #sessions > ListItem.current { background: #1b1c21; border-left: heavy $muted; }
     #sessions > ListItem.current.-highlight { background: #22242a; border-left: heavy $accent; }
-    .group-label { color: $faint; padding: 1 1 0 1; }
+    .group-label { color: #777980; padding: 1 1 0 1; }
 
     #main { width: 1fr; layers: base overlay; }
-    #chat { width: 100%; height: 1fr; padding: 1 0 1 3; scrollbar-size-vertical: 1; }
+    #chat {
+        width: 100%; height: 1fr; padding: 1 0 1 3; scrollbar-size-vertical: 1;
+        scrollbar-background: $bg; scrollbar-color: #45464e;
+        scrollbar-color-hover: #63646b; scrollbar-color-active: #83848c;
+    }
     /* 右侧留白改由子元素承担，滚动条才能贴在窗口最右侧 */
     #chat > * { margin-right: 2; }
-    .who-user { content-align: right top; color: $faint; width: 1fr; margin-top: 1; }
+    .who-user { content-align: right top; color: #7c7d84; width: 1fr; margin-top: 1; }
     .user-turn { width: 1fr; height: auto; align: right top; }
     .bubble { background: #1e2026; color: #d5d6da; padding: 0 2; width: auto; max-width: 68%; height: auto; }
-    .who-ai { color: $accent; margin-top: 1; width: 1fr; }
-    .reply { margin: 0; height: auto; }
-    .event-card { border-left: heavy $dim; color: $muted; padding: 0 1; width: 1fr; }
-    .event-card.memo { border-left: heavy $muted; color: $muted; }
+    .who-ai { color: $accent; text-style: bold; margin-top: 1; width: 1fr; }
+    .reply { color: #d0d1d5; margin: 0; height: auto; }
+    /* 工具事件用薄边线和弱底色分组，不与正式回复争夺注意力 */
+    .event-card { border-left: solid $dim; background: #15161a; color: $muted; padding: 0 1; width: 1fr; }
+    .event-card.memo { border-left: solid $muted; color: #a5a6ac; }
     .meta { color: $faint; width: 1fr; }
-    .divider { border-top: solid #202127; height: 1; margin: 1 0; }
-    .card { border-left: heavy $dim; background: $panel; padding: 0 2; margin: 1 0; color: #c2c3c7; width: 1fr; }
+    .divider { border-top: solid #24262c; height: 1; margin: 1 0; }
+    .card { border-left: solid $dim; background: $panel; padding: 0 2; margin: 1 0; color: #c2c3c7; width: 1fr; }
     /* 空会话欢迎区：无边框，靠字号和留白建立层级 */
     .welcome-brand { color: #d5d6da; text-style: bold; margin: 2 0 0 0; }
     .welcome-line { color: #9a9b9f; }
-    .welcome-meta { color: $faint; margin-top: 1; }
-    .welcome-hint { color: #6f7076; margin-top: 2; }
+    .welcome-meta { color: #777980; margin-top: 1; }
+    .welcome-hint { color: #777980; margin-top: 2; }
 
-    #input { margin: 0 3 1 3; background: #16171b; border: round #26272d; border-title-color: #6f7076; border-title-align: left; }
-    #input:focus { border: round #4a4b52; }
+    #input { margin: 0 3 1 3; background: #17181c; border: round #303138; border-title-color: #83848c; border-title-align: left; }
+    #input:focus { background: #191a1f; border: round #56575f; border-title-color: #b0b1b6; }
     /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */
     #input > .input--cursor {
         background: transparent;
@@ -101,15 +106,17 @@ class ChatApp(ChatCommandsMixin, App):
     #status { width: 1fr; height: 1; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
 
     /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语 */
-    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round #2a2b30; padding: 0 1; display: none; }
+    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round #383a42; padding: 0 1; display: none; }
     .cmd-row { width: 1fr; height: 1; padding: 0 1; color: #b9babd; }
-    .cmd-row.cmd-active { background: #24262c; }
-    .cmd-usage { color: #8a8b90; }
-    .cmd-desc { color: #6f7076; }
+    .cmd-row.cmd-active { background: #292b32; }
+    .cmd-usage { color: #96979c; }
+    .cmd-desc { color: #7d7e85; }
 
-    SessionPickerScreen, TextInputScreen { align: center middle; }
-    #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round #2a2b30; padding: 1 2; }
-    #picker-input { width: 1fr; margin-bottom: 1; }
+    PickScreen, SessionPickerScreen, TextInputScreen { align: center middle; background: #0d0e11 75%; }
+    #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round #383a42; padding: 1 2; }
+    #picker-input, #pick-search, #pick-input { width: 1fr; background: #131417; color: #d5d6da; border: round #303138; }
+    #picker-input:focus, #pick-search:focus, #pick-input:focus { background: #191a1f; border: round #56575f; }
+    #picker-input, #pick-search { margin-bottom: 1; }
     #picker-list { height: auto; max-height: 16; }
     /* 与侧栏一致：SessionItem 内层 Vertical 默认 1fr 会把整行撑满 */
     #picker-list > ListItem { padding: 0 1; height: auto; border-left: heavy transparent; }
@@ -120,9 +127,8 @@ class ChatApp(ChatCommandsMixin, App):
     .pick-title { color: $accent; text-style: bold; margin-bottom: 1; }
     #pick-list { height: auto; max-height: 18; }
     #pick-list > ListItem { height: auto; }
-    #pick-list > ListItem.-highlight { background: #24262c; }
-    #pick-input { width: 1fr; }
-    .pick-hint { color: $faint; margin-top: 1; }
+    #pick-list > ListItem.-highlight { background: #292b32; }
+    .pick-hint { color: #83848c; margin-top: 1; }
     """
 
     BINDINGS = [
@@ -294,6 +300,18 @@ class ChatApp(ChatCommandsMixin, App):
                 item.add_class("current")
             view.append(item)
 
+    def _sync_current_session(self) -> None:
+        """切换会话只移动当前标记；侧栏时间/顺序留到下一次常规刷新。"""
+        current_id = self.runtime.current.id if self.runtime.has_session else None
+        found = False
+        for item in self.query(SessionItem):
+            is_current = item.row["id"] == current_id
+            item.set_class(is_current, "current")
+            found = found or is_current
+        # /resume 可能指向尚未出现在当前列表里的会话，这时才退回全量刷新。
+        if current_id and not found:
+            self.refresh_sessions()
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if not isinstance(event.item, SessionItem):
             return
@@ -423,7 +441,7 @@ class ChatApp(ChatCommandsMixin, App):
             message = f"Resumed {label}"
         if stats.get("admitted") or stats.get("queued"):
             message += f" (previous session distilled: {stats['admitted']} written, {stats['queued']} pending)"
-        self.refresh_sessions()
+        self._sync_current_session()
         self.refresh_pending()
         self.update_status()
         self._set_busy(False)
@@ -471,8 +489,7 @@ class ChatApp(ChatCommandsMixin, App):
         return self.query_one("#chat", VerticalScroll)
 
     def _clear_chat(self) -> None:
-        for child in list(self._chat().children):
-            child.remove()
+        self._chat().remove_children()
 
     def _scroll_end(self) -> None:
         self.call_after_refresh(self._chat().scroll_end, animate=False)
@@ -498,9 +515,11 @@ class ChatApp(ChatCommandsMixin, App):
 
     def build_transcript(self) -> None:
         session = self.runtime.current
+        widgets = []
         summary = session.summary_text()
         if summary:
-            self.add_markdown_card(summary, title="Earlier summary")
+            widgets.append(Static("Earlier summary", classes="who-ai"))
+            widgets.append(Markdown(summary, classes="reply"))
         # 先按回合收集，工具结果按 call_id 挂回对应 assistant，回放时顺序与当时一致。
         turns: list[dict] = []
         tool_results: dict[str, dict] = {}
@@ -519,22 +538,36 @@ class ChatApp(ChatCommandsMixin, App):
             if content.strip() or record.get("tool_calls"):
                 turns.append(record)
         if len(turns) > 40:
-            self.add_card(f"{len(turns) - 40} earlier records omitted")
+            widgets.append(Static(f"{len(turns) - 40} earlier records omitted", classes="card"))
             turns = turns[-40:]
         for record in turns:
             content = str(record.get("content") or "")
             at = str(record.get("at") or "")
             stamp = at[11:16] if len(at) >= 16 else None
             if record.get("type") == "message":
-                self.add_user_turn(content, stamp)
+                if stamp:
+                    widgets.append(Static(f"You · {stamp}", classes="who-user"))
+                widgets.append(Vertical(Static(content, classes="bubble"), classes="user-turn"))
                 continue
             if content.strip():
-                self._chat().mount(Static(f"{ASSISTANT_NAME} · {stamp}" if stamp else ASSISTANT_NAME, classes="who-ai"))
-                self._chat().mount(Markdown(content, classes="reply"))
+                label = f"{ASSISTANT_NAME} · {stamp}" if stamp else ASSISTANT_NAME
+                widgets.append(Static(label, classes="who-ai"))
+                widgets.append(Markdown(content, classes="reply"))
             for call in record.get("tool_calls") or []:
                 result = tool_results.get(str(call.get("id")))
-                if result is not None:
-                    self.add_event(self._tool_event_label(call, result))
+                if result is None:
+                    continue
+                event = self._tool_event_label(call, result)
+                memo = event.startswith(("Saved", "Corrected", "Deleted"))
+                widgets.append(
+                    Static(
+                        f"✓ {event}" if memo else event,
+                        classes="event-card memo" if memo else "event-card",
+                    )
+                )
+        # 一次挂载整段历史，避免逐条 mount 在长会话里反复触发布局。
+        if widgets:
+            self._chat().mount(*widgets)
         self._scroll_end()
 
     @staticmethod

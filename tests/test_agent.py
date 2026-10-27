@@ -311,16 +311,24 @@ def test_apply_model_updates_config_and_runtime(tmp_path, monkeypatch):
     assert "deepseek-v4-pro" in config_path.read_text(encoding="utf-8")
 
 
-def test_model_options_lists_current_first(service, monkeypatch):
+def test_model_options_lists_current_first(service):
     from quiet_memo.app import actions
 
-    monkeypatch.setattr(actions, "fetch_provider_models", lambda config, refresh=False: [])
     options = actions.model_options(service)
 
     assert options
     assert options[0].current
     # 未配置其他供应商的 Key 时只展示当前供应商。
     assert {option.provider for option in options} == {"deepseek"}
+
+
+def test_model_options_uses_fetched_models(service):
+    from quiet_memo.app import actions
+
+    options = actions.model_options(service, ["future-model"])
+
+    assert options[0].current
+    assert "future-model" in {option.model for option in options}
 
 
 def test_provider_options_mark_current_and_unconfigured(service):
@@ -330,7 +338,7 @@ def test_provider_options_mark_current_and_unconfigured(service):
     by_key = {value[0]: (label, current) for label, value, current in options}
 
     assert by_key["deepseek"][1] is True
-    assert by_key["siliconflow"] == ("SiliconFlow · add API key", False)
+    assert by_key["siliconflow"] == ("SiliconFlow · add provider", False)
 
 
 def test_configure_provider_saves_key_and_switches_model(tmp_path, monkeypatch):
@@ -386,6 +394,66 @@ def test_configure_provider_keeps_state_when_keyring_fails(tmp_path, monkeypatch
     assert "Could not save" in message and "SILICONFLOW_API_KEY" in message
     assert service.config.llm.provider == "deepseek"
     assert not config_path.exists()
+
+
+def test_update_provider_key_keeps_current_model(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from quiet_memo.app import actions
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    keys: dict[str, str] = {}
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service_name, name: keys.get(name)
+    fake.set_password = lambda service_name, name, value: keys.__setitem__(name, value)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    message = actions.update_provider_key(service, "siliconflow", "sk-updated")
+
+    assert "API key updated" in message
+    assert keys["SILICONFLOW_API_KEY"] == "sk-updated"
+    assert service.config.llm.provider == "deepseek"
+    assert runtime.model_label.startswith("deepseek/")
+
+
+def test_remove_provider_deletes_saved_key(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from quiet_memo.app import actions
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="ok")]))
+    keys = {"SILICONFLOW_API_KEY": "sk-test"}
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service_name, name: keys.get(name)
+    fake.delete_password = lambda service_name, name: keys.pop(name, None)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    message = actions.remove_provider(service, "siliconflow")
+
+    assert "SiliconFlow provider removed" in message
+    assert "SILICONFLOW_API_KEY" not in keys
+    assert service.config.llm.provider == "deepseek"
+
+
+def test_remove_provider_rejects_current_provider(service):
+    from quiet_memo.app import actions
+
+    message = actions.remove_provider(service, "deepseek")
+
+    assert "current provider" in message
+    assert service.config.llm.provider == "deepseek"
+
+
+def test_remove_provider_defers_to_environment_key(monkeypatch, service):
+    from quiet_memo.app import actions
+
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "sk-env")
+
+    message = actions.remove_provider(service, "siliconflow")
+
+    assert "provided by SILICONFLOW_API_KEY" in message
 
 
 def test_apply_reasoning_updates_config_hot(tmp_path, monkeypatch, service):

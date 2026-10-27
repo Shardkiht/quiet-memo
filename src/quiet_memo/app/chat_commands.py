@@ -5,6 +5,7 @@ from functools import partial
 from textual.widgets import Input
 
 from ..infra.tokens import format_tokens
+from ..llm import cached_provider_models, fetch_provider_models
 from . import actions
 from .chat_widgets import PickScreen, SLASH_COMMANDS, SessionPickerScreen, TextInputScreen
 from .session_ui import visible_sessions
@@ -319,34 +320,61 @@ class ChatCommandsMixin:
 
     # ---------- 设置类选择器（逻辑在 actions.py） ----------
 
-    def _open_models(self, refresh: bool) -> None:
-        self._set_busy(True)
+    def _open_models(self, refresh: bool = False) -> None:
+        fetched = None if refresh else cached_provider_models(self.service.config.llm)
+        self._show_model_picker(self._model_entries(fetched), background_refresh=True)
+
+    def _model_entries(self, fetched: list[str] | None = None) -> list[tuple]:
+        options = actions.model_options(self.service, fetched)
+        model_entries = [
+            (option.label, (option.provider, option.model), option.current)
+            for option in options
+        ]
+        manage_entries = [
+            ("＋ Add provider…", ("__add_provider__", ""), False),
+            ("Update provider key…", ("__update_provider__", ""), False),
+            ("Remove provider…", ("__remove_provider__", ""), False),
+            ("↻ Refresh models", ("__refresh__", ""), False),
+            ("Custom model…", ("__custom__", ""), False),
+        ]
+        # 当前模型保持首行，Provider 操作紧随其后，避免被长模型列表推到屏幕外。
+        return model_entries[:1] + manage_entries + model_entries[1:]
+
+    def _show_model_picker(
+        self, entries: list[tuple], background_refresh: bool = False
+    ) -> None:
+        self._drain_pending_intent()
+        picker = PickScreen(
+            f"Current model: {self.runtime.model_label}",
+            entries,
+            self._model_picked,
+            searchable=True,
+        )
+        self.push_screen(picker)
+        if background_refresh:
+            self._refresh_models(picker)
+
+    def _refresh_models(self, picker: PickScreen) -> None:
         self.run_worker(
-            partial(self._models_work, refresh),
-            group="ask",
+            partial(self._refresh_models_work, picker),
+            group="models",
             thread=True,
-            exclusive=True,
             exit_on_error=False,
         )
 
-    def _models_work(self, refresh: bool) -> None:
+    def _refresh_models_work(self, picker: PickScreen) -> None:
         try:
-            options = actions.model_options(self.service, refresh=refresh)
-        except Exception as exc:
-            self.call_from_thread(self._finish_error, f"Failed to fetch models: {exc}")
+            fetched = fetch_provider_models(self.service.config.llm, refresh=True)
+        except Exception:
             return
-        entries = [(option.label, (option.provider, option.model), option.current) for option in options]
-        entries.append(("↻ Refresh models", ("__refresh__", ""), False))
-        entries.append(("Custom model…", ("__custom__", ""), False))
-        entries.append(("Configure provider…", ("__provider__", ""), False))
-        self.call_from_thread(self._show_model_picker, entries)
+        if fetched:
+            self.call_from_thread(self._apply_fetched_models, picker, fetched)
 
-    def _show_model_picker(self, entries: list[tuple]) -> None:
-        self._set_busy(False)
-        self._drain_pending_intent()
-        self.push_screen(
-            PickScreen(f"Current model: {self.runtime.model_label}", entries, self._model_picked)
-        )
+    def _apply_fetched_models(self, picker: PickScreen, fetched: list[str]) -> None:
+        # 异步刷新完成时用户可能已离开 /model；只更新仍然打开的这一屏。
+        if self.screen is not picker:
+            return
+        picker.update_options(self._model_entries(fetched))
 
     def _model_picked(self, value) -> None:
         if value is None:
@@ -362,38 +390,87 @@ class ChatCommandsMixin:
                 TextInputScreen("Model name", default=current.model, on_result=self._model_custom)
             )
             return
-        if provider == "__provider__":
-            self.push_screen(
-                PickScreen(
-                    "Configure provider",
-                    actions.provider_options(self.service),
-                    self._provider_picked,
-                )
-            )
+        provider_action = {
+            "__add_provider__": "add",
+            "__update_provider__": "update",
+            "__remove_provider__": "remove",
+        }.get(provider)
+        if provider_action:
+            self._manage_providers(provider_action)
             return
         message = actions.apply_model(self.service, self.runtime, provider, model)
         self.add_card(message)
         self.update_status()
         self.query_one("#input", Input).focus()
 
-    def _provider_picked(self, value) -> None:
+    def _manage_providers(self, action: str) -> None:
+        options = actions.provider_options(self.service)
+        current = self.service.config.llm.provider
+        if action == "add":
+            candidates = [option for option in options if not option[1][2]]
+            title = "Add provider"
+            empty = "All built-in providers already have API keys."
+        elif action == "update":
+            candidates = [option for option in options if option[1][2]]
+            title = "Update provider key"
+            empty = "No built-in provider has a saved API key yet."
+        else:
+            candidates = [
+                option
+                for option in options
+                if option[1][2] and option[1][0] != current
+            ]
+            title = "Remove provider"
+            empty = "Switch to another model before removing the current provider."
+        if not candidates:
+            self.add_card(empty)
+            self.query_one("#input", Input).focus()
+            return
+        self.push_screen(
+            PickScreen(title, candidates, partial(self._provider_selected, action))
+        )
+
+    def _provider_selected(self, action: str, value) -> None:
         if value is None:
             self.query_one("#input", Input).focus()
             return
-        provider_key, label = value
+        provider_key, label, _ = value
+        if action == "remove":
+            self.push_screen(
+                PickScreen(
+                    f"Remove {label} provider?",
+                    [("Remove provider", True), ("Cancel", False)],
+                    partial(self._remove_provider_result, provider_key),
+                )
+            )
+            return
         self.push_screen(
             TextInputScreen(
                 f"{label} API key",
                 password=True,
-                on_result=partial(self._provider_key_entered, provider_key),
+                on_result=partial(self._provider_key_entered, action, provider_key),
             )
         )
 
-    def _provider_key_entered(self, provider_key: str, api_key) -> None:
+    def _provider_key_entered(self, action: str, provider_key: str, api_key) -> None:
         if not api_key:
             self.query_one("#input", Input).focus()
             return
-        message = actions.configure_provider(self.service, self.runtime, provider_key, api_key)
+        if action == "add":
+            message = actions.configure_provider(
+                self.service, self.runtime, provider_key, api_key
+            )
+        else:
+            message = actions.update_provider_key(self.service, provider_key, api_key)
+        self.add_card(message)
+        self.update_status()
+        self.query_one("#input", Input).focus()
+
+    def _remove_provider_result(self, provider_key: str, confirmed) -> None:
+        if confirmed is not True:
+            self.query_one("#input", Input).focus()
+            return
+        message = actions.remove_provider(self.service, provider_key)
         self.add_card(message)
         self.update_status()
         self.query_one("#input", Input).focus()

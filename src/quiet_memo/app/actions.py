@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from ..agent.runtime import AgentRuntime
 from ..infra.tokens import format_tokens
-from ..llm import fetch_provider_models, model_metadata, supported_params
+from ..llm import model_metadata, supported_params
 from ..memory.service import MemoryService
 
 
@@ -17,13 +17,14 @@ class ModelOption:
     current: bool = False
 
 
-def model_options(service: MemoryService, refresh: bool = False) -> list[ModelOption]:
-    """枚举可选模型：当前供应商（可刷新线上列表）+ 已配置 Key 的其他供应商。"""
+def model_options(
+    service: MemoryService, fetched: list[str] | None = None
+) -> list[ModelOption]:
+    """枚举可选模型；fetched 是当前供应商的缓存/线上列表，空时退回预设模型。"""
     from dataclasses import replace
     from ..infra.providers import PRESETS, display_model, has_api_key, provider_label
 
     current = service.config.llm
-    fetched = fetch_provider_models(current, refresh=refresh)
     entries: list[tuple[str, str]] = []
     for preset in PRESETS:
         if preset.key == "custom":
@@ -74,19 +75,20 @@ def model_options(service: MemoryService, refresh: bool = False) -> list[ModelOp
     return options
 
 
-def provider_options(service: MemoryService) -> list[tuple[str, tuple[str, str], bool]]:
-    """供应商配置项：(菜单文案, (provider key, 短名), 是否当前供应商)。"""
+def provider_options(service: MemoryService) -> list[tuple[str, tuple[str, str, bool], bool]]:
+    """供应商配置项：(菜单文案, (provider key, 短名, 是否已保存 Key), 是否当前)。"""
     from ..infra.providers import PRESETS, has_api_key, provider_label
 
     current = service.config.llm.provider
-    options: list[tuple[str, tuple[str, str], bool]] = []
+    options: list[tuple[str, tuple[str, str, bool], bool]] = []
     for preset in PRESETS:
         if preset.key == "custom":
             continue
-        state = "configured" if has_api_key(preset) else "add API key"
+        configured = has_api_key(preset)
+        state = "configured" if configured else "add provider"
         label = provider_label(preset.key)
         options.append(
-            (f"{label} · {state}", (preset.key, label), preset.key == current)
+            (f"{label} · {state}", (preset.key, label, configured), preset.key == current)
         )
     return options
 
@@ -113,6 +115,48 @@ def configure_provider(
         )
     message = apply_model(service, runtime, preset.key, preset.model)
     return f"{provider_label(preset.key)} API key saved. {message}"
+
+
+def update_provider_key(service: MemoryService, provider: str, api_key: str) -> str:
+    """替换已保存的 Key，但不切换当前模型。"""
+    from ..infra.providers import PRESETS, provider_label, save_api_key
+
+    preset = next((item for item in PRESETS if item.key == provider), None)
+    if preset is None or preset.key == "custom":
+        return f"Unknown provider: {provider}"
+    key = api_key.strip()
+    if not key:
+        return "API key is empty; nothing changed."
+    if not save_api_key(preset.api_key_env, key):
+        return (
+            "Could not save the API key to system credentials. "
+            f"Set {preset.api_key_env} in your environment instead."
+        )
+    return f"{provider_label(preset.key)} API key updated."
+
+
+def remove_provider(service: MemoryService, provider: str) -> str:
+    """移除非当前供应商的已保存 Key；环境变量提供的 Key 需由用户自行取消。"""
+    import os
+
+    from ..infra.providers import PRESETS, delete_api_key, has_api_key, provider_label
+
+    preset = next((item for item in PRESETS if item.key == provider), None)
+    if preset is None or preset.key == "custom":
+        return f"Unknown provider: {provider}"
+    label = provider_label(preset.key)
+    if provider == service.config.llm.provider:
+        return f"{label} is the current provider; switch to another model first."
+    if os.environ.get(preset.api_key_env):
+        return (
+            f"{label} API key is provided by {preset.api_key_env}; "
+            "unset it in your environment to remove this provider."
+        )
+    if not has_api_key(preset):
+        return f"{label} has no saved API key."
+    if not delete_api_key(preset.api_key_env):
+        return f"Could not remove {label} from system credentials."
+    return f"{label} provider removed; its saved API key was deleted."
 
 
 def apply_model(

@@ -59,7 +59,7 @@ uv run qm
 uv run quietmemo        # 同上，等价别名
 ```
 
-首次使用先运行 `uv run qm setup` 配置模型和 API Key；进入对话后也可以在任何时候用 `/model` 为内置厂商补录或更新 API Key。
+首次使用先运行 `uv run qm setup` 配置模型和 API Key；进入对话后也可以在任何时候用 `/model` 搜索模型，并为内置厂商添加、更新或移除 API Key。
 
 `qm setup` 会写入配置文件（默认 `quiet-memo.toml`），初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
 
@@ -147,10 +147,10 @@ fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
 | `/compact` | 立即压缩上下文 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
-| `/model` | 在 TUI 内切换模型，或选择内置供应商录入/更新 API Key；模型列表只显示已配置 Key 的供应商，显示可读名称/上下文/reasoning；列表缓存 12 小时，`/model refresh` 强制刷新 |
+| `/model` | 在一个界面内搜索、切换模型，并添加/更新/删除内置供应商；模型列表先显示进程内缓存或预设并立即打开，再后台刷新真实列表；`/model refresh` 跳过旧缓存，仍不阻塞界面 |
 | `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
-| `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 可直接在 `/model` 配置） |
+| `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 增删可直接在 `/model` 管理） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |
@@ -267,7 +267,7 @@ npx -y open-websearch@latest serve
 
 搜索结果只有标题、摘要和链接；`fetch_web` 会打开其中某个链接并提取正文（readability，最多 8000 字符），用于核对发布日期、原文细节或摘要。抓取只通过 HTTP transport 提供，MCP 接口仍只有 `search`。
 
-Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「智」检索）；遇到明显跑题时，可在配置里把 `engines` 改为 `["baidu"]`，或让模型在 `search` 工具里传 `search_engine = "baidu"` 重试。
+Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「智」检索）；遇到明显跑题时，可在配置里把 `engines` 改为 `["baidu"]`，或让模型在 `search` 工具里传 `search_engine = "baidu"` 重试。`search_engine` 也接受数组，最多 3 个引擎，例如 `["baidu", "bing"]`，结果会在同一请求中合并；MCP 的 `search` 同样支持。
 
 返回结构：
 

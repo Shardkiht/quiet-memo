@@ -222,3 +222,24 @@ def test_provider_model_list_cache(monkeypatch):
         assert len(calls) == 2
     finally:
         client.clear_model_cache()
+
+
+def test_cached_provider_models_reads_cache_only(monkeypatch):
+    from quiet_memo.llm import client
+
+    config = LLMConfig()
+    calls = []
+    monkeypatch.setattr(LLMConfig, "api_key", lambda self: "test-key")
+    monkeypatch.setattr(
+        client,
+        "_fetch_provider_models_uncached",
+        lambda cfg, timeout: calls.append(1) or ["model-a"],
+    )
+    client.clear_model_cache()
+    try:
+        assert client.cached_provider_models(config) is None
+        assert client.fetch_provider_models(config) == ["model-a"]
+        assert client.cached_provider_models(config) == ["model-a"]
+        assert len(calls) == 1
+    finally:
+        client.clear_model_cache()

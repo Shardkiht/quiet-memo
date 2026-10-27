@@ -34,6 +34,7 @@ SLASH_COMMANDS = [
 
 class OptionItem(ListItem):
     def __init__(self, label: str, value, marker: bool = False) -> None:
+        self.label = label
         self.value = value
         super().__init__(Label(f"{label}  ← current" if marker else label))
 
@@ -50,26 +51,71 @@ class SessionItem(ListItem):
 
 
 class PickScreen(ModalScreen):
-    """单选模态：ESC 取消（回调收到 None），Enter/点击确认。"""
+    """单选模态：ESC 取消（回调收到 None），Enter/点击确认；可选用搜索框过滤。"""
 
-    BINDINGS = [("escape", "cancel", "Cancel")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("down", "focus_list", "Select"),
+    ]
 
-    def __init__(self, title: str, options: list[tuple], on_result) -> None:
+    def __init__(
+        self, title: str, options: list[tuple], on_result, searchable: bool = False
+    ) -> None:
         super().__init__()
         self._title = title
-        self._options = options
+        self._options = list(options)
         self._on_result = on_result
+        self._searchable = searchable
+
+    @staticmethod
+    def _items(options: list[tuple]) -> list[OptionItem]:
+        return [OptionItem(*option) for option in options]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="pick-card"):
             yield Static(self._title, classes="pick-title")
-            yield ListView(
-                *[OptionItem(*option) for option in self._options],
-                id="pick-list",
+            if self._searchable:
+                yield Input(placeholder="Search models…", id="pick-search")
+            yield ListView(*self._items(self._options), id="pick-list")
+            hint = (
+                "Type to filter · ↓ list · Enter confirm · ESC cancel"
+                if self._searchable
+                else "↑↓ select · Enter confirm · ESC cancel"
             )
-            yield Static("↑↓ select · Enter confirm · ESC cancel", classes="pick-hint")
+            yield Static(hint, classes="pick-hint")
 
     def on_mount(self) -> None:
+        target = "#pick-search" if self._searchable else "#pick-list"
+        self.query_one(target).focus()
+
+    def update_options(self, options: list[tuple]) -> None:
+        self._options = list(options)
+        value = self.query_one("#pick-search", Input).value if self._searchable else ""
+        self._apply_filter(value)
+
+    def _apply_filter(self, value: str) -> None:
+        needle = value.strip().lower()
+        options = [option for option in self._options if needle in option[0].lower()]
+        listing = self.query_one("#pick-list", ListView)
+        listing.clear()
+        for item in self._items(options):
+            listing.append(item)
+        if options:
+            listing.index = 0
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if self._searchable:
+            self._apply_filter(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if not self._searchable:
+            return
+        event.stop()
+        item = self.query_one("#pick-list", ListView).highlighted_child
+        if item is not None:
+            self._finish(item.value)
+
+    def action_focus_list(self) -> None:
         self.query_one("#pick-list", ListView).focus()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

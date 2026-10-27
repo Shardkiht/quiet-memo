@@ -182,10 +182,15 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
         model_picker = app.screen
         listing = model_picker.query_one("#pick-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in listing.children]
-        configure_index = labels.index("Configure provider…")
-        listing.index = configure_index
+        assert labels[1:4] == [
+            "＋ Add provider…",
+            "Update provider key…",
+            "Remove provider…",
+        ]
+        add_index = labels.index("＋ Add provider…")
+        listing.index = add_index
         await pilot.pause()
-        assert listing.index == configure_index
+        assert listing.index == add_index
         await pilot.press("enter")
         # 第一个选择器 dismiss 与下一个 push 不在同一帧，等新屏幕出现再查询。
         for _ in range(100):
@@ -193,7 +198,7 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
             if isinstance(app.screen, PickScreen) and app.screen is not model_picker:
                 if app.screen.query(".pick-title"):
                     break
-        assert "Configure provider" in str(app.screen.query_one(".pick-title").render())
+        assert "Add provider" in str(app.screen.query_one(".pick-title").render())
 
         providers = app.screen.query_one("#pick-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in providers.children]
@@ -218,6 +223,141 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
         assert keys["SILICONFLOW_API_KEY"] == "sk-test"
         assert app.service.config.llm.model == "deepseek-ai/DeepSeek-V3"
         assert not app.busy
+
+
+async def test_model_picker_can_remove_provider_key(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from textual.widgets import Label, ListView
+
+    from quiet_memo.app.chat_widgets import PickScreen
+
+    keys = {"SILICONFLOW_API_KEY": "sk-test"}
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service_name, name: keys.get(name)
+    fake.delete_password = lambda service_name, name: keys.pop(name, None)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._model_picked(("__remove_provider__", ""))
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen) and "Remove provider" in str(
+                app.screen.query_one(".pick-title").render()
+            ):
+                break
+
+        providers = app.screen.query_one("#pick-list", ListView)
+        labels = [str(item.query_one(Label).render()) for item in providers.children]
+        providers.index = next(i for i, label in enumerate(labels) if label.startswith("SiliconFlow"))
+        providers.focus()
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen) and "Remove SiliconFlow provider?" in str(
+                app.screen.query_one(".pick-title").render()
+            ):
+                break
+
+        confirm = app.screen.query_one("#pick-list", ListView)
+        confirm.index = 0
+        confirm.focus()
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if app.query(".card"):
+                break
+
+        assert "SILICONFLOW_API_KEY" not in keys
+        assert "provider removed" in str(app.query(".card")[-1].render())
+
+
+async def test_model_picker_filters_by_search(tmp_path):
+    from textual.widgets import ListView
+
+    from quiet_memo.app.chat_widgets import PickScreen
+
+    app = build_app(tmp_path, [])
+    entries = [
+        ("DeepSeek · DeepSeek Flash", ("deepseek", "deepseek-flash"), True),
+        ("SiliconFlow · DeepSeek V3", ("siliconflow", "deepseek-ai/DeepSeek-V3"), False),
+        ("Remove provider…", ("__remove_provider__", ""), False),
+    ]
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._show_model_picker(entries)
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, PickScreen)
+        search = picker.query_one("#pick-search", Input)
+        assert search.has_focus
+
+        search.value = "silicon"
+        await pilot.pause()
+
+        items = list(picker.query("#pick-list OptionItem"))
+        assert [item.label for item in items] == ["SiliconFlow · DeepSeek V3"]
+        listing = picker.query_one("#pick-list", ListView)
+        assert listing.index == 0
+
+        await pilot.press("down")
+        await pilot.pause()
+        assert listing.has_focus
+
+
+async def test_model_picker_uses_cache_and_refreshes_in_background(tmp_path, monkeypatch):
+    import threading
+
+    from textual.widgets import Label
+
+    from quiet_memo.app.chat_widgets import PickScreen
+
+    release = threading.Event()
+
+    def fake_fetch(config, refresh=False):
+        release.wait(5)
+        return ["fresh-model"]
+
+    monkeypatch.setattr(
+        "quiet_memo.app.chat_commands.cached_provider_models",
+        lambda config: ["cached-model"],
+    )
+    monkeypatch.setattr(
+        "quiet_memo.app.chat_commands.fetch_provider_models", fake_fetch
+    )
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app._open_models()
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen):
+                break
+
+        picker = app.screen
+        assert isinstance(picker, PickScreen)
+        assert not app.busy
+        labels = [
+            str(item.query_one(Label).render())
+            for item in picker.query("#pick-list OptionItem")
+        ]
+        assert any("cached-model" in label for label in labels)
+        assert not any("fresh-model" in label for label in labels)
+
+        release.set()
+        for _ in range(100):
+            await pilot.pause()
+            labels = [
+                str(item.query_one(Label).render())
+                for item in picker.query("#pick-list OptionItem")
+            ]
+            if any("fresh-model" in label for label in labels):
+                break
+        assert any("fresh-model" in label for label in labels)
 
 
 async def test_ctrl_b_toggles_sidebar(tmp_path):
@@ -346,6 +486,47 @@ async def test_session_switch_failure_releases_busy(tmp_path):
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
         assert "Session switch failed" in str(app.query(".card")[-1].render())
+
+
+async def test_session_switch_updates_sidebar_without_reload(tmp_path, monkeypatch):
+    from quiet_memo.app.chat_app import SessionItem
+
+    app = build_app(tmp_path, [])
+    store = app.sessions
+    ids = []
+    for title in ("会话甲", "会话乙"):
+        session = store.create()
+        store.rename(session, title)
+        store.append(
+            session,
+            {"type": "message", "id": new_message_id(), "role": "user", "content": title},
+        )
+        ids.append(session.id)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        for _ in range(100):
+            await pilot.pause()
+            if len(list(app.query(SessionItem))) >= 2:
+                break
+
+        calls = []
+        original_list = store.list
+
+        def counted_list(*args, **kwargs):
+            calls.append(1)
+            return original_list(*args, **kwargs)
+
+        monkeypatch.setattr(store, "list", counted_list)
+        app._switch_session(ids[0])
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy and app.runtime.has_session:
+                break
+        await pilot.pause()
+
+        assert calls == []
+        current = [item for item in app.query(SessionItem) if item.has_class("current")]
+        assert [item.row["id"] for item in current] == [ids[0]]
 
 
 async def test_delete_session_uses_captured_row(tmp_path):
@@ -1027,6 +1208,30 @@ async def test_session_picker_is_centered(tmp_path):
         assert abs(card.region.x - (picker.region.width - card.region.width) / 2) <= 1
         assert abs(card.region.y - (picker.region.height - card.region.height) / 2) <= 1
         assert "Ctrl+R" in str(picker.query_one(".pick-hint", Static).content)
+
+
+async def test_dialog_inputs_share_neutral_focus_style(tmp_path):
+    from textual.color import Color
+
+    from quiet_memo.app.chat_widgets import SessionPickerScreen
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "会话"},
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        main_input = app.query_one("#input", Input)
+        assert main_input.styles.border_top[1] == Color.parse("#56575f")
+
+        app.open_session_picker()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionPickerScreen)
+        picker_input = app.screen.query_one("#picker-input", Input)
+        assert picker_input.styles.background == Color.parse("#191a1f")
+        assert picker_input.styles.border_top[1] == main_input.styles.border_top[1]
 
 
 async def test_session_picker_ctrl_r_renames_session(tmp_path):

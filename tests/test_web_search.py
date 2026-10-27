@@ -545,6 +545,75 @@ def test_agent_search_tool_passes_search_engine(tmp_path):
     assert provider.queries[-1].engines == ("baidu",)
 
 
+def test_agent_search_tool_accepts_legacy_engine_and_multiple_engines(tmp_path):
+    provider = FakeProvider([SearchResult("标题", "https://example.com", "摘要")])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=router)
+
+    legacy = tools.execute("search", {"query": "旧参数", "engine": "baidu"})
+    multiple = tools.execute(
+        "search", {"query": "多引擎", "search_engine": ["bing", "baidu", "bing"]}
+    )
+
+    assert legacy.ok is True
+    assert multiple.ok is True
+    assert provider.queries[-2].engines == ("baidu",)
+    assert provider.queries[-1].engines == ("bing", "baidu")
+
+
+def test_agent_search_tool_rejects_too_many_engines(tmp_path):
+    provider = FakeProvider([SearchResult("标题", "https://example.com", "摘要")])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=router)
+
+    outcome = tools.execute(
+        "search",
+        {"query": "查询", "search_engine": ["bing", "baidu", "sogou", "brave"]},
+    )
+
+    assert outcome.ok is False
+    assert "at most 3 search engines" in outcome.display
+    assert provider.calls == 0
+
+
+def test_agent_search_schema_does_not_expose_provider_engine(tmp_path):
+    provider = FakeProvider([])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=True),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, search_router=router)
+
+    properties = tools._tools["search"].parameters["properties"]
+
+    assert "engine" not in properties
+    assert "search_engine" in properties
+
+
 def test_agent_search_tool_rejects_unknown_search_engine(tmp_path):
     provider = FakeProvider([SearchResult("标题", "https://example.com", "摘要")])
     router = SearchRouter({"fake": provider}, order=["fake"])
@@ -620,6 +689,10 @@ async def test_mcp_exposes_search_when_enabled(tmp_path):
             "search", {"query": "智谱 GLM", "search_engine": "baidu"}
         )
         assert provider.queries[-1].engines == ("baidu",)
+        await client.call_tool(
+            "search", {"query": "智谱 GLM", "search_engine": ["baidu", "bing"]}
+        )
+        assert provider.queries[-1].engines == ("baidu", "bing")
 
 
 async def test_mcp_omits_search_when_disabled(tmp_path):

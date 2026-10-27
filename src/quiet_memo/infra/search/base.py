@@ -1,8 +1,39 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
+
+MAX_SEARCH_ENGINES = 3
+
+
+def normalize_search_engines(value: object, allowed: Sequence[str]) -> tuple[str, ...]:
+    """把单个或一组引擎名规范化；auto 和空值表示使用配置默认。"""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        values = [value]
+    elif isinstance(value, (list, tuple)):
+        if not all(isinstance(item, str) for item in value):
+            raise ValueError("search_engine entries must be strings")
+        values = list(value)
+    else:
+        raise ValueError("search_engine must be a string or list of strings")
+
+    selected: list[str] = []
+    allowed_set = set(allowed)
+    for item in values:
+        name = item.strip().lower()
+        if not name or name == "auto":
+            continue
+        if name not in allowed_set:
+            raise ValueError(f"unsupported search engine {name}")
+        if name not in selected:
+            selected.append(name)
+    if len(selected) > MAX_SEARCH_ENGINES:
+        raise ValueError(f"at most {MAX_SEARCH_ENGINES} search engines")
+    return tuple(selected)
 
 
 class ProviderErrorKind(str, Enum):

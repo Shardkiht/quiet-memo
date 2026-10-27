@@ -180,6 +180,12 @@ def fetch_provider_models(
     return models
 
 
+def cached_provider_models(config: LLMConfig) -> list[str] | None:
+    """返回当前进程里最近一次成功获取的模型列表，不发起网络请求。"""
+    cached = _MODEL_CACHE.get((config.provider, config.base_url))
+    return list(cached[1]) if cached and cached[1] else None
+
+
 def clear_model_cache() -> None:
     _MODEL_CACHE.clear()
 

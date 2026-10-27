@@ -59,7 +59,7 @@ uv run qm
 uv run quietmemo        # Same as above; equivalent alias
 ```
 
-On first use, run `uv run qm setup` to configure the model and API key. Once in a chat, you can also use `/model` at any time to add or update the API key for a built-in provider.
+On first use, run `uv run qm setup` to configure the model and API key. Once in a chat, you can also use `/model` at any time to search models and add, update, or remove the API key for a built-in provider.
 
 `qm setup` writes the config file (default: `quiet-memo.toml`), initializes the vault, and optionally runs a connection test. Keys can also be provided through environment variables, which take precedence over keyring:
 
@@ -147,10 +147,10 @@ In-session commands:
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
-| `/model` | Switch models inside the TUI, or select a built-in provider to add/update its API key. The model list only shows providers with configured keys and displays readable names/context/reasoning; the list is cached for 12 hours, and `/model refresh` forces a refresh |
+| `/model` | Search and switch models, and add/update/remove built-in providers in one screen. The list opens immediately from the in-process cache or presets, then refreshes the live list in the background; `/model refresh` skips the old cache without blocking the UI |
 | `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
-| `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (built-in provider keys can be configured directly via `/model`) |
+| `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (built-in provider keys can be managed directly via `/model`) |
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |
@@ -268,7 +268,7 @@ npx -y open-websearch@latest serve
 
 Search results contain only titles, snippets, and links; `fetch_web` opens one of those links and extracts the page text (readability, up to 8000 characters) to confirm dates, details, or snippets. Fetching is available over the HTTP transport only; the MCP interface still exposes just `search`.
 
-Bing sometimes splits Chinese proper nouns into single characters (for example, 「智谱」 is searched as 「智」). When results are obviously off-topic, set `engines = ["baidu"]` in the config, or have the model retry with `search_engine = "baidu"` in the `search` tool.
+Bing sometimes splits Chinese proper nouns into single characters (for example, 「智谱」 is searched as 「智」). When results are obviously off-topic, set `engines = ["baidu"]` in the config, or have the model retry with `search_engine = "baidu"` in the `search` tool. `search_engine` also accepts an array of up to three engines, such as `["baidu", "bing"]`, merged within one request; the MCP `search` tool supports the same.
 
 Response shape:
 

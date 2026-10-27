@@ -252,6 +252,16 @@ def save_api_key(env_name: str, api_key: str) -> bool:
         return False
 
 
+def delete_api_key(env_name: str) -> bool:
+    try:
+        import keyring
+
+        keyring.delete_password(KEYRING_SERVICE, env_name)
+        return True
+    except Exception:
+        return False
+
+
 def test_connection(llm: LLMConfig) -> tuple[bool, str]:
     api_key = llm.api_key()
     if not api_key:
