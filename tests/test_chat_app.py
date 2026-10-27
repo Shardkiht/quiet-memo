@@ -1226,6 +1226,45 @@ async def test_transcript_replays_tool_events(tmp_path):
         assert any("最终回答" in reply for reply in replies)
 
 
+async def test_modal_lists_share_chat_scrollbar_style(tmp_path):
+    from quiet_memo.app.chat_widgets import PickScreen, SessionPickerScreen
+
+    def scrollbar_style(widget):
+        return (
+            widget.styles.scrollbar_size_vertical,
+            widget.styles.scrollbar_background,
+            widget.styles.scrollbar_color,
+            widget.styles.scrollbar_color_hover,
+            widget.styles.scrollbar_color_active,
+        )
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "会话"},
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        chat_style = scrollbar_style(app.query_one("#chat"))
+
+        app._show_model_picker([])
+        await pilot.pause()
+        assert isinstance(app.screen, PickScreen)
+        model_list = app.screen.query_one("#pick-list")
+        assert model_list.has_class("thin-scroll")
+        assert scrollbar_style(model_list) == chat_style
+        await pilot.press("escape")
+        await pilot.pause()
+
+        app.open_session_picker()
+        await pilot.pause()
+        assert isinstance(app.screen, SessionPickerScreen)
+        session_list = app.screen.query_one("#picker-list")
+        assert session_list.has_class("thin-scroll")
+        assert scrollbar_style(session_list) == chat_style
+
+
 async def test_session_picker_is_centered(tmp_path):
     from quiet_memo.app.chat_widgets import SessionPickerScreen
 

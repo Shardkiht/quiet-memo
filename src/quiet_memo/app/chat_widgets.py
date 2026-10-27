@@ -76,7 +76,7 @@ class PickScreen(ModalScreen):
             yield Static(self._title, classes="pick-title")
             if self._searchable:
                 yield Input(placeholder="Search models…", id="pick-search")
-            yield ListView(*self._items(self._options), id="pick-list")
+            yield ListView(*self._items(self._options), id="pick-list", classes="thin-scroll")
             hint = (
                 "Type to filter · ↓ list · Enter confirm · ESC cancel"
                 if self._searchable
@@ -227,7 +227,7 @@ class SessionPickerScreen(ModalScreen):
     def compose(self) -> ComposeResult:
         with Vertical(id="pick-card"):
             yield Input(placeholder="Search session title or ID…", id="picker-input")
-            yield ListView(id="picker-list")
+            yield ListView(id="picker-list", classes="thin-scroll")
             yield Static("↓ list · Enter resume · Ctrl+R rename · Del delete · ESC", classes="pick-hint")
 
     def on_mount(self) -> None:

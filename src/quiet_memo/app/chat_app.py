@@ -45,8 +45,21 @@ class ChatApp(ChatCommandsMixin, App):
     $faint: #63646b;
     $panel: #17181c;
     $bg: #131417;
+    $scroll-track: #131417;
+    $scroll-thumb: #45464e;
+    $scroll-thumb-hover: #63646b;
+    $scroll-thumb-active: #83848c;
 
     Screen { background: $bg; }
+    /* 统一窄滚动条；新的可滚动组件加 thin-scroll 类即可复用。 */
+    .thin-scroll {
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
+        scrollbar-background: $scroll-track;
+        scrollbar-color: $scroll-thumb;
+        scrollbar-color-hover: $scroll-thumb-hover;
+        scrollbar-color-active: $scroll-thumb-active;
+    }
     #root { width: 1fr; height: 1fr; }
     #sidebar { width: 28; background: #101114; border-right: solid #202127; }
     #sidebar-head { height: 3; align: left middle; }
@@ -72,11 +85,7 @@ class ChatApp(ChatCommandsMixin, App):
     .group-label { color: #777980; padding: 1 1 0 1; }
 
     #main { width: 1fr; layers: base overlay; }
-    #chat {
-        width: 100%; height: 1fr; padding: 1 0 1 3; scrollbar-size-vertical: 1;
-        scrollbar-background: $bg; scrollbar-color: #45464e;
-        scrollbar-color-hover: #63646b; scrollbar-color-active: #83848c;
-    }
+    #chat { width: 100%; height: 1fr; padding: 1 0 1 3; }
     /* 右侧留白改由子元素承担，滚动条才能贴在窗口最右侧 */
     #chat > * { margin-right: 2; }
     .who-user { content-align: right top; color: #7c7d84; width: 1fr; margin-top: 1; }
@@ -166,7 +175,7 @@ class ChatApp(ChatCommandsMixin, App):
                 yield ListView(id="sessions")
             with Vertical(id="main"):
                 yield SidebarToggle("»", id="show-sidebar")
-                yield VerticalScroll(id="chat")
+                yield VerticalScroll(id="chat", classes="thin-scroll")
                 yield CommandPalette()
                 yield BarInput(placeholder="Message or /command", id="input")
                 yield Static("", id="status")
