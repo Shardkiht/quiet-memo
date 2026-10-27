@@ -133,6 +133,7 @@ Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the 
 - The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done.
+- `/undo` withdraws the latest user turn and its subsequent replies, then restores the original text for editing. It appends an `undo` event instead of rewriting JSONL; after resending, the withdrawn turn stays out of context and future distillation.
 - On exit, extracts user statements from the turn that have not yet been persisted.
 - On startup, checks for missed distillation: sessions that terminated abnormally (no `closed` record) or whose exit extraction failed are caught up automatically, up to 3 per launch, with a card reporting the result.
 - Memory entries record `session` and `message` sources, so they can be traced back to the original conversation.
@@ -145,6 +146,7 @@ In-session commands:
 | `/sessions` | Open the centered session picker: type to filter, Enter to resume, Ctrl+R to rename, Del to delete (with confirmation), ESC to cancel |
 | `/resume [id\|query]` | Resume a session; without arguments jumps to the session list, an id/keyword resumes the match directly |
 | `/compact` | Compact the context immediately |
+| `/undo` | Withdraw the latest turn and restore its user message for editing |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
 | `/model` | Search and switch models, and add/update/remove built-in providers in one screen. The list opens immediately from the in-process cache or presets, then refreshes the live list in the background; `/model refresh` skips the old cache without blocking the UI |

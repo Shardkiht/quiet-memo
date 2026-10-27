@@ -15,6 +15,7 @@ SLASH_COMMANDS = [
     ("sessions", "/sessions", "Browse sessions"),
     ("resume", "/resume [id|query]", "Resume a session"),
     ("compact", "/compact", "Compact context"),
+    ("undo", "/undo", "Undo and edit last message"),
     ("summary", "/summary", "Show summary"),
     ("status", "/status", "Session status"),
     ("model", "/model [refresh]", "Models & providers"),

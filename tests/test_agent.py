@@ -116,6 +116,22 @@ def test_resume_restores_prior_messages_for_model(tmp_path):
     assert "第二问" in contents
 
 
+def test_undo_excludes_original_turn_from_next_model_call(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="旧回答"), AssistantTurn(content="新回答")])
+    runtime, _ = build_runtime(tmp_path, model)
+    runtime.ask("原始提问")
+
+    assert runtime.undo() == "原始提问"
+    runtime.ask("编辑后的提问")
+
+    contents = [message.get("content") for message in model.calls[1][0]]
+    assert "编辑后的提问" in contents
+    assert "原始提问" not in contents
+    assert "旧回答" not in contents
+    assert runtime.current.user_texts() == ["编辑后的提问"]
+    assert any(record.get("type") == "undo" for record in runtime.current.records)
+
+
 def test_memorize_tool_writes_with_session_provenance(tmp_path):
     model = FakeChatModel(
         [

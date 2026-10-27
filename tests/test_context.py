@@ -112,6 +112,52 @@ def test_resume_uses_persisted_summary(tmp_path):
     assert all("第 0 轮用户消息" not in str(message.get("content")) for message in plan.messages)
 
 
+def test_undo_invalidates_later_summary_and_compacts_against_raw_positions(tmp_path):
+    store = SessionStore(tmp_path)
+    session = store.create()
+    for index in range(1, 5):
+        store.append(
+            session,
+            {
+                "type": "message",
+                "id": f"m{index}",
+                "role": "user",
+                "content": f"第 {index} 问" + "较长的对话内容" * 20,
+            },
+        )
+        store.append(
+            session,
+            {
+                "type": "assistant",
+                "id": f"a{index}",
+                "content": f"第 {index} 答" + "较长的回复内容" * 20,
+            },
+        )
+    store.append(
+        session,
+        {"type": "summary", "id": "s1", "content": "旧摘要", "covered_records": 8},
+    )
+    store.append(session, {"type": "undo", "id": "u1", "message_id": "m3"})
+    loaded = store.load(session.id)
+
+    assert loaded.summary_text() == ""
+    assert [text.split("较长", 1)[0] for text in loaded.user_texts()] == ["第 1 问", "第 2 问"]
+
+    manager = ContextManager(
+        ChatConfig(context_window=1000, reserve_output_tokens=100, keep_recent_tokens=100),
+        FakeSummarizer(),
+        store,
+    )
+    plan = manager.prepare(loaded, "系统提示", "下一问", force=True)
+
+    assert loaded.covered_records() == 3  # meta + 第一条用户消息 + 第一条助手回复
+    assert loaded.summary_text() == "摘要-1"
+    contents = [str(message.get("content")) for message in plan.messages]
+    assert any(content.startswith("第 2 问") for content in contents)
+    assert all(not content.startswith("第 3 问") for content in contents)
+    assert all("旧摘要" not in content for content in contents)
+
+
 def test_no_compaction_with_only_current_message(tmp_path):
     store = SessionStore(tmp_path)
     session = store.create()

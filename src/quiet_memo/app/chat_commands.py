@@ -42,6 +42,8 @@ class ChatCommandsMixin:
                 self.open_session_picker()
         elif command == "/compact":
             self._run_compact()
+        elif command == "/undo":
+            self._undo_message()
         elif command == "/summary":
             if not self.runtime.has_session:
                 self.add_card("This new session has no summary yet.")
@@ -267,6 +269,24 @@ class ChatCommandsMixin:
             f"Pending: {info['pending']}",
             "Status",
         )
+
+    def _undo_message(self) -> None:
+        if not self.runtime.has_session:
+            self.add_card("No message to undo.")
+            return
+        text = self.runtime.undo()
+        if text is None:
+            self.add_card("No message to undo.")
+            return
+        self._clear_chat()
+        self.build_transcript()
+        self.refresh_sessions()
+        self.update_status()
+        widget = self.query_one("#input", Input)
+        widget.value = text
+        widget.cursor_position = len(text)
+        widget.focus()
+        self.notify("Message restored for editing.")
 
     def _run_compact(self) -> None:
         self._set_busy(True)

@@ -106,10 +106,9 @@ class ContextManager:
         memory_context: str = "",
         force: bool = False,
     ) -> ContextPlan:
-        covered = session.covered_records()
         history = [
             record
-            for record in session.records[covered:]
+            for record in session.records_after_summary()
             if current_id is None or record.get("id") != current_id
         ]
         summary_text = session.summary_text()
@@ -131,7 +130,7 @@ class ContextManager:
 
         if force or total > self.trigger_tokens:
             history, summary_text, evicted_total, flushed, events = self._compact(
-                session, history, summary_text, covered, base_tokens, force=force
+                session, history, summary_text, base_tokens, force=force
             )
             compacted = evicted_total > 0
 
@@ -167,7 +166,6 @@ class ContextManager:
         session: Session,
         history: list[dict],
         summary_text: str,
-        covered: int,
         base_tokens: int,
         force: bool,
     ) -> tuple[list[dict], str, int, dict | None, list[str]]:
@@ -201,7 +199,12 @@ class ContextManager:
                 transcript(evicted),
                 SUMMARY_MAX_CHARS,
             )
-            covered += cutoff
+            # 摘要游标必须指向原始事件流；undo 后的有效记录数不等于原始下标。
+            covered = next(
+                index + 1
+                for index in range(len(session.records) - 1, -1, -1)
+                if session.records[index] is evicted[-1]
+            )
             self.sessions.append(
                 session,
                 {

@@ -28,9 +28,32 @@ class Session:
     path: Path
     records: list[dict] = field(default_factory=list)
 
+    def active_records(self) -> list[dict]:
+        """按 undo 事件投影有效会话；撤销同时令其后的摘要失效。"""
+        active: list[dict] = []
+        for record in self.records:
+            record_type = record.get("type")
+            if record_type == "undo":
+                target_id = record.get("message_id")
+                target = next(
+                    (
+                        index
+                        for index, item in enumerate(active)
+                        if item.get("id") == target_id
+                        and item.get("type") == "message"
+                        and item.get("role") == "user"
+                    ),
+                    None,
+                )
+                if target is not None:
+                    del active[target:]
+            elif record_type in ("message", "assistant", "tool", "summary"):
+                active.append(record)
+        return active
+
     @property
     def messages(self) -> list[dict]:
-        return [record for record in self.records if record.get("type") == "message"]
+        return [record for record in self.active_records() if record.get("type") == "message"]
 
     @property
     def updated_at(self) -> str:
@@ -40,12 +63,12 @@ class Session:
     def user_texts(self) -> list[str]:
         return [
             record["content"]
-            for record in self.records
+            for record in self.active_records()
             if record.get("type") == "message" and record.get("role") == "user"
         ]
 
     def last_user_message_id(self) -> str | None:
-        for record in reversed(self.records):
+        for record in reversed(self.active_records()):
             if record.get("type") == "message" and record.get("role") == "user":
                 return record.get("id")
         return None
@@ -61,7 +84,7 @@ class Session:
         return title[:width] + ("…" if len(title) > width else "")
 
     def latest_summary(self) -> dict | None:
-        for record in reversed(self.records):
+        for record in reversed(self.active_records()):
             if record.get("type") == "summary":
                 return record
         return None
@@ -75,10 +98,12 @@ class Session:
         return int(summary.get("covered_records", 0)) if summary else 0
 
     def records_after_summary(self) -> list[dict]:
+        active_ids = {id(record) for record in self.active_records()}
         return [
             record
             for record in self.records[self.covered_records() :]
-            if record.get("type") in ("message", "assistant", "tool")
+            if id(record) in active_ids
+            and record.get("type") in ("message", "assistant", "tool")
         ]
 
     def needs_consolidation(self) -> bool:
@@ -114,16 +139,19 @@ class Session:
     def user_texts_after_distilled(self) -> list[str]:
         """自上次沉淀游标（或摘要边界）之后的用户消息——避免来回切换重复抽取。"""
         start = max(self._distill_cursor_index(), self.covered_records() - 1)
+        active_ids = {id(record) for record in self.active_records()}
         return [
             record["content"]
             for record in self.records[start + 1 :]
-            if record.get("type") == "message" and record.get("role") == "user"
+            if id(record) in active_ids
+            and record.get("type") == "message"
+            and record.get("role") == "user"
         ]
 
     def estimated_tokens(self) -> int:
         return sum(
             estimate_tokens(str(record.get("content") or ""))
-            for record in self.records
+            for record in self.active_records()
             if record.get("type") in ("message", "assistant", "summary")
         )
 

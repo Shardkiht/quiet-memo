@@ -80,6 +80,39 @@ async def test_chat_roundtrip(tmp_path):
         assert "Context" in str(app.query_one("#status", Static).content)
 
 
+async def test_undo_restores_last_message_for_editing(tmp_path):
+    app = build_app(tmp_path, [AssistantTurn(content="旧回答"), AssistantTurn(content="新回答")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "原始提问"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+
+        widget.value = "/undo"
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert widget.value == "原始提问"
+        assert widget.cursor_position == len("原始提问")
+        assert not app.busy
+        assert not app.query(".bubble")
+        assert app.runtime.current.user_texts() == []
+        assert any(record.get("type") == "undo" for record in app.runtime.current.records)
+
+        widget.value = "编辑后的提问"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+
+        assert app.runtime.current.user_texts() == ["编辑后的提问"]
+        assert [getattr(reply, "_markdown", "") for reply in app.query(".reply")] == ["新回答"]
+        raw_texts = [
+            record["content"]
+            for record in app.runtime.current.records
+            if record.get("type") == "message" and record.get("role") == "user"
+        ]
+        assert raw_texts == ["原始提问", "编辑后的提问"]
+
+
 async def test_status_bar_renders_context_usage(tmp_path):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:

@@ -61,6 +61,33 @@ def test_summary_covers_records(tmp_path):
     assert loaded.user_texts_after_summary() == ["第二句"]
 
 
+def test_undo_persists_and_allows_reedited_message(tmp_path):
+    store, session = make_store(tmp_path)
+    for message_id, text in (("m1", "第一问"), ("m2", "第二问")):
+        store.append(session, {"type": "message", "id": message_id, "role": "user", "content": text})
+        store.append(
+            session,
+            {"type": "assistant", "id": f"a{message_id[1:]}", "content": f"{text}的回答"},
+        )
+    raw_records = list(session.records)
+
+    store.append(session, {"type": "undo", "id": "u1", "message_id": "m2"})
+    loaded = store.load(session.id)
+
+    assert loaded.user_texts() == ["第一问"]
+    assert loaded.last_user_message_id() == "m1"
+    assert [record["id"] for record in loaded.records_after_summary()] == ["m1", "a1"]
+    assert loaded.user_texts_after_distilled() == ["第一问"]
+    assert loaded.records[: len(raw_records)] == raw_records
+
+    store.append(loaded, {"type": "message", "id": "m3", "role": "user", "content": "编辑后"})
+    store.append(loaded, {"type": "assistant", "id": "a3", "content": "新回答"})
+    assert loaded.user_texts() == ["第一问", "编辑后"]
+
+    store.append(loaded, {"type": "undo", "id": "u2", "message_id": "m3"})
+    assert store.load(session.id).user_texts() == ["第一问"]
+
+
 def test_invalid_session_id_is_rejected(tmp_path):
     store = SessionStore(tmp_path)
     try:

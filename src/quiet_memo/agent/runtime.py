@@ -367,6 +367,28 @@ class AgentRuntime:
     def rename(self, title: str) -> None:
         self.sessions.rename(self.current, title)
 
+    def undo(self) -> str | None:
+        target = next(
+            (
+                record
+                for record in reversed(self.current.active_records())
+                if record.get("type") == "message" and record.get("role") == "user"
+            ),
+            None,
+        )
+        if target is None:
+            return None
+        self.sessions.append(
+            self.current,
+            {
+                "type": "undo",
+                "id": new_message_id(),
+                "message_id": target["id"],
+            },
+        )
+        self.last_plan = None
+        return str(target.get("content") or "")
+
     def _system_prompt(self) -> str:
         """每轮读 vault/SOUL.md，人设改动下一轮即生效；拼接规则见 prompts.py。"""
         prompt = build_system_prompt(load_persona(self.service.config.vault))
