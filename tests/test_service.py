@@ -121,6 +121,34 @@ def test_recall_and_topics(tmp_path):
     assert topics["preferences"]["entries"] == 1
 
 
+def test_read_topic_returns_only_active_entries_for_known_topic(tmp_path):
+    service = make_service(tmp_path, [])
+    service.note("保留的有效条目", topic="preferences", title="偏好")
+    removed = service.note("已删除的旧条目", topic="preferences")
+    service.forget(removed.id)
+
+    result = service.read_topic("偏好")
+
+    assert result["topic"] == "preferences"
+    assert result["content"] == "- 保留的有效条目"
+    assert result["entries"] == 1
+    assert result["truncated"] is False
+    with pytest.raises(KeyError):
+        service.read_topic("../preferences")
+
+
+def test_read_topic_truncates_to_token_budget(tmp_path):
+    from quiet_memo.infra.tokens import estimate_tokens
+
+    service = make_service(tmp_path, [])
+    service.note("很长的主题内容" * 100, topic="documents")
+
+    result = service.read_topic("documents", max_tokens=30)
+
+    assert result["truncated"] is True
+    assert estimate_tokens(result["content"]) <= 30
+
+
 def test_commit_push_failure_does_not_hide_commit(tmp_path):
     # auto_push 但无 remote：本地提交必须成功返回 hash，push 失败只记录在 push_error。
     config = Config(vault=tmp_path / "vault", llm=LLMConfig(), auto_push=True)

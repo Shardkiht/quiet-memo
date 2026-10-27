@@ -55,5 +55,9 @@ async def test_mcp_topics_and_status(tmp_path):
         topics = await client.call_tool("list_topics", {})
         assert topics.data[0]["topic"] == "devices"
 
+        topic = await client.call_tool("read_topic", {"topic": "devices"})
+        assert topic.data["content"] == "- 用 手冲滤纸"
+        assert topic.data["entries"] == 1
+
         status = await client.call_tool("status", {})
         assert status.data["entries"] == 1

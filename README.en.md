@@ -130,7 +130,7 @@ Web search is enabled by default but requires a local open-websearch daemon; see
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: arrow keys to browse, Enter to resume, Del to delete with confirmation; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model, context usage as a progress line with used/total numbers, and the pending count; retrieval mode and shortcut hints live in the empty-session welcome, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
-- The model can call `recall / memorize / correct / forget / review_pending`; it calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
+- The model can call `recall / read_topic / memorize / correct / forget / review_pending`. `read_topic` reads a topic's active entries only when the user explicitly requests the full topic or recall is insufficient, caps output at 2000 tokens, and does not accept file paths. The model calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done.
 - `/undo` withdraws the latest user turn and its subsequent replies, then restores the original text for editing. It appends an `undo` event instead of rewriting JSONL; after resending, the withdrawn turn stays out of context and future distillation.
@@ -169,7 +169,7 @@ flowchart TD
     U["User message"] --> Q["Query building / follow-ups carry context"]
     Q --> R["Hybrid retrieval / BM25 + vector RRF"]
     R --> C["Agent loop / LLM + tools"]
-    C -->|"recall / memorize / correct / forget"| C
+    C -->|"recall / read_topic / memorize / correct / forget"| C
     C --> A["Reply"]
     C -->|"user says 'remember'"| W["Write adjudication / confidence / conflict / secrets"]
     X["Exit extraction / pre-compaction flush / startup catch-up"] --> W
@@ -257,7 +257,7 @@ MCP client configuration:
 }
 ```
 
-Exposed tools: `memorize`, `note`, `recall`, `review_pending`, `approve`, `reject`, `list_topics`, `status`; `search` is added when web search is enabled.
+Exposed tools: `memorize`, `note`, `recall`, `read_topic`, `review_pending`, `approve`, `reject`, `list_topics`, `status`; `search` is added when web search is enabled. `read_topic` shares the Agent tool's topic validation, active-entry filtering, and 2000-token limit.
 
 ## Web search
 

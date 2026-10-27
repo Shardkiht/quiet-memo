@@ -131,6 +131,26 @@ def build_tools(
             data={"results": results},
         )
 
+    def read_topic(arguments: dict) -> ToolOutcome:
+        topic = str(arguments.get("topic", "")).strip()
+        try:
+            result = service.read_topic(topic)
+        except KeyError as exc:
+            return ToolOutcome(
+                ok=False,
+                content=json.dumps({"error": str(exc)}, ensure_ascii=False),
+                display=f"Read topic failed: {topic}",
+            )
+        display = f'Read topic "{result["topic"]}": {result["entries"]} entries'
+        if result["truncated"]:
+            display += " (truncated)"
+        return ToolOutcome(
+            ok=True,
+            content=result["content"] or "(no active entries)",
+            display=display,
+            data=result,
+        )
+
     def memorize(arguments: dict) -> ToolOutcome:
         text = str(arguments.get("text", "")).strip()
         if not text:
@@ -236,6 +256,26 @@ def build_tools(
                 "required": ["query"],
             },
             handler=recall,
+            timeout=timeout,
+        )
+    )
+    registry.register(
+        ToolSpec(
+            name="read_topic",
+            description=(
+                "读取一个现有记忆主题的全部有效条目。仅在用户明确要求查看完整主题，"
+                "或 recall 结果不足以回答且需要该主题完整上下文时调用；一般检索先用 recall。"
+                "topic 使用 recall 返回的主题名或用户明确给出的主题名，不接受文件路径。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string", "description": "现有主题名或主题标题"},
+                },
+                "required": ["topic"],
+                "additionalProperties": False,
+            },
+            handler=read_topic,
             timeout=timeout,
         )
     )

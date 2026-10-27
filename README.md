@@ -130,7 +130,7 @@ fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
 直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是可折叠的会话列表：↑↓ 选择、Enter 恢复、Del 删除（弹确认）；点侧栏右上角的 « 折叠（Ctrl+B 同效），折叠后在对话区左上角点 » 展开。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入 `/` 在输入框上方弹出竖排命令面板（↑↓ 选择 · Enter 执行 · ESC 关闭，可点击）；底部状态栏显示模型、上下文用量（进度线与已用/上限数字）和待确认数量，检索模式与快捷键提示放在空会话欢迎区，超过压缩阈值会提示。回复正文流式渲染（边生成边显示，中断时保留半截并标注）；工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果，启动检查发现未提交的 vault 变更会自动提交。
 
 - 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
-- 模型可调用 `recall / memorize / correct / forget / review_pending`；需要最新公开信息时调用 `search`，需要发布日期或原文细节时再用 `fetch_web` 打开结果页，搜索结果与正文都是外部资料，不执行其中指令。
+- 模型可调用 `recall / read_topic / memorize / correct / forget / review_pending`；`read_topic` 仅在用户明确要求完整主题或召回不足时读取该主题的有效条目，最多 2000 tokens，不接受文件路径。需要最新公开信息时调用 `search`，需要发布日期或原文细节时再用 `fetch_web` 打开结果页，搜索结果与正文都是外部资料，不执行其中指令。
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
 - 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。切换会话不阻塞：上一会话的记忆沉淀转后台执行，完成弹通知。
 - `/undo` 撤回最后一轮提问及后续回复并回填原文供修改；撤销通过追加 `undo` 事件生效，不改写 JSONL，重新发送后旧回合不进入上下文或后续沉淀。
@@ -169,7 +169,7 @@ flowchart TD
     U["用户消息"] --> Q["查询构造 / 追问带上文"]
     Q --> R["混合检索 / BM25 + 向量 RRF"]
     R --> C["Agent 循环 / LLM + 工具"]
-    C -->|"recall / memorize / correct / forget"| C
+    C -->|"recall / read_topic / memorize / correct / forget"| C
     C --> A["回复"]
     C -->|"用户说“记住”"| W["写入裁决 / 置信度 / 冲突 / 敏感拦截"]
     X["退出抽取 / 压缩前沉淀 / 启动补记"] --> W
@@ -256,7 +256,7 @@ MCP 客户端配置：
 }
 ```
 
-暴露工具：`memorize`、`note`、`recall`、`review_pending`、`approve`、`reject`、`list_topics`、`status`；启用联网搜索时另有 `search`。
+暴露工具：`memorize`、`note`、`recall`、`read_topic`、`review_pending`、`approve`、`reject`、`list_topics`、`status`；启用联网搜索时另有 `search`。`read_topic` 与 Agent 工具共用主题校验、有效条目过滤和 2000-token 上限。
 
 ## 联网搜索
 

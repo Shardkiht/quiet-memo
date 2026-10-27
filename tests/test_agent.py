@@ -184,6 +184,30 @@ def test_recall_tool_result_reaches_model(tmp_path):
     assert any("Recalled" in event for event in reply.events)
 
 
+def test_read_topic_tool_result_reaches_model(tmp_path):
+    model = FakeChatModel(
+        [
+            AssistantTurn(
+                tool_calls=[
+                    ToolCall(id="c1", name="read_topic", arguments={"topic": "preferences"})
+                ]
+            ),
+            AssistantTurn(content="这是该主题的完整内容。"),
+        ]
+    )
+    runtime, service = build_runtime(tmp_path, model)
+    service.note("喜欢清淡风味", topic="preferences")
+    service.note("晚上少量喝茶", topic="preferences")
+
+    reply = runtime.ask("把偏好主题完整告诉我")
+
+    second_call_messages = model.calls[1][0]
+    tool_messages = [message for message in second_call_messages if message["role"] == "tool"]
+    assert tool_messages and "清淡风味" in tool_messages[0]["content"]
+    assert "晚上少量喝茶" in tool_messages[0]["content"]
+    assert any('Read topic "preferences": 2 entries' in event for event in reply.events)
+
+
 def test_auto_recall_injects_long_term_memory(tmp_path):
     model = FakeChatModel([AssistantTurn(content="记得。")])
     runtime, service = build_runtime(tmp_path, model)

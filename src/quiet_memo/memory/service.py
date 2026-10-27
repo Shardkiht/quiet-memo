@@ -371,6 +371,29 @@ class MemoryService:
     def recall(self, query: str, limit: int = 10) -> list[SearchHit]:
         return self.retriever.search(query, limit)
 
+    def read_topic(self, topic: str, max_tokens: int = 2000) -> dict:
+        wanted = topic.strip().casefold()
+        info = next(
+            (
+                item
+                for item in self.store.topics()
+                if wanted in (item.topic.casefold(), item.title.casefold())
+            ),
+            None,
+        )
+        if info is None:
+            raise KeyError(f"主题不存在：{topic.strip()}")
+        entries = self.store.entries(topic=info.topic)
+        content = "\n".join(f"- {entry.text}" for entry in entries)
+        truncated_content = truncate_to_tokens(content, max_tokens)
+        return {
+            "topic": info.topic,
+            "title": info.title,
+            "content": truncated_content,
+            "entries": len(entries),
+            "truncated": truncated_content != content,
+        }
+
     def pending(self) -> list[PendingItem]:
         return self.queue.all()
 
