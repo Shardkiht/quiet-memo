@@ -800,3 +800,61 @@ def test_consolidate_threshold_and_cursor_partition(tmp_path):
     assert runtime.consolidate_pending()["admitted"] == 1
     assert "第三条" in calls[1]
     assert "第一条" not in calls[1] and "第二条" not in calls[1]
+
+
+def test_compact_tool_outputs_budget_ignores_system_and_history():
+    from quiet_memo.agent.tools import compact_tool_outputs
+
+    messages = [
+        {"role": "system", "content": "系统提示" * 5000},
+        {"role": "tool", "content": "a" * 400},
+        {"role": "tool", "content": "b" * 400},
+        {"role": "tool", "content": "c" * 400},
+    ]
+
+    # 系统提示再长也不该触发工具结果压缩；只有工具输出本身超预算才压缩。
+    assert compact_tool_outputs(messages, max_tokens=1000) == 0
+    assert compact_tool_outputs(messages, max_tokens=100) == 1
+    assert "较早工具结果已压缩" in messages[1]["content"]
+
+
+def test_tool_output_budget_scales_with_context_window(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_compact(messages, max_tokens=8000):
+        captured["budget"] = max_tokens
+        return 0
+
+    monkeypatch.setattr("quiet_memo.agent.runtime.compact_tool_outputs", fake_compact)
+    model = FakeChatModel(
+        [
+            AssistantTurn(
+                tool_calls=[ToolCall(id="c1", name="recall", arguments={"query": "清淡"})]
+            ),
+            AssistantTurn(content="好"),
+        ]
+    )
+    runtime, _ = build_runtime(tmp_path, model)
+    runtime.config.context_window = 200000
+
+    runtime.ask("测试")
+
+    assert captured["budget"] == 50000
+
+
+def test_consolidate_skips_active_session_even_when_scan_includes_it(tmp_path, monkeypatch):
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
+    store = runtime.sessions
+    session = store.create()
+    store.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "当前会话内容"},
+    )
+    runtime.resume(session.id)
+    # 模拟启动扫描已经拿到候选，随后用户才切进该会话；补记不能在活跃会话上写入。
+    monkeypatch.setattr(store, "unconsolidated", lambda *args, **kwargs: [session])
+
+    result = runtime.consolidate_pending()
+
+    assert result["scanned"] == 0
+    assert result["consolidated"] == 0

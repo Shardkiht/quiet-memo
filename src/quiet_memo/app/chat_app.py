@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from functools import partial
+from urllib.parse import urlsplit
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -198,10 +200,11 @@ class ChatApp(ChatCommandsMixin, App):
         """
         exclude = self.runtime.current.id if self.runtime.has_session else None
         pending = self.sessions.unconsolidated(limit=3, exclude=exclude)
-        if pending:
-            self._set_busy(True)
+        if pending and self.runtime.config.extract_on_exit:
+            # 补沉淀是后台维护，不占用交互 busy；切换会话和提问都不等它。
+            self.notify(f"Catching up on {len(pending)} unfinished session(s) in the background")
             self.run_worker(
-                self._catchup_work, group="ask", thread=True, exclusive=True, exit_on_error=False
+                self._catchup_work, group="catchup", thread=True, exit_on_error=False
             )
             return
         self.run_worker(
@@ -213,9 +216,15 @@ class ChatApp(ChatCommandsMixin, App):
             result = self.runtime.consolidate_pending()
             auto_commit = self.service.commit_pending_changes()
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"Startup catch-up failed: {exc}")
+            self.call_from_thread(self._after_catchup_error, str(exc))
             return
         self.call_from_thread(self._after_catchup, result, auto_commit)
+
+    def _after_catchup_error(self, message: str) -> None:
+        # 后台补记失败只提示，不动 busy：此时用户可能正在提问或切换会话。
+        self.add_card(f"Startup catch-up failed: {message}")
+        self.refresh_pending()
+        self.update_status()
 
     def _background_commit_work(self) -> None:
         try:
@@ -231,7 +240,6 @@ class ChatApp(ChatCommandsMixin, App):
         self.refresh_sessions()
 
     def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
-        self._set_busy(False)
         if auto_commit:
             self.notify(f"Auto-committed uncommitted vault changes: {auto_commit}")
             self.refresh_sessions()
@@ -248,7 +256,6 @@ class ChatApp(ChatCommandsMixin, App):
             self.refresh_sessions()
             self.refresh_pending()
             self.update_status()
-        self._drain_pending_intent()
 
     def action_toggle_sidebar(self) -> None:
         self._set_sidebar_visible(not self.query_one("#sidebar", Vertical).display)
@@ -493,25 +500,69 @@ class ChatApp(ChatCommandsMixin, App):
         summary = session.summary_text()
         if summary:
             self.add_markdown_card(summary, title="Earlier summary")
-        records = [
-            record
-            for record in session.records_after_summary()
-            if record.get("type") in ("message", "assistant")
-            and str(record.get("content") or "").strip()
-        ]
-        if len(records) > 40:
-            self.add_card(f"{len(records) - 40} earlier records omitted")
-            records = records[-40:]
-        for record in records:
-            content = str(record.get("content"))
+        # 先按回合收集，工具结果按 call_id 挂回对应 assistant，回放时顺序与当时一致。
+        turns: list[dict] = []
+        tool_results: dict[str, dict] = {}
+        for record in session.records_after_summary():
+            record_type = record.get("type")
+            if record_type == "tool":
+                tool_results[str(record.get("tool_call_id"))] = record
+                continue
+            if record_type == "message":
+                if record.get("role") == "user" and str(record.get("content") or "").strip():
+                    turns.append(record)
+                continue
+            if record_type != "assistant":
+                continue
+            content = str(record.get("content") or "")
+            if content.strip() or record.get("tool_calls"):
+                turns.append(record)
+        if len(turns) > 40:
+            self.add_card(f"{len(turns) - 40} earlier records omitted")
+            turns = turns[-40:]
+        for record in turns:
+            content = str(record.get("content") or "")
             at = str(record.get("at") or "")
             stamp = at[11:16] if len(at) >= 16 else None
-            if record.get("type") == "message" and record.get("role") == "user":
+            if record.get("type") == "message":
                 self.add_user_turn(content, stamp)
-            else:
+                continue
+            if content.strip():
                 self._chat().mount(Static(f"{ASSISTANT_NAME} · {stamp}" if stamp else ASSISTANT_NAME, classes="who-ai"))
                 self._chat().mount(Markdown(content, classes="reply"))
+            for call in record.get("tool_calls") or []:
+                result = tool_results.get(str(call.get("id")))
+                if result is not None:
+                    self.add_event(self._tool_event_label(call, result))
         self._scroll_end()
+
+    @staticmethod
+    def _tool_event_label(call: dict, result: dict) -> str:
+        """从历史 tool 记录重建事件行；结果 JSON 被截断时退化为成功/失败，不展示原文。"""
+        name = str(call.get("name") or result.get("name") or "tool")
+        arguments = call.get("arguments") or {}
+        ok = bool(result.get("ok"))
+        content = str(result.get("content") or "")
+        payload = None
+        if "\n" in content:
+            try:
+                payload = json.loads(content.split("\n", 1)[1])
+            except (TypeError, ValueError):
+                payload = None
+        if name == "search":
+            query = str(arguments.get("query") or "")[:20]
+            if ok and isinstance(payload, dict) and isinstance(payload.get("results"), list):
+                provider = payload.get("provider") or "open_websearch"
+                return f'Search "{query}": {len(payload["results"])} results ({provider})'
+            return f'Search "{query}"' + ("" if ok else " failed")
+        if name == "fetch_web":
+            url = str(arguments.get("url") or "")
+            if ok:
+                final_url = str((payload or {}).get("final_url") or url)
+                return f"Fetched {urlsplit(final_url).netloc or url}"
+            detail = str((payload or {}).get("error") or "")
+            return f"Fetch failed: {detail}" if detail else "Fetch failed"
+        return f"{name} {'ok' if ok else 'failed'}"
 
     def add_user_turn(self, content: str, stamp: str | None = None) -> None:
         chat = self._chat()

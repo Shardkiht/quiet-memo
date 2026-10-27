@@ -607,9 +607,9 @@ async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
         {"type": "message", "id": new_message_id(), "role": "user", "content": "中断前说的话"},
     )
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(200):
+        for _ in range(300):
             await pilot.pause()
-            if not app.busy:
+            if any("Consolidated 1" in str(widget.render()) for widget in app.query(".card")):
                 break
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
@@ -907,3 +907,101 @@ async def test_session_picker_search_resume_and_delete(tmp_path):
         assert store.exists(s1.id)
         # 过滤结果也要同步：已删会话不能继续留在过滤后的列表里。
         assert len(list(picker.query("#picker-list ListItem"))) == 0
+
+
+async def test_startup_catchup_does_not_block_switching(tmp_path):
+    # 回归：启动补沉淀在后台执行，不能再把输入和会话切换一起锁住。
+    import threading
+
+    app = build_app(tmp_path, [], extract_on_exit=True)
+    crashed = app.sessions.create()
+    app.sessions.append(
+        crashed,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "中断前说的话"},
+    )
+
+    class BlockingExtractor:
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def extract(self, text, context=None):
+            self.started.set()
+            assert self.release.wait(timeout=10)
+            return ExtractionResult(memories=[])
+
+    blocker = BlockingExtractor()
+    app.service.extractor = blocker
+    async with app.run_test(size=(120, 40)) as pilot:
+        for _ in range(200):
+            await pilot.pause()
+            if blocker.started.is_set():
+                break
+        assert blocker.started.is_set()
+        assert app.busy is False
+        assert app.query_one("#input", Input).disabled is False
+
+        app._switch_session(crashed.id)
+        for _ in range(200):
+            await pilot.pause()
+            if app.runtime.has_session and app.runtime.current.id == crashed.id and not app.busy:
+                break
+        assert app.runtime.current.id == crashed.id
+
+        blocker.release.set()
+        for _ in range(300):
+            await pilot.pause()
+            if any("Consolidated" in str(widget.render()) for widget in app.query(".card")):
+                break
+        assert app.busy is False
+        assert any("Consolidated 1" in str(widget.render()) for widget in app.query(".card"))
+
+
+async def test_transcript_replays_tool_events(tmp_path):
+    # 回归：旧会话不仅回放问答正文，也要能看到当时的工具事件。
+    import json
+
+    from quiet_memo.agent.tools import SEARCH_NOTICE
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(
+        session, {"type": "message", "id": "m1", "role": "user", "content": "查 GLM"}
+    )
+    app.sessions.append(
+        session,
+        {
+            "type": "assistant",
+            "id": "a1",
+            "content": "",
+            "tool_calls": [{"id": "c1", "name": "search", "arguments": {"query": "GLM-5.3"}}],
+        },
+    )
+    payload = {
+        "results": [
+            {"title": "t", "url": "https://example.com", "snippet": "", "published": None}
+        ],
+        "provider": "open_websearch",
+        "failed": [],
+    }
+    app.sessions.append(
+        session,
+        {
+            "type": "tool",
+            "id": "t1",
+            "tool_call_id": "c1",
+            "name": "search",
+            "ok": True,
+            "duration_ms": 10,
+            "content": SEARCH_NOTICE + "\n" + json.dumps(payload, ensure_ascii=False),
+        },
+    )
+    app.sessions.append(session, {"type": "assistant", "id": "a2", "content": "最终回答"})
+    app.runtime.resume(session.id)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        events = [str(widget.render()) for widget in app.query(".event-card")]
+        assert any('Search "GLM-5.3": 1 results' in event for event in events)
+        replies = [getattr(widget, "_markdown", "") for widget in app.query(".reply")]
+        assert any("最终回答" in reply for reply in replies)

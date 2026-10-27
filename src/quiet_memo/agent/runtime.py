@@ -206,7 +206,8 @@ class AgentRuntime:
                     {"role": "tool", "tool_call_id": call.id, "content": content}
                 )
                 emit(outcome.display)
-            compact_tool_outputs(messages)
+            # 工具结果预算随上下文窗口走；200K 窗口下 8K 会过早丢证据。
+            compact_tool_outputs(messages, max_tokens=max(8000, self.config.context_window // 4))
 
         if not completed:
             messages.append(
@@ -304,6 +305,9 @@ class AgentRuntime:
             return result
         exclude = self.session.id if self.session is not None else None
         for session in self.sessions.unconsolidated(limit, exclude=exclude):
+            if self.session is not None and session.id == self.session.id:
+                # 后台补记期间用户可能切进这个会话；活跃会话不在后台追加记录。
+                continue
             result["scanned"] += 1
             texts = session.user_texts_after_distilled()
             if not texts:

@@ -14,7 +14,7 @@ from ..infra.search import (
     SearchRouter,
     build_search_router,
 )
-from ..infra.tokens import truncate_to_tokens
+from ..infra.tokens import estimate_tokens, truncate_to_tokens
 from ..memory.service import MemoryService
 from .session import Session
 
@@ -502,14 +502,19 @@ def build_tools(
 
 
 def compact_tool_outputs(messages: list[dict], max_tokens: int = 8000) -> int:
-    """超出预算时，把较早的工具结果替换为占位符，保留最近两条完整结果。"""
-    from ..infra.tokens import estimate_messages_tokens
+    """工具结果超出预算时，把较早的结果替换为占位符，保留最近两条完整结果。
 
-    if estimate_messages_tokens(messages) <= max_tokens:
-        return 0
+    预算只按工具输出计算：系统提示和历史对话不应挤占工具结果的额度，
+    否则长会话一开始就会把搜索证据压掉。
+    """
     tool_indexes = [
         index for index, message in enumerate(messages) if message.get("role") == "tool"
     ]
+    tool_tokens = sum(
+        estimate_tokens(str(messages[index].get("content") or "")) for index in tool_indexes
+    )
+    if tool_tokens <= max_tokens:
+        return 0
     removed = 0
     for index in tool_indexes[:-2]:
         content = str(messages[index].get("content") or "")
