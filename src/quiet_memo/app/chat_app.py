@@ -107,6 +107,7 @@ class ChatApp(ChatCommandsMixin, App):
     .cmd-usage { color: #8a8b90; }
     .cmd-desc { color: #6f7076; }
 
+    SessionPickerScreen, TextInputScreen { align: center middle; }
     #pick-card { width: 64; height: auto; max-height: 70%; background: $panel; border: round #2a2b30; padding: 1 2; }
     #picker-input { width: 1fr; margin-bottom: 1; }
     #picker-list { height: auto; max-height: 16; }

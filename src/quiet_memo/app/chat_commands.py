@@ -204,6 +204,36 @@ class ChatCommandsMixin:
             return
         self._switch_session(session_id)
 
+    def rename_session(self, row: dict) -> None:
+        self.push_screen(
+            TextInputScreen(
+                "Rename session",
+                default=row["title"],
+                on_result=partial(self._rename_session_result, row),
+            )
+        )
+
+    def _rename_session_result(self, row: dict, title) -> None:
+        if title:
+            if not self.sessions.exists(row["id"]):
+                self.notify("Session no longer exists.")
+            else:
+                # 当前会话走 runtime，保证内存中的 Session 也立即拿到新标题。
+                if self.runtime.has_session and row["id"] == self.runtime.current.id:
+                    self.runtime.rename(title)
+                else:
+                    self.sessions.rename(self.sessions.load(row["id"]), title)
+                self.refresh_sessions()
+                for screen in self.screen_stack:
+                    if isinstance(screen, SessionPickerScreen):
+                        screen.set_rows(visible_sessions(self.sessions.list(100, with_tokens=False)))
+                self.notify("Session renamed.")
+        # 重命名弹窗关闭后，焦点回到选择器而不是主输入框。
+        if isinstance(self.screen, SessionPickerScreen):
+            self.screen.query_one("#picker-input", Input).focus()
+        else:
+            self.query_one("#input", Input).focus()
+
     def _resume_by_query(self, query: str) -> None:
         if self.busy:
             return

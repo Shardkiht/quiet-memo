@@ -163,9 +163,13 @@ class CommandPalette(Vertical):
 
 
 class SessionPickerScreen(ModalScreen):
-    """OpenCode 风格会话选择器：搜索过滤、Enter 恢复、Del 删除（带确认）、ESC 取消。"""
+    """居中会话选择器：搜索过滤、Enter 恢复、Ctrl+R 重命名、Del 删除（带确认）、ESC 取消。"""
 
-    BINDINGS = [("escape", "cancel", "Cancel"), ("down", "focus_list", "Select")]
+    BINDINGS = [
+        ("escape", "cancel", "Cancel"),
+        ("down", "focus_list", "Select"),
+        ("ctrl+r", "rename_session", "Rename"),
+    ]
 
     def __init__(self, rows: list[dict], current_id: str | None, on_result) -> None:
         super().__init__()
@@ -178,7 +182,7 @@ class SessionPickerScreen(ModalScreen):
         with Vertical(id="pick-card"):
             yield Input(placeholder="Search session title or ID…", id="picker-input")
             yield ListView(id="picker-list")
-            yield Static("↓ list · Enter resume · Del delete · ESC cancel", classes="pick-hint")
+            yield Static("↓ list · Enter resume · Ctrl+R rename · Del delete · ESC", classes="pick-hint")
 
     def on_mount(self) -> None:
         self._rebuild()
@@ -232,6 +236,11 @@ class SessionPickerScreen(ModalScreen):
 
     def action_focus_list(self) -> None:
         self.query_one("#picker-list", ListView).focus()
+
+    def action_rename_session(self) -> None:
+        item = self.query_one("#picker-list", ListView).highlighted_child
+        if isinstance(item, SessionItem):
+            self.app.rename_session(item.row)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         event.stop()

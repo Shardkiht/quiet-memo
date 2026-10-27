@@ -1005,3 +1005,83 @@ async def test_transcript_replays_tool_events(tmp_path):
         assert any('Search "GLM-5.3": 1 results' in event for event in events)
         replies = [getattr(widget, "_markdown", "") for widget in app.query(".reply")]
         assert any("最终回答" in reply for reply in replies)
+
+
+async def test_session_picker_is_centered(tmp_path):
+    from quiet_memo.app.chat_widgets import SessionPickerScreen
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "会话"},
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.open_session_picker()
+        await pilot.pause()
+        picker = app.screen
+        assert isinstance(picker, SessionPickerScreen)
+        card = picker.query_one("#pick-card")
+        # 卡片应水平、垂直居中，而不是贴在左上角。
+        assert abs(card.region.x - (picker.region.width - card.region.width) / 2) <= 1
+        assert abs(card.region.y - (picker.region.height - card.region.height) / 2) <= 1
+        assert "Ctrl+R" in str(picker.query_one(".pick-hint", Static).content)
+
+
+async def test_session_picker_ctrl_r_renames_session(tmp_path):
+    from quiet_memo.app.chat_widgets import SessionPickerScreen, TextInputScreen
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.rename(session, "旧标题")
+    app.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "旧标题"},
+    )
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.open_session_picker()
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, TextInputScreen)
+        rename_input = app.screen.query_one("#pick-input", Input)
+        assert rename_input.value == "旧标题"
+
+        rename_input.value = "新标题"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, SessionPickerScreen):
+                break
+        assert app.sessions.load(session.id).title() == "新标题"
+        titles = [item.row["title"] for item in app.screen.query("#picker-list SessionItem")]
+        assert "新标题" in titles
+
+
+async def test_session_picker_rename_current_updates_runtime(tmp_path):
+    from quiet_memo.app.chat_widgets import SessionPickerScreen, TextInputScreen
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.rename(session, "旧标题")
+    app.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "旧标题"},
+    )
+    app.runtime.resume(session.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.open_session_picker()
+        await pilot.pause()
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert isinstance(app.screen, TextInputScreen)
+        app.screen.query_one("#pick-input", Input).value = "当前新标题"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, SessionPickerScreen):
+                break
+        assert app.runtime.current.title() == "当前新标题"

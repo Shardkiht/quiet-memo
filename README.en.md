@@ -142,7 +142,7 @@ In-session commands:
 | Command | Action |
 | --- | --- |
 | `/new` | End the current session and start a new one (created after the first message) |
-| `/sessions` | Open the session picker: type to filter, Enter to resume, Del to delete (with confirmation), ESC to cancel |
+| `/sessions` | Open the centered session picker: type to filter, Enter to resume, Ctrl+R to rename, Del to delete (with confirmation), ESC to cancel |
 | `/resume [id\|query]` | Resume a session; without arguments jumps to the session list, an id/keyword resumes the match directly |
 | `/compact` | Compact the context immediately |
 | `/summary` | View the current session summary |
