@@ -336,6 +336,8 @@ class TextInputScreen(ModalScreen):
         self.query_one("#pick-input", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        # 模态输入必须在此终止；否则同一个 Enter 还会冒泡到主输入框被当成聊天消息。
+        event.stop()
         self._finish(event.value.strip())
 
     def action_cancel(self) -> None:

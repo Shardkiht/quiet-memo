@@ -622,6 +622,44 @@ async def test_context_custom_rejects_unicode_digits(tmp_path):
         assert "positive integer" in str(app.query(".card")[-1].render())
 
 
+async def test_context_custom_does_not_send_value_as_chat_message(tmp_path):
+    from textual.widgets import Label, ListView
+
+    from quiet_memo.app.chat_widgets import PickScreen, TextInputScreen
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "/context"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen):
+                break
+
+        listing = app.screen.query_one(ListView)
+        labels = [str(item.query_one(Label).render()) for item in listing.children]
+        listing.index = labels.index("Custom…")
+        listing.focus()
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, TextInputScreen):
+                break
+
+        field = app.screen.query_one("#pick-input", Input)
+        field.value = "400000"
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if not isinstance(app.screen, TextInputScreen) and not app.busy:
+                break
+
+        assert app.service.config.chat.context_window == 400_000
+        assert app.runtime.has_session is False
+        assert not app.query(".bubble")
+
+
 def test_slash_commands_cover_aliases():
     # 回归：面板必须列出 _command 实际支持的别名，/qu、/mo 前缀过滤要有提示。
     commands = {command for command, _, _ in SLASH_COMMANDS}
