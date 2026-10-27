@@ -105,8 +105,9 @@ class ChatApp(ChatCommandsMixin, App):
     .welcome-meta { color: #777980; margin-top: 1; }
     .welcome-hint { color: #777980; margin-top: 2; }
 
-    #input { margin: 0 3 1 3; background: #17181c; border: round #303138; border-title-color: #83848c; border-title-align: left; }
-    #input:focus { background: #191a1f; border: round #56575f; border-title-color: #b0b1b6; }
+    /* 输入框不做焦点整块提亮，避免像额外遮罩；只用边框区分焦点。 */
+    #input { margin: 0 3 1 3; background: $bg; border: round #303138; border-title-color: #83848c; border-title-align: left; }
+    #input:focus { border: round #56575f; border-title-color: #b0b1b6; }
     /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */
     #input > .input--cursor {
         background: transparent;

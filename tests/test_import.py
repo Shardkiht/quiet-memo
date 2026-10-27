@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+pytestmark = pytest.mark.memory
+
 from quiet_memo.infra.config import Config, LLMConfig, RetrievalConfig
 from quiet_memo.memory.extractor import (
     ExtractorError,

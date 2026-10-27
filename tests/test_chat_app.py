@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.ui
+
 from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
@@ -658,8 +662,14 @@ async def test_delete_session_uses_captured_row(tmp_path):
         assert store.exists(survivor.id)
         from quiet_memo.app.chat_app import SessionItem
 
-        # 列表已刷新：被删条目消失，保留会话仍在侧栏。
-        assert [item.row["id"] for item in app.query(SessionItem)] == [survivor.id]
+        # 文件删除先于 DOM 异步清理完成；等到旧节点移除、列表收敛后再断言。
+        remaining = []
+        for _ in range(100):
+            await pilot.pause()
+            remaining = [item.row["id"] for item in app.query(SessionItem)]
+            if remaining == [survivor.id]:
+                break
+        assert remaining == [survivor.id]
 
 
 async def test_delete_confirmation_rechecks_current_session(tmp_path):
@@ -1393,7 +1403,12 @@ async def test_dialog_inputs_share_neutral_focus_style(tmp_path):
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         main_input = app.query_one("#input", Input)
+        assert main_input.styles.background == Color.parse("#131417")
         assert main_input.styles.border_top[1] == Color.parse("#56575f")
+        main_input.blur()
+        await pilot.pause()
+        assert main_input.styles.background == Color.parse("#131417")
+        main_input.focus()
 
         app.open_session_picker()
         await pilot.pause()

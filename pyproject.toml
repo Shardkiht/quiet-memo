@@ -64,3 +64,13 @@ packages = ["src/quiet_memo"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "ui: Textual 界面与交互测试",
+    "agent: Agent 运行时、会话与上下文测试",
+    "memory: 记忆存储、抽取、裁决与队列测试",
+    "retrieval: 本地关键词与向量检索测试",
+    "cli: 命令行入口测试",
+    "config: 配置与供应商测试",
+    "mcp: MCP 服务接口测试",
+    "search: 联网搜索与抓取测试",
+]

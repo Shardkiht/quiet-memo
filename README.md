@@ -337,11 +337,19 @@ src/quiet_memo/
 
 ## 测试
 
+局部改动按影响范围运行分类测试，提交前再跑全量：
+
 ```bash
+uv run pytest -m ui
+uv run pytest -m agent
+uv run pytest -m memory
+uv run pytest -m retrieval
+uv run pytest -m "cli or config"
+uv run pytest -m "mcp or search"
 uv run pytest
 ```
 
-测试覆盖存储、队列、冲突检测、检索、抽取解析、会话、上下文压缩、Agent 工具循环、MCP 和 CLI。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
+分类为 `ui`（TUI）、`agent`（运行时/会话/上下文）、`memory`（存储/抽取/裁决/队列）、`retrieval`（本地检索）、`cli`、`config`、`mcp`、`search`（联网搜索）。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
 
 ## 检索评测
 

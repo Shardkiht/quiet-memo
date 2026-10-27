@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.mcp
+
 from fastmcp import Client
 
 from quiet_memo.app.server import build_server

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.agent
+
 from quiet_memo.agent.context import ContextManager
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.infra.config import ChatConfig

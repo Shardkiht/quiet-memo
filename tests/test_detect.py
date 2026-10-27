@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.memory
+
 from quiet_memo.memory.detect import contains_secret, find_conflicts
 from quiet_memo.memory.models import Candidate, Entry
 

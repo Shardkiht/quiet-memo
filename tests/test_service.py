@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.memory
+
 from quiet_memo.infra.config import Config, LLMConfig
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import Candidate, ExtractionResult, PendingItem

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.memory
+
 from datetime import datetime
 
 from quiet_memo.memory.store import MemoryStore, slugify

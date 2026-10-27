@@ -6,6 +6,8 @@ import os
 import httpx
 import pytest
 
+pytestmark = pytest.mark.search
+
 from quiet_memo.agent.session import SessionStore
 from quiet_memo.agent.tools import SEARCH_NOTICE, build_tools
 from quiet_memo.app.server import build_server

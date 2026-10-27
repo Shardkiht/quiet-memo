@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.agent
+
 from types import SimpleNamespace
 
 from quiet_memo.agent.recall import RecallQueryBuilder

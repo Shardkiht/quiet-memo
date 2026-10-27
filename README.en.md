@@ -338,11 +338,19 @@ Development conventions (code style, storage invariants, testing, and docs sync)
 
 ## Testing
 
+Run focused categories for local changes and the full suite before committing:
+
 ```bash
+uv run pytest -m ui
+uv run pytest -m agent
+uv run pytest -m memory
+uv run pytest -m retrieval
+uv run pytest -m "cli or config"
+uv run pytest -m "mcp or search"
 uv run pytest
 ```
 
-Tests cover the store, queue, conflict detection, retrieval, extraction parsing, sessions, context compaction, the agent tool loop, MCP, and the CLI. LLM paths are tested with a fixed extractor and fake models; without real API keys, no online verification is claimed.
+Categories are `ui` (TUI), `agent` (runtime/sessions/context), `memory` (store/extraction/policy/queue), `retrieval` (local retrieval), `cli`, `config`, `mcp`, and `search` (web search). LLM paths use a fixed extractor and fake models; without real API keys, no online verification is claimed.
 
 ## Retrieval evaluation
 

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.memory
+
 from quiet_memo.memory.models import PendingItem
 from quiet_memo.memory.queue import PendingQueue
 

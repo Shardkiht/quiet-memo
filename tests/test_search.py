@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.retrieval
+
 from quiet_memo.memory.store import MemoryStore
 from quiet_memo.retrieval import KeywordRetriever, tokenize
 

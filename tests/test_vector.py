@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.retrieval
+
 import numpy as np
 
 from quiet_memo.infra.config import Config, EmbeddingConfig, RetrievalConfig

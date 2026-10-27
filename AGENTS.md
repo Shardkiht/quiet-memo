@@ -68,6 +68,7 @@ memory/agent → llm → infra
 ## 测试
 
 - 新行为必须带测试，放在 `tests/` 下对应的领域文件中。
+- 测试文件用 `pytestmark` 分为 `ui`、`agent`、`memory`、`retrieval`、`cli`、`config`、`mcp`、`search`；局部改动按影响范围运行对应分类，跨模块核心改动仍跑全量。
 - 测试禁止读取本机 keyring、真实 API Key 或调用付费模型；使用 `tests/conftest.py` 的 fixture、`StaticExtractor` 和假模型。
 - **测试环境隔离是夹具级红线**：conftest autouse 已把 `QUIET_MEMO_CONFIG`/`QUIET_MEMO_VAULT` 钉在每个测试的临时目录，任何测试和代码路径都不得绕过它直连本机配置/记忆库。把源码回退到旧版本再跑新测试是危险组合（旧路径可能绕过 mock 写真实文件），必须先确认隔离护栏在位。
 - 未接真实 API Key 验证时，不声称“已完成线上验证”；真实调用只做冒烟（提前约定次数上限），解耦层的 mock 单测覆盖不了 service 接线的真实形状，关键链路补一次真实冒烟。

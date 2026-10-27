@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytestmark = pytest.mark.cli
+
 from typer.testing import CliRunner
 
 from quiet_memo.app.cli import app
