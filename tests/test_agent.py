@@ -198,6 +198,39 @@ def test_auto_recall_uses_recent_context_for_followup(tmp_path, monkeypatch):
     assert "滨江" in queries[1]
 
 
+def test_attribute_question_rewrites_with_synonyms(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from quiet_memo.agent.recall import RecallQueryBuilder
+    from quiet_memo.memory.store import MemoryStore
+    from quiet_memo.retrieval.keyword import KeywordRetriever
+
+    monkeypatch.setattr(LLMConfig, "api_key", lambda self: "test-key")
+
+    def fake_complete(config, messages, **kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="姓名 名字 用户称呼")
+                )
+            ]
+        )
+
+    query = RecallQueryBuilder(LLMConfig(), completer=fake_complete).build(
+        "我叫什么名字", []
+    )
+
+    assert query.rewritten is True
+    assert "姓名" in query.text
+
+    store = MemoryStore(tmp_path / "vault")
+    store.append("01-identity", "姓名：张三")
+    store.append("preferences", "喜欢清淡风味")
+    store.append("devices", "使用便携键盘")
+    hits = KeywordRetriever(store).search(query.text)
+    assert hits and hits[0].topic == "01-identity"
+
+
 def test_memory_cue_increases_auto_recall_limit(tmp_path, monkeypatch):
     model = FakeChatModel([AssistantTurn(content="记得。")])
     runtime, service = build_runtime(tmp_path, model)
@@ -520,8 +553,8 @@ def _config_with_vault(tmp_path_factory=None):
     return Config(vault=tmp / "vault", llm=LLMConfig(), retrieval=RetrievalConfig(method="keyword"))
 
 
-def test_recall_tool_guides_natural_language_query():
-    """身份类查询召回缺口的修复之一：引导模型用自然问句/用户原话检索。"""
+def test_recall_tool_guides_query_with_synonyms():
+    """身份类查询召回：自然问句还要带常见同义词/字段名，避免“名字”漏掉“姓名”。"""
     from quiet_memo.agent.tools import build_tools
     from quiet_memo.agent.session import SessionStore
     from quiet_memo.memory.service import MemoryService
@@ -531,8 +564,10 @@ def test_recall_tool_guides_natural_language_query():
     service.init_vault()
     session = SessionStore(config.vault).create()
     spec = build_tools(service, session)._tools["recall"]
-    assert "自然问句" in spec.description
+    assert "同义词" in spec.description
     assert "自然问句" in spec.parameters["properties"]["query"]["description"]
+    assert "姓名" in spec.parameters["properties"]["query"]["description"]
+    assert "不要拼凑关键词" not in spec.description
 
 
 def test_import_prompt_forbids_section_prefix():

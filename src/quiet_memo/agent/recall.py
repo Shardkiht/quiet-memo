@@ -17,6 +17,10 @@ FOLLOWUP_RE = re.compile(
     r"^(and|what about|how about|then)\b",
     re.IGNORECASE,
 )
+ATTRIBUTE_RE = re.compile(
+    r"叫什么|名字|姓名|怎么称呼|我多大|年龄|家乡|老家|住哪|住处|住址",
+    re.IGNORECASE,
+)
 REWRITE_PROMPT = """把当前问题和最近对话合并成一个用于检索个人记忆的独立查询。
 要求：
 1. 保留人物、地点、时间、数字、型号和主题词。
@@ -60,8 +64,10 @@ class RecallQueryBuilder:
         ][-self.context_turns :]
         cue = bool(MEMORY_CUE_RE.search(text))
         followup = bool(FOLLOWUP_RE.search(text))
-        needs_context = bool(recent) and (cue or followup)
-        if not needs_context:
+        attribute = bool(ATTRIBUTE_RE.search(text))
+        needs_context = bool(recent) and (cue or followup or attribute)
+        # 名字/年龄等属性问题即使没有“记得”线索也需要同义词改写。
+        if not needs_context and not attribute:
             return RecallQuery(text, cue=cue)
 
         combined = " ".join([*recent, text])[-400:]

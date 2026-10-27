@@ -49,7 +49,7 @@ def build_server(
 
     @mcp.tool
     def recall(query: str, limit: int = 10) -> list[dict]:
-        """按关键词检索本地记忆，返回命中的文件、行号和内容。"""
+        """检索本地记忆。query 用自然问句并附常见同义词或字段名，如“我叫什么名字 姓名 名字”。"""
         return [hit.model_dump() for hit in svc.recall(query, limit)]
 
     @mcp.tool

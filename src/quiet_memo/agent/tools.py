@@ -222,14 +222,14 @@ def build_tools(
             name="recall",
             description=(
                 "检索用户长期记忆。回答涉及用户个人信息的问题前先调用。"
-                "query 用自然问句或用户的原话，不要拼凑关键词。"
+                "query 用自然问句并附上常见同义词或字段名（如名字补姓名、家乡补老家）。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "检索词：优先用自然问句或用户原话，如“我叫什么名字”",
+                        "description": "检索词：自然问句 + 同义词/字段名，如“我叫什么名字 姓名 名字 称呼”",
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
                 },

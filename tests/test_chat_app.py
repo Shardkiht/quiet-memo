@@ -324,8 +324,6 @@ async def test_model_picker_filters_by_search(tmp_path):
 async def test_model_picker_uses_cache_and_refreshes_in_background(tmp_path, monkeypatch):
     import threading
 
-    from textual.widgets import Label
-
     from quiet_memo.app.chat_widgets import PickScreen
 
     release = threading.Event()
@@ -354,20 +352,14 @@ async def test_model_picker_uses_cache_and_refreshes_in_background(tmp_path, mon
         picker = app.screen
         assert isinstance(picker, PickScreen)
         assert not app.busy
-        labels = [
-            str(item.query_one(Label).render())
-            for item in picker.query("#pick-list OptionItem")
-        ]
+        labels = [item.label for item in picker.query("#pick-list OptionItem")]
         assert any("cached-model" in label for label in labels)
         assert not any("fresh-model" in label for label in labels)
 
         release.set()
         for _ in range(100):
             await pilot.pause()
-            labels = [
-                str(item.query_one(Label).render())
-                for item in picker.query("#pick-list OptionItem")
-            ]
+            labels = [item.label for item in picker.query("#pick-list OptionItem")]
             if any("fresh-model" in label for label in labels):
                 break
         assert any("fresh-model" in label for label in labels)
