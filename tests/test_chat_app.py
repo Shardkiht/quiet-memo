@@ -80,6 +80,19 @@ async def test_chat_roundtrip(tmp_path):
         assert "Context" in str(app.query_one("#status", Static).content)
 
 
+async def test_status_bar_renders_context_usage(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        status = app.query_one("#status", Static)
+        rendered = "".join(
+            status.render_line(y).text for y in range(status.size.height)
+        )
+
+        assert "Context" in rendered
+        assert "/32K" in rendered
+
+
 async def test_slash_help_card(tmp_path):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
@@ -386,6 +399,55 @@ async def test_ctrl_b_toggles_sidebar(tmp_path):
         assert sidebar.display and not expand.display
 
 
+async def test_main_focus_stays_on_chat_input(tmp_path):
+    from textual.containers import Vertical
+    from textual.widgets import ListView
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", Input)
+        sessions = app.query_one("#sessions", ListView)
+        assert sessions.can_focus is False
+        assert widget.has_focus
+
+        await pilot.press("tab")
+        await pilot.pause()
+        assert widget.has_focus
+
+        await pilot.press("shift+tab")
+        await pilot.pause()
+        assert widget.has_focus
+
+        app._set_sidebar_visible(False)
+        app.show_sidebar()
+        await pilot.pause()
+        assert widget.has_focus
+        assert app.query_one("#sidebar", Vertical).display
+
+
+async def test_clicking_chat_keeps_input_focus(tmp_path):
+    from textual.containers import VerticalScroll
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        app.add_assistant_turn("点击正文不应该抢走输入焦点", "12:00")
+        await pilot.pause()
+        widget = app.query_one("#input", Input)
+        chat = app.query_one("#chat", VerticalScroll)
+        assert chat.can_focus is False
+        assert widget.has_focus
+
+        await pilot.click(chat)
+        await pilot.pause()
+        assert widget.has_focus
+
+        await pilot.click(".reply")
+        await pilot.pause()
+        assert widget.has_focus
+
+
 async def test_sidebar_rows_align_with_new_session(tmp_path):
     # 回归：New session 与会话列表必须同宽同起点；列表滚动时也不能缩窄。
     app = build_app(tmp_path, [])
@@ -445,6 +507,7 @@ async def test_sidebar_items_are_compact_and_clickable(tmp_path):
             if not app.busy and app.runtime.has_session:
                 break
         assert app.runtime.current.id == second.row["id"]
+        assert app.query_one("#input", Input).has_focus
 
 
 async def test_compact_failure_releases_busy(tmp_path):

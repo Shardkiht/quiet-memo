@@ -112,7 +112,8 @@ class ChatApp(ChatCommandsMixin, App):
         background: transparent;
         color: #d5d6da;
     }
-    #status { width: 1fr; height: 1; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
+    /* 1 行正文 + 1 行上边框；height:1 会被边框吃掉整个内容区。 */
+    #status { width: 1fr; height: 2; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
 
     /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语 */
     #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round #383a42; padding: 0 1; display: none; }
@@ -188,6 +189,9 @@ class ChatApp(ChatCommandsMixin, App):
             self.build_transcript()
         else:
             self.add_welcome()
+        # 主界面只有聊天输入框接受焦点；侧栏和对话区仍可点击/滚动，但不抢键盘焦点。
+        self.query_one("#sessions", ListView).can_focus = False
+        self.query_one("#chat", VerticalScroll).can_focus = False
         self.query_one("#input", Input).focus()
         self._run_catchup()
         self._warm_search()
@@ -282,7 +286,22 @@ class ChatApp(ChatCommandsMixin, App):
 
     def show_sidebar(self) -> None:
         self._set_sidebar_visible(True)
-        self.query_one("#sessions", ListView).focus()
+        self.query_one("#input", Input).focus()
+
+    def _focus_active_input(self) -> None:
+        if len(self.screen_stack) > 1:
+            for widget in self.screen.query(Input):
+                if widget.can_focus and widget.display and not widget.disabled:
+                    widget.focus()
+                    return
+            return
+        self.query_one("#input", Input).focus()
+
+    def action_focus_next(self) -> None:
+        self._focus_active_input()
+
+    def action_focus_previous(self) -> None:
+        self._focus_active_input()
 
     def run_command_from_palette(self, command: str) -> None:
         self.query_one("#cmd-palette", CommandPalette).close()
