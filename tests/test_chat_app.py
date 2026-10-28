@@ -720,10 +720,16 @@ async def test_compact_failure_releases_busy(tmp_path):
 async def test_session_switch_failure_releases_busy(tmp_path):
     # 回归：resume 抛异常（会话文件损坏等）时同样不能卡死输入框。
     app = build_app(tmp_path, [])
+    app.runtime.config.extract_on_exit = True
+    session = app.runtime.ensure_session()
+    app.runtime.sessions.append(
+        session,
+        {"type": "message", "id": new_message_id(), "role": "user", "content": "合成陈述"},
+    )
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
 
-        def boom(session_id):
+        def boom(session_id, **kwargs):
             raise KeyError("会话不存在：s-xxx")
 
         app.runtime.resume = boom
@@ -735,6 +741,30 @@ async def test_session_switch_failure_releases_busy(tmp_path):
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
         assert "Session switch failed" in str(app.query(".card")[-1].render())
+        assert app.runtime.current is session
+        app.runtime.close()
+        assert any(record.get("type") == "distilled" for record in session.records)
+
+
+async def test_resuming_torn_session_shows_recovery_notice_and_continues(tmp_path):
+    app = build_app(tmp_path, [AssistantTurn(content="接续成功")])
+    session = app.runtime.ensure_session()
+    app.runtime.sessions.append(session, {
+        "type": "message", "id": new_message_id(), "role": "user", "content": "合成历史",
+    })
+    with session.path.open("ab") as handle:
+        handle.write(b'{"type":"assistant","content":"')
+    original = session.path.read_bytes()
+    app.runtime.resume(session.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert any("会话末行不完整" in str(card.render()) for card in app.query(".card"))
+        widget = app.query_one("#input", Input)
+        widget.value = "接续提问"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+        assert session.path.read_bytes().startswith(original)
+        assert app.sessions.load(session.id).user_texts() == ["合成历史", "接续提问"]
 
 
 async def test_session_switch_updates_sidebar_without_reload(tmp_path, monkeypatch):

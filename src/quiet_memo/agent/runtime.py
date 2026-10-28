@@ -16,6 +16,7 @@ from ..llm import (
     Usage,
 )
 from ..memory.extractor import split_chunks
+from ..memory.detect import redact_secrets
 from ..memory.service import MemoryService, load_persona
 from .context import ContextManager
 from .prompts import build_system_prompt
@@ -83,8 +84,11 @@ class AgentRuntime:
     def has_session(self) -> bool:
         return self.session is not None
 
-    def resume(self, session_id: str) -> Session:
-        self.session = self.sessions.load(session_id)
+    def resume(self, session_id: str, *, close_current: bool = False) -> Session:
+        session = self.sessions.load(session_id)
+        if close_current:
+            self.close(distill=False)
+        self.session = session
         self.last_plan = None
         self._closed = False
         return self.session
@@ -133,7 +137,7 @@ class AgentRuntime:
         on_event: Callable[[str], None] | None = None,
         on_delta: Callable[[str], None] | None = None,
     ) -> AgentReply:
-        text = text.strip()
+        text = redact_secrets(text.strip())
         if not text:
             raise ValueError("消息为空。")
         session = self.ensure_session()

@@ -24,6 +24,27 @@ def test_search_finds_keyword(tmp_path):
     assert "清淡" in hits[0].text
 
 
+@pytest.mark.parametrize("count", [1, 2, 5])
+def test_search_keeps_common_terms_in_small_corpus(tmp_path, count):
+    store = MemoryStore(tmp_path)
+    for index in range(count):
+        store.append("preferences", f"喜欢无糖热饮，合成记录{index}")
+    retriever = KeywordRetriever(store)
+    hits = retriever.search("饮品偏好 喜欢喝什么 无糖热饮 饮料口味")
+    assert len(hits) == count
+    assert all(hit.score > 0 for hit in hits)
+    assert retriever.search("完全无关的键盘轴体") == []
+
+
+def test_search_handles_empty_token_corpus_and_subsequent_addition(tmp_path):
+    store = MemoryStore(tmp_path)
+    store.append("test", "的 了")
+    retriever = KeywordRetriever(store)
+    assert retriever.search("无糖热饮") == []
+    store.append("preferences", "喜欢无糖热饮")
+    assert len(retriever.search("无糖热饮")) == 1
+
+
 def test_search_limit(tmp_path):
     store = MemoryStore(tmp_path)
     for index in range(5):

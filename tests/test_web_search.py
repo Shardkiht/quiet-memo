@@ -205,7 +205,7 @@ def test_router_fetch_uses_fetch_capable_provider(public_dns):
     assert router.fetch("https://example.com", 1000).content == "正文内容"
 
 
-def test_router_fetch_failure_is_labeled_as_fetch():
+def test_router_fetch_failure_is_labeled_as_fetch(public_dns):
     class BrokenFetch:
         name = "fake"
         capabilities = {"fetch"}

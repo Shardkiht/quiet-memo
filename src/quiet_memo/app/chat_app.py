@@ -289,12 +289,14 @@ class ChatApp(ChatCommandsMixin, App):
     def _session_work(self, session_id: str | None) -> None:
         try:
             # 快速路径：切换只做记账（distill=False 不跑 LLM 抽取），UI 立即就绪。
-            stats = self.runtime.close(distill=False)
+            stats = {}
             if session_id is None:
+                stats = self.runtime.close(distill=False)
                 self.runtime.start()
                 label = None
             else:
-                session = self.runtime.resume(session_id)
+                # resume 先加载目标；失败时当前会话仍能正常退出沉淀。
+                session = self.runtime.resume(session_id, close_current=True)
                 label = f"{session.id} · {session.title()}"
         except Exception as exc:
             # 会话文件损坏/被删等异常不能让 busy 卡死：留在原会话并提示。
@@ -408,6 +410,10 @@ class ChatApp(ChatCommandsMixin, App):
     def build_transcript(self) -> None:
         session = self.runtime.current
         widgets = []
+        if session.damaged_tail_line is not None:
+            widgets.append(Static(
+                "会话末行不完整，已恢复此前完整记录；原文件内容仍保留。", classes="card"
+            ))
         summary = session.summary_text()
         if summary:
             widgets.append(Static("Earlier summary", classes="who-ai"))

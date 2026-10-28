@@ -435,9 +435,21 @@ class MemoryService:
             raise ValueError("相同内容已存在。")
         supersedes = item.conflict_with
         if supersedes:
-            old = self.store.find(supersedes)
-            if old is not None and old.status == STATUS_ACTIVE:
-                self.store.set_status(supersedes, STATUS_SUPERSEDED)
+            entries = self.store.entries(include_inactive=True)
+            old = next((entry for entry in entries if entry.id == supersedes), None)
+            # 候选可能已过期：沿替代链找到当前有效版本，不让两次确认留下冲突双活。
+            visited: set[str] = set()
+            while old is not None and old.status == STATUS_SUPERSEDED:
+                if old.id in visited:
+                    raise ValueError("记忆替代链异常，请重新审阅候选。")
+                visited.add(old.id)
+                successors = [entry for entry in entries if entry.supersedes == old.id]
+                if len(successors) != 1:
+                    raise ValueError("原记忆的替代关系已变化，请重新审阅候选。")
+                old = successors[0]
+            if old is None or old.status != STATUS_ACTIVE:
+                raise ValueError("原记忆已删除或不存在，请重新审阅候选。")
+            supersedes = old.id
         entry = self.store.append(
             item.topic,
             text,
@@ -448,6 +460,8 @@ class MemoryService:
             extra={"session": item.session_id or "", "message": item.message_id or ""},
             supersedes=supersedes,
         )
+        if supersedes:
+            self.store.set_status(supersedes, STATUS_SUPERSEDED)
         self.queue.resolve(item_id, "approved")
         override_fields = {"text_override": text} if text_override is not None else {}
         self.audit.write(

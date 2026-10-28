@@ -91,7 +91,7 @@ reserve_output_tokens = 1500
 keep_recent_tokens = 6000
 compact_threshold = 0.8
 max_tool_steps = 8
-tool_timeout = 60.0
+tool_timeout = 60.0           # Already-running writes await their actual result to avoid late writes after a timeout error
 auto_recall = 3
 recall_rewrite = true         # Rewrite follow-up queries with the LLM; falls back without a key
 recall_context_turns = 2      # Recent user turns used for follow-up queries
@@ -310,7 +310,13 @@ Memories are stored per topic as `memories/<topic>.md`, and entries carry a stab
 
 Corrections use a "new entry + `supersedes`" pattern, and the old entry's status becomes `superseded`; deletion is a soft delete with status `deleted`. Operations are written to `.quiet-memo/audit.jsonl`, and Git can roll them back.
 
+Trailing tag values containing backticks or line breaks are stored with a `~qm-escaped~` prefix and percent encoding, then decoded on read. Ordinary tags keep their existing format, and entry IDs remain stable.
+
 Editing a candidate in `/pending` validates the final text and writes one memory directly, without first admitting and then correcting the original. Conflicting candidates still replace the old entry through `supersedes`. The original candidate remains in `resolved.jsonl`, while the audit record stores the edited text as `text_override`. Rejected blank or detected credential input leaves the candidate and old entry unchanged.
+
+Approving a stale conflicting candidate follows the replacement chain to the current active entry. If the original entry was deleted, is missing, or has an ambiguous replacement chain, approval is rejected and the candidate is retained. User messages, assistant replies, summaries, titles, and tool arguments have detected credentials hidden before appending to session files; new user messages are also sanitized before reaching the model. Existing sessions and Git history are not rewritten automatically.
+
+If an interruption leaves a damaged final session line, the complete preceding records can be restored with a notice. Continuing the session only appends a newline and a `recovery` marker, preserving the original file contents. Unmarked corruption in the middle of a session still raises an error.
 
 Credential detection considers assignment syntax and separators. It permits Chinese descriptions such as forgetting a password or not receiving a code, while retaining checks for passwords with special characters, explicitly assigned Chinese passwords, and codes immediately followed by Chinese text. Detection is heuristic: ambiguous text explicitly written as a credential assignment is conservatively blocked, and this is not a complete data-loss prevention system.
 

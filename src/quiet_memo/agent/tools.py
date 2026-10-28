@@ -45,6 +45,7 @@ class ToolSpec:
     handler: Callable[[dict], ToolOutcome]
     timeout: float = 60.0
     executor: str = "default"
+    mutating: bool = False
 
 
 class ToolRegistry:
@@ -82,12 +83,23 @@ class ToolRegistry:
         try:
             outcome = future.result(timeout=spec.timeout)
         except FutureTimeout:
-            future.cancel()  # 只能取消未开始的任务；已运行的调用无法强杀
-            outcome = ToolOutcome(
-                ok=False,
-                content=json.dumps({"error": f"{name} 执行超时"}, ensure_ascii=False),
-                display=f"{name} timed out ({spec.timeout:.0f}s)",
-            )
+            cancelled = future.cancel()
+            if spec.mutating and not cancelled:
+                # 写入已开始后无法强杀；必须等到真实结果，不能先报失败再延迟落盘。
+                try:
+                    outcome = future.result()
+                except Exception as exc:
+                    outcome = ToolOutcome(
+                        ok=False,
+                        content=json.dumps({"error": str(exc)}, ensure_ascii=False),
+                        display=f"{name} failed: {exc}",
+                    )
+            else:
+                outcome = ToolOutcome(
+                    ok=False,
+                    content=json.dumps({"error": f"{name} 执行超时"}, ensure_ascii=False),
+                    display=f"{name} timed out ({spec.timeout:.0f}s)",
+                )
         except Exception as exc:
             outcome = ToolOutcome(
                 ok=False,
@@ -295,6 +307,7 @@ def build_tools(
             },
             handler=memorize,
             timeout=timeout,
+            mutating=True,
         )
     )
     registry.register(
@@ -312,6 +325,7 @@ def build_tools(
             },
             handler=correct,
             timeout=timeout,
+            mutating=True,
         )
     )
     registry.register(
@@ -328,6 +342,7 @@ def build_tools(
             },
             handler=forget,
             timeout=timeout,
+            mutating=True,
         )
     )
     registry.register(

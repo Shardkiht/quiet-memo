@@ -7,6 +7,7 @@ import secrets
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote, unquote
 
 import yaml
 
@@ -22,6 +23,7 @@ TAG_AT_END_RE = re.compile(r"\s+`([A-Za-z_][\w-]*)=([^`]*)`$")
 KNOWN_TAG_KEYS = frozenset(
     {"id", "status", "supersedes", "source", "confidence", "note", "session", "message"}
 )
+ESCAPED_TAG_PREFIX = "~qm-escaped~"
 
 STATUS_ACTIVE = "active"
 STATUS_SUPERSEDED = "superseded"
@@ -71,7 +73,12 @@ def _render_comment(fields: dict[str, str]) -> str:
 
 
 def _render_tags(fields: dict[str, str]) -> str:
-    return " ".join(f"`{key}={value}`" for key, value in fields.items())
+    def escape(value: str) -> str:
+        if any(char in value for char in "`\r\n") or value.startswith(ESCAPED_TAG_PREFIX):
+            return ESCAPED_TAG_PREFIX + quote(value, safe="")
+        return value
+
+    return " ".join(f"`{key}={escape(value)}`" for key, value in fields.items())
 
 
 def _split_tags(rest: str) -> tuple[str, dict[str, str]]:
@@ -81,7 +88,11 @@ def _split_tags(rest: str) -> tuple[str, dict[str, str]]:
     text = rest.rstrip()
     while (match := TAG_AT_END_RE.search(text)) and match.group(1) in KNOWN_TAG_KEYS:
         key = match.group(1)
-        tags[key] = match.group(2)
+        value = match.group(2)
+        tags[key] = (
+            unquote(value[len(ESCAPED_TAG_PREFIX):])
+            if value.startswith(ESCAPED_TAG_PREFIX) else value
+        )
         text = text[: match.start()].rstrip()
         if key == "id":
             break

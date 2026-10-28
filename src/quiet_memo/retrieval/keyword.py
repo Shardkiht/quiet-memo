@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from functools import lru_cache
 
 from rank_bm25 import BM25Okapi
@@ -54,7 +55,17 @@ class KeywordRetriever:
         if self._bm25 is None or fingerprint != self._fingerprint:
             self._entries = self.store.entries()
             corpus = [list(tokenize(entry.text)) for entry in self._entries]
-            self._bm25 = BM25Okapi(corpus, k1=self.k1, b=self.b) if corpus else None
+            self._bm25 = BM25Okapi(corpus, k1=self.k1, b=self.b) if any(corpus) else None
+            if self._bm25 is not None:
+                # Okapi 的负 IDF 会让小库的相关结果全部被过滤；使用正值的平滑 IDF。
+                frequencies: dict[str, int] = {}
+                for document in corpus:
+                    for token in set(document):
+                        frequencies[token] = frequencies.get(token, 0) + 1
+                self._bm25.idf = {
+                    token: math.log1p((len(corpus) - count + 0.5) / (count + 0.5))
+                    for token, count in frequencies.items()
+                }
             self._fingerprint = fingerprint
         return self._entries, self._bm25
 

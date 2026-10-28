@@ -87,6 +87,26 @@ def test_slugify():
     assert slugify("学习计划") == "学习计划"
 
 
+@pytest.mark.parametrize("source", ["import:合成`笔记.md", "合成\n来源\r尾行", "~qm-escaped~literal%20"])
+def test_metadata_special_characters_roundtrip_with_stable_id(tmp_path, source):
+    store = MemoryStore(tmp_path)
+    entry = store.append("test", "合成正文 `status=deleted`", source=source, note=source)
+    assert store.entries() == [entry]
+    assert store.set_status(entry.id, "deleted")
+    loaded = store.find(entry.id)
+    assert loaded is not None and loaded.status == "deleted"
+    assert loaded.metadata["source"] == source
+    assert loaded.metadata["note"] == source
+    assert loaded.text == entry.text
+    assert len(store.entries(include_inactive=True)) == 1
+
+
+def test_metadata_literal_percent_sequences_remain_unchanged(tmp_path):
+    store = MemoryStore(tmp_path)
+    entry = store.append("test", "合成正文", source="import:synthetic%60file.md")
+    assert store.entries() == [entry]
+
+
 def test_entry_uses_trailing_code_tags(tmp_path):
     store = MemoryStore(tmp_path)
     entry = store.append(

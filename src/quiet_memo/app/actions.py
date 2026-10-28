@@ -175,8 +175,8 @@ def apply_model(
         current,
         provider=provider,
         model=model,
-        base_url=preset.base_url if preset else current.base_url,
-        api_key_env=preset.api_key_env if preset else current.api_key_env,
+        base_url=preset.base_url if preset and provider != current.provider else current.base_url,
+        api_key_env=preset.api_key_env if preset and provider != current.provider else current.api_key_env,
     )
     if new_llm.provider != current.provider and not new_llm.api_key():
         return f"{provider} has no API key yet; run qm setup in a terminal to configure it."

@@ -22,6 +22,31 @@ from quiet_memo.infra.config import (
 from quiet_memo.infra.providers import PRESETS, write_config
 
 
+@pytest.mark.parametrize("provider", ["custom", "deepseek"])
+def test_model_change_preserves_same_provider_endpoint_and_credentials(tmp_path, monkeypatch, provider):
+    from types import SimpleNamespace
+    from quiet_memo.app import actions
+    from quiet_memo.memory.service import MemoryService
+
+    config_path = tmp_path / "config.toml"
+    config = Config(
+        vault=tmp_path / "vault", retrieval=RetrievalConfig(method="keyword"),
+        llm=LLMConfig(provider=provider, model="synthetic-old",
+                      base_url="https://provider.example.invalid/v1", api_key_env="SYNTHETIC_CUSTOM_KEY"),
+    )
+    service = MemoryService(config, config_path=config_path)
+    reloaded = []
+    runtime = SimpleNamespace(reload_llm=reloaded.append, model_label=f"{provider}/synthetic-new")
+    monkeypatch.setattr(actions, "model_metadata", lambda model: {})
+    monkeypatch.setattr(actions, "supported_params", lambda model: ())
+    actions.apply_model(service, runtime, provider, "synthetic-new")
+    saved = load_config(config_path)
+    assert saved.llm.model == "synthetic-new"
+    assert saved.llm.base_url == "https://provider.example.invalid/v1"
+    assert saved.llm.api_key_env == "SYNTHETIC_CUSTOM_KEY"
+    assert reloaded == [config]
+
+
 def test_litellm_model_names():
     assert LLMConfig(provider="deepseek", model="deepseek-flash").litellm_model() == "deepseek/deepseek-flash"
     assert LLMConfig(provider="deepseek", model="deepseek-chat").litellm_model() == "deepseek/deepseek-chat"

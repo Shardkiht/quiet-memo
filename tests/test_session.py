@@ -29,6 +29,61 @@ def test_create_append_and_reload(tmp_path):
     assert loaded.title() == "你好"
 
 
+def test_session_redacts_credentials_in_nested_records(tmp_path):
+    store, session = make_store(tmp_path)
+    secret = "SYNTHETIC-ONLY-12345"
+    record = store.append(session, {
+        "type": "assistant", "content": f"密码是 {secret}",
+        "tool_calls": [{"arguments": {"text": f"API key: {secret}"}}],
+    })
+    store.rename(session, f"密码是 {secret}")
+    assert secret not in session.path.read_text(encoding="utf-8")
+    assert secret not in str(record)
+    assert secret not in str(session.records)
+    assert secret not in str(store.load(session.id).records)
+    assert "敏感信息已隐藏" in record["content"]
+
+
+@pytest.mark.parametrize("ending", [b'', b'\n', "合".encode("utf-8")[:2]])
+def test_session_recovers_torn_tail_without_rewriting_original(tmp_path, ending):
+    store, session = make_store(tmp_path)
+    store.append(session, {"type": "message", "id": "m1", "role": "user", "content": "合成陈述"})
+    with session.path.open("ab") as handle:
+        handle.write(b'{"type":"assistant","content":"' + ending)
+    original = session.path.read_bytes()
+    loaded = store.load(session.id)
+    assert loaded.user_texts() == ["合成陈述"]
+    assert loaded.damaged_tail_line is not None
+    assert store.list()[0]["id"] == session.id
+    assert store.unconsolidated()[0].id == session.id
+    assert session.path.read_bytes() == original
+    store.append(loaded, {"type": "message", "id": "m2", "role": "user", "content": "接续陈述"})
+    assert session.path.read_bytes().startswith(original)
+    reloaded = store.load(session.id)
+    assert reloaded.user_texts() == ["合成陈述", "接续陈述"]
+    assert any(record.get("type") == "recovery" for record in reloaded.records)
+
+
+def test_session_appends_after_complete_record_without_newline(tmp_path):
+    store, session = make_store(tmp_path)
+    session.path.write_bytes(session.path.read_bytes().rstrip(b"\n"))
+    original = session.path.read_bytes()
+    loaded = store.load(session.id)
+    store.append(loaded, {"type": "message", "id": "m1", "role": "user", "content": "合成陈述"})
+    assert session.path.read_bytes().startswith(original + b"\n")
+    assert store.load(session.id).user_texts() == ["合成陈述"]
+
+
+def test_session_does_not_silently_ignore_unmarked_middle_corruption(tmp_path):
+    import json
+
+    store, session = make_store(tmp_path)
+    with session.path.open("ab") as handle:
+        handle.write(b'broken\n{"type":"message","content":"synthetic"}\n')
+    with pytest.raises(json.JSONDecodeError):
+        store.load(session.id)
+
+
 def test_rename_and_list(tmp_path):
     store, session = make_store(tmp_path)
     store.append(

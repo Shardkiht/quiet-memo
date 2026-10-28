@@ -46,6 +46,11 @@ def contains_secret(text: str) -> bool:
     return bool(SECRET_RE.search(text))
 
 
+def redact_secrets(text: str) -> str:
+    """会话落盘前隐藏已识别凭据，保留同一条消息中的其他内容。"""
+    return SECRET_RE.sub("[敏感信息已隐藏]", text)
+
+
 def find_conflicts(candidate: Candidate, entries: list[Entry]) -> list[Entry]:
     conflicts: list[Entry] = []
     candidate_numbers = set(NUMBER_RE.findall(candidate.text))

@@ -77,6 +77,17 @@ def test_start_defers_session_creation(tmp_path):
     assert len(store.list()) == 1
 
 
+def test_ask_redacts_credentials_before_model_and_session(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="收到")])
+    runtime, _ = build_runtime(tmp_path, model)
+    runtime.config.auto_recall = 0
+    secret = "SYNTHETIC-ONLY-12345"
+    runtime.ask(f"喜欢清淡。密码是 {secret}")
+    assert secret not in str(model.calls)
+    assert secret not in runtime.current.path.read_text(encoding="utf-8")
+    assert "喜欢清淡" in runtime.current.user_texts()[0]
+
+
 @pytest.mark.parametrize("action", ["start", "resume"])
 def test_session_change_clears_last_plan(tmp_path, action):
     runtime, _ = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="收到")]))
@@ -96,6 +107,69 @@ def test_close_without_session_is_noop(tmp_path):
     runtime, _ = build_runtime(tmp_path, FakeChatModel([]))
 
     assert runtime.close()["admitted"] == 0
+
+
+def test_failed_switch_preserves_exit_distillation(tmp_path):
+    runtime, service = build_runtime(
+        tmp_path, FakeChatModel([AssistantTurn(content="收到")]),
+        candidates=[Candidate(text="喜欢合成口味甲", topic="preferences", confidence=1.0)],
+        extract_on_exit=True,
+    )
+    runtime.ask("喜欢合成口味甲")
+    current = runtime.current
+    with pytest.raises(KeyError):
+        runtime.resume("s-20260101-000000-dead", close_current=True)
+    assert runtime.current is current
+    assert runtime.close()["admitted"] == 1
+    assert service.store.entries()[0].text == "喜欢合成口味甲"
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_mutating_tool_timeout_reports_final_result(tmp_path, cancelled, fails):
+    from concurrent.futures import TimeoutError
+    from quiet_memo.agent.tools import ToolOutcome, ToolRegistry, ToolSpec
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]))
+    calls = []
+
+    def write(arguments):
+        if fails:
+            raise ValueError("合成写入失败")
+        service.note("合成记忆", topic="test")
+        return ToolOutcome(True, "saved", "saved")
+
+    class TimedOutFuture:
+        def result(self, timeout=None):
+            calls.append(timeout)
+            if timeout is not None:
+                raise TimeoutError()
+            return write({})
+
+        def cancel(self):
+            return cancelled
+
+    class Executor:
+        def submit(self, handler, arguments):
+            return TimedOutFuture()
+
+    tools = ToolRegistry()
+    tools._executors["default"] = Executor()
+    tools.register(ToolSpec("write", "", {}, write, timeout=0.01, mutating=True))
+    outcome = tools.execute("write", {})
+    assert outcome.ok is (not cancelled and not fails)
+    assert len(service.store.entries()) == int(not cancelled and not fails)
+    assert calls == ([0.01] if cancelled else [0.01, None])
+
+
+def test_memory_tools_are_marked_mutating(tmp_path):
+    from quiet_memo.agent.tools import build_tools
+
+    runtime, service = build_runtime(tmp_path, FakeChatModel([]))
+    tools = build_tools(service, runtime.ensure_session())
+    assert {name for name, spec in tools._tools.items() if spec.mutating} == {
+        "memorize", "correct", "forget",
+    }
 
 
 def test_system_prompt_includes_current_date(tmp_path):

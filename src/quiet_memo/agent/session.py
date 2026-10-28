@@ -6,8 +6,10 @@ import secrets
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from ..infra.tokens import estimate_tokens
+from ..memory.detect import redact_secrets
 
 SESSION_ID_RE = re.compile(r"^s-\d{8}-\d{6}-[0-9a-f]{4}$")
 
@@ -21,12 +23,23 @@ def new_message_id() -> str:
     return f"m-{stamp:%Y%m%d-%H%M%S}-{secrets.token_hex(4)}"
 
 
+def _redact_record(value: Any) -> Any:
+    if isinstance(value, str):
+        return redact_secrets(value)
+    if isinstance(value, dict):
+        return {key: _redact_record(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redact_record(item) for item in value]
+    return value
+
+
 @dataclass
 class Session:
     id: str
     started_at: str
     path: Path
     records: list[dict] = field(default_factory=list)
+    damaged_tail_line: int | None = None
 
     def active_records(self) -> list[dict]:
         """按 undo 事件投影有效会话；撤销同时令其后的摘要失效。"""
@@ -192,24 +205,62 @@ class SessionStore:
         path = self._path(session_id)
         if not path.exists():
             raise KeyError(f"会话不存在：{session_id}")
-        records = [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        lines = path.read_bytes().splitlines()
+        records: list[dict] = []
+        errors: dict[int, ValueError] = {}
+        recovered: set[int] = set()
+        for number, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                errors[number] = exc
+                continue
+            records.append(record)
+            if record.get("type") == "recovery":
+                ignored = record.get("ignored_line")
+                if type(ignored) is int and ignored < number:
+                    recovered.add(ignored)
+        damaged_tail = None
+        for number, error in errors.items():
+            if number in recovered:
+                continue
+            if number == len(lines):
+                if isinstance(error, UnicodeDecodeError) and error.reason != "unexpected end of data":
+                    raise error
+                damaged_tail = number
+            else:
+                raise error
         meta = records[0] if records else {"id": session_id, "started_at": ""}
         return Session(
             id=meta.get("id", session_id),
             started_at=meta.get("started_at", ""),
             path=path,
             records=records,
+            damaged_tail_line=damaged_tail,
         )
 
     def append(self, session: Session, record: dict) -> dict:
+        record = _redact_record(record)
         record.setdefault("at", now_iso())
+        # 损坏尾行原样保留：只追加换行和恢复标记，后续加载据此跳过该行。
+        with session.path.open("a+b") as handle:
+            handle.seek(0, 2)
+            if handle.tell():
+                handle.seek(-1, 2)
+                if handle.read(1) != b"\n":
+                    handle.write(b"\n")
+            if session.damaged_tail_line is not None:
+                recovery = {
+                    "type": "recovery", "ignored_line": session.damaged_tail_line,
+                    "at": now_iso(),
+                }
+                handle.write((json.dumps(recovery) + "\n").encode("utf-8"))
+                session.records.append(recovery)
+                session.damaged_tail_line = None
+            handle.write((json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8"))
         session.records.append(record)
-        with session.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         return record
 
     def rename(self, session: Session, title: str) -> None:

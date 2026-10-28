@@ -55,11 +55,13 @@ memory/agent → llm → infra
 - `memories/<topic>.md` 是长期记忆的唯一事实来源。
 - 文件头 front matter 只存文件级元数据：`topic`、`title`、`created`、`updated`。
 - 条目是 Markdown bullet 行加行尾反引号标签；条目 ID 必须稳定。
+- 标签值含反引号、换行或转义前缀本身时，以 `~qm-escaped~` 加百分号编码写入，读取时还原；普通值不变。
 - 更正采用“新条目 + `supersedes`”，旧条目置为 `superseded`；删除是软删除 `deleted`，不物理移除。
 - 待确认候选写 `.quiet-memo/pending.jsonl`，处理结果追加到 `resolved.jsonl`；更正、删除等操作写 `audit.jsonl`。
 - `.quiet-memo/vectors.npz` 是向量检索的派生缓存（含 `model_id`，换模型自动失效），vault 内 gitignore，可删除重建，不进 Git 历史。
 - `.quiet-memo/search-cache.json` 是联网搜索的派生缓存（按 TTL 过期），vault 内 gitignore，可删除重建，不进 Git 历史。
 - `sessions/<id>.jsonl` 是追加写的事件流，不重写旧行；上下文压缩只追加 `summary` 记录，不删除原文。
+- 会话追加前递归隐藏已识别凭据；损坏尾行只读恢复，续写追加 `recovery` 标记记录 `ignored_line`（1 起始物理行号），保留原始字节；未标记的中间行损坏不能静默忽略。
 - `vault/SOUL.md` 是可选自定义人设：存在时替换系统提示词的人设段，机制规则固定拼接在后不可覆盖；它是指令不是记忆，不参与抽取与检索。
 - 密钥、验证码、API Key 在写入前拦截；不把密钥写入 vault、配置示例或测试。
 - 迁移 vault 存量数据用一次性脚本（放 `scripts/`，不随包发布）：**默认 dry-run** 出前后对照报告，`--apply` 才落盘；条目 ID 与行尾标签必须逐字节保留；落盘后自动验证（ID 集合一致、条数不变、无空正文）并提交 vault git 作为回滚点；向量缓存依赖哈希自动增量重建，不手动处理。

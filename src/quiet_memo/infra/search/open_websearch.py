@@ -283,7 +283,7 @@ class McpStdioTransport:
                 {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "quiet-memo", "version": "0.3.0"},
+                    "clientInfo": {"name": "quiet-memo", "version": "0.3.1"},
                 },
                 deadline,
             )

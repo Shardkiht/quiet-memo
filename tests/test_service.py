@@ -145,6 +145,50 @@ def test_approve_conflict_links_final_entry_to_old_entry(tmp_path, override):
         assert audit["text_override"] == expected_text
 
 
+def test_approve_stale_conflict_replaces_current_successor(tmp_path):
+    service = make_service(tmp_path, [
+        Candidate(text="每月合成预算为200元", topic="budget", confidence=1.0),
+        Candidate(text="每月合成预算为300元", topic="budget", confidence=1.0),
+    ])
+    old = service.note("每月合成预算为100元", topic="budget")
+    items = service.memorize("合成预算更新").queued
+    assert len(items) == 2
+    first = service.approve(items[0].id)
+    second = service.approve(items[1].id)
+    assert first.supersedes == old.id
+    assert second.supersedes == first.id
+    assert service.store.entries() == [second]
+    assert service.store.find(first.id).status == "superseded"
+
+
+def test_approve_stale_conflict_does_not_resurrect_deleted_memory(tmp_path):
+    service = make_service(tmp_path, [])
+    old = service.note("合成旧事实")
+    item = PendingItem.from_candidate(Candidate(text="合成新事实"), "test", "conflict", conflict_with=old.id)
+    service.queue.add(item)
+    service.forget(old.id)
+    with pytest.raises(ValueError, match="已删除"):
+        service.approve(item.id)
+    assert service.pending() == [item]
+    assert service.store.entries() == []
+
+
+def test_approve_append_failure_keeps_previous_memory_active(tmp_path, monkeypatch):
+    service = make_service(tmp_path, [])
+    old = service.note("合成旧事实")
+    item = PendingItem.from_candidate(Candidate(text="合成新事实"), "test", "conflict", conflict_with=old.id)
+    service.queue.add(item)
+
+    def fail(*args, **kwargs):
+        raise OSError("合成写盘失败")
+
+    monkeypatch.setattr(service.store, "append", fail)
+    with pytest.raises(OSError):
+        service.approve(item.id)
+    assert service.store.entries() == [old]
+    assert service.pending() == [item]
+
+
 @pytest.mark.parametrize("conflict", [False, True])
 @pytest.mark.parametrize(
     ("override", "error"),
