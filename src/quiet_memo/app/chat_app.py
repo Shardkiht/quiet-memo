@@ -537,7 +537,7 @@ class ChatApp(ChatCommandsMixin, App):
     def update_status(self) -> None:
         total = self.service.config.chat.context_window
         plan = self.runtime.last_plan
-        used = plan.estimated_tokens if plan is not None else 0
+        used = plan.estimated_tokens if plan is not None else self.runtime.context_usage()
         percent = used / max(total, 1)
         blocks = min(10, max(0, round(percent * 10)))
         # 用量条用制表横线（━ 已用 / ─ 剩余）：块/阴影字符在部分 CJK 字体会画成竖线；

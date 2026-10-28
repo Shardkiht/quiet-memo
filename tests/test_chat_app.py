@@ -12,6 +12,7 @@ from quiet_memo.app.chat_app import ChatApp, SidebarToggle
 from quiet_memo.app.chat_input import BarInput
 from quiet_memo.app.command_catalog import SLASH_COMMANDS
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig, SearchConfig
+from quiet_memo.infra.tokens import format_tokens
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
 from quiet_memo.memory.models import ExtractionResult
@@ -140,7 +141,13 @@ async def test_session_switch_drops_previous_context_usage(tmp_path, action):
                 break
         assert not app.busy
         assert app.runtime.last_plan is None
-        assert "0/32K" in str(app.query_one("#status", Static).content)
+        status = str(app.query_one("#status", Static).content)
+        if action == "new":
+            assert "0/32K" in status
+        else:
+            # 恢复会话后不能沿用上一个会话的用量，但要显示目标会话自身的占用。
+            assert "0/32K" not in status
+            assert f"{format_tokens(app.runtime.context_usage())}/32K" in status
         # 重建 transcript 后焦点恢复可能晚一帧，busy 释放不等于 focus 已处理。
         for _ in range(50):
             await pilot.pause()
@@ -164,6 +171,66 @@ async def test_status_bar_renders_context_usage(tmp_path):
 
         assert "Context" in rendered
         assert "/32K" in rendered
+
+
+async def test_resumed_session_shows_its_own_context_usage(tmp_path):
+    app = build_app(tmp_path, [])
+    target = app.sessions.create()
+    app.sessions.append(
+        target,
+        {
+            "type": "message",
+            "id": new_message_id(),
+            "role": "user",
+            "content": "历史合成陈述" * 20,
+        },
+    )
+    app.runtime.resume(target.id)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.runtime.last_plan is None
+        usage = app.runtime.context_usage()
+        assert usage > 0
+        assert f"{format_tokens(usage)}/32K" in str(
+            app.query_one("#status", Static).content
+        )
+
+
+async def test_undo_recomputes_context_usage(tmp_path):
+    app = build_app(tmp_path, [AssistantTurn(content="合成回复")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "待撤销的合成陈述"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+        assert app.runtime.last_plan is not None
+
+        app.runtime.undo()
+        app.update_status()
+        await pilot.pause()
+
+        assert app.runtime.last_plan is None
+        usage = app.runtime.context_usage()
+        assert usage > 0
+        assert f"{format_tokens(usage)}/32K" in str(
+            app.query_one("#status", Static).content
+        )
+
+
+async def test_status_context_usage_matches_last_plan(tmp_path):
+    app = build_app(tmp_path, [AssistantTurn(content="合成回复")])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "合成提问"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+
+        plan = app.runtime.last_plan
+        assert plan is not None
+        assert f"{format_tokens(plan.estimated_tokens)}/32K" in str(
+            app.query_one("#status", Static).content
+        )
 
 
 async def test_slash_help_card(tmp_path):
@@ -217,13 +284,14 @@ async def test_command_palette_escape_closes(tmp_path):
         assert not palette.display
 
 
-async def test_command_palette_sits_above_input(tmp_path):
+@pytest.mark.parametrize("prefix", ["/", "/rename"])
+async def test_command_palette_sits_above_input(tmp_path, prefix):
     from quiet_memo.app.chat_app import CommandPalette
 
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         widget = app.query_one("#input", Input)
-        widget.value = "/"
+        widget.value = prefix
         await pilot.pause()
         palette = app.query_one("#cmd-palette", CommandPalette)
         assert palette.display
@@ -254,6 +322,37 @@ async def test_command_palette_columns_align(tmp_path):
             assert usage in plain
             starts.add(plain.index(description))
         assert len(starts) == 1
+
+
+async def test_rename_command_prompts_for_title(tmp_path):
+    from quiet_memo.app.chat_widgets import TextInputScreen
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.rename(session, "旧标题")
+    app.runtime.resume(session.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", Input)
+        widget.value = "/rename"
+        await pilot.pause()
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, TextInputScreen):
+                break
+        assert isinstance(app.screen, TextInputScreen)
+        title_input = app.screen.query_one("#pick-input", Input)
+        assert title_input.value == "旧标题"
+
+        title_input.value = "新标题"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if app.runtime.current.title() == "新标题":
+                break
+        assert app.runtime.current.title() == "新标题"
+        assert app.sessions.load(session.id).title() == "新标题"
 
 
 async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):

@@ -97,6 +97,15 @@ class ContextManager:
     def trigger_tokens(self) -> int:
         return int(self.input_budget * self.config.compact_threshold)
 
+    def estimate_usage(self, session: Session, system_prompt: str) -> int:
+        """只读估算当前会话的下一轮上下文占用，不触发压缩或摘要。"""
+        return (
+            estimate_tokens(system_prompt)
+            + estimate_tokens(session.summary_text())
+            + records_tokens(session.records_after_summary())
+            + 16
+        )
+
     def prepare(
         self,
         session: Session,

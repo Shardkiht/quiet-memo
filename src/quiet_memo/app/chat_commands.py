@@ -54,14 +54,14 @@ class ChatCommandsMixin:
         elif command == "/status":
             self._show_status()
         elif command == "/rename":
-            if not argument:
-                self.add_card("Usage: /rename <title>")
-            elif not self.runtime.has_session:
+            if not self.runtime.has_session:
                 self.add_card("The session is not created yet; send a message first, then rename.")
-            else:
+            elif argument:
                 self.runtime.rename(argument)
                 self.refresh_sessions()
                 self.add_card(f"Renamed to: {argument}")
+            else:
+                self._open_rename_prompt()
         elif command == "/recall":
             if not argument:
                 self.add_card("Usage: /recall <query>")
@@ -200,6 +200,22 @@ class ChatCommandsMixin:
             self._pending_switch = session_id
             return
         self._switch_session(session_id)
+
+    def _open_rename_prompt(self) -> None:
+        self.push_screen(
+            TextInputScreen(
+                "Rename session",
+                default=self.runtime.current.title(),
+                on_result=self._rename_current_result,
+            )
+        )
+
+    def _rename_current_result(self, title) -> None:
+        if title:
+            self.runtime.rename(title)
+            self.refresh_sessions()
+            self.notify(f"Renamed to: {title}")
+        self.query_one("#input", Input).focus()
 
     def rename_session(self, row: dict) -> None:
         self.push_screen(

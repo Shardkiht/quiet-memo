@@ -368,6 +368,12 @@ class AgentRuntime:
     def summary_text(self) -> str:
         return self.current.summary_text()
 
+    def context_usage(self) -> int:
+        """当前会话的上下文占用；无会话或尚未发送消息时为 0。"""
+        if self.session is None:
+            return 0
+        return self.context.estimate_usage(self.session, self._system_prompt())
+
     def rename(self, title: str) -> None:
         self.sessions.rename(self.current, title)
 
