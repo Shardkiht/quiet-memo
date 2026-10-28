@@ -6,9 +6,10 @@ from .models import Candidate, Entry
 
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 NEGATION_RE = re.compile(r"(不|没|无|非|未|别|勿)")
+# 明确赋值保留 Unicode 值；仅靠空白分隔时要求 ASCII 凭据形态，避免把中文描述当密码。
 SECRET_RE = re.compile(
     r"(api[_ -]?key|access[_ -]?token|secret|password|passwd|密码|口令|验证码|私钥)"
-    r"\s*(是|为|[:：=])?\s*\S{4,}",
+    r"(?:\s*(?:是|为|[:：=])\s*\S{4,}|\s+[!-~]{4,}|[!-~]{4,})",
     re.I,
 )
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")

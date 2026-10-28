@@ -110,16 +110,58 @@ def test_vector_search_degrades_to_empty_when_embedder_fails(tmp_path):
     assert retriever.search("房子", 3) == []
 
 
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
 def test_sync_retries_after_embedding_failure(tmp_path):
+    from quiet_memo.retrieval.vector import RETRY_COOLDOWN_SECONDS
+
+    clock = FakeClock()
     store = seeded_store(tmp_path)
     embedder = FakeEmbedder(GROUPS, fail=True)
-    retriever = VectorRetriever(store, embedder)
+    retriever = VectorRetriever(store, embedder, clock=clock)
     assert retriever.search("房子", 3) == []
+    assert retriever.degraded is True
+    passage_calls = len(embedder.passages)
 
-    # 后端恢复后，即使记忆文件没变也要重新同步，而不是一直返回空。
+    # 冷却期内不重复打后端，避免每次检索都卡在失败调用上。
     embedder.fail = False
+    assert retriever.search("房子", 3) == []
+    assert len(embedder.passages) == passage_calls
+
+    # 冷却到期后即使记忆文件没变也要重新同步，而不是一直返回空。
+    clock.now += RETRY_COOLDOWN_SECONDS
     hits = retriever.search("房子", 3)
     assert hits and hits[0].topic == "housing"
+    assert retriever.degraded is False
+
+
+def test_query_failure_enters_cooldown(tmp_path):
+    from quiet_memo.retrieval.vector import RETRY_COOLDOWN_SECONDS
+
+    clock = FakeClock()
+    store = seeded_store(tmp_path)
+    embedder = FakeEmbedder(GROUPS)
+    retriever = VectorRetriever(store, embedder, clock=clock)
+    assert retriever.search("房子", 3)
+
+    embedder.fail = True
+    assert retriever.search("房子", 3) == []
+    assert retriever.degraded is True
+    query_calls = len(embedder.queries)
+
+    embedder.fail = False
+    assert retriever.search("房子", 3) == []
+    assert len(embedder.queries) == query_calls
+
+    clock.now += RETRY_COOLDOWN_SECONDS
+    assert retriever.search("房子", 3)
+    assert retriever.degraded is False
 
 
 def test_search_ignores_deleted_entries(tmp_path):

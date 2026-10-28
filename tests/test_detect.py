@@ -12,11 +12,41 @@ def entry(entry_id: str, text: str, topic: str = "housing") -> Entry:
     return Entry(id=entry_id, topic=topic, text=text, timestamp="2026-10-22T12:00:00")
 
 
-def test_detects_secret_material():
-    assert contains_secret("我的密码是 abc12345")
-    assert contains_secret("API key: test-placeholder")
-    assert contains_secret("验证码 889900")
-    assert not contains_secret("喜欢清淡风味")
+@pytest.mark.parametrize(
+    "text",
+    [
+        "我的密码是 demo-123456",
+        "API key: test-placeholder",
+        "api_key demo-123456",
+        "access_token demo-token-placeholder",
+        "password=!Demo1234",
+        "password=@@!!",
+        "验证码 458712请勿转发",
+        "验证码458712，请勿转发",
+        "密码：合成测试口令",
+        "密码是 合成测试口令",
+        "私钥: -----BEGIN PRIVATE KEY-----",
+    ],
+)
+def test_detects_secret_material(text):
+    assert contains_secret(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "喜欢清淡风味",
+        "密码忘记了怎么办",
+        "验证码一直收不到",
+        "这个软件的密码管理器好用",
+        "我忘了密码",
+        "验证码收不到时需要联系客服",
+        "密码 忘记了怎么办",
+        "验证码 一直收不到",
+    ],
+)
+def test_allows_statements_about_credentials(text):
+    assert not contains_secret(text)
 
 
 def test_numeric_conflict():

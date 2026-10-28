@@ -19,14 +19,18 @@ class HybridRetriever:
 
     def search(self, query: str, limit: int = 10) -> list[SearchHit]:
         deep = max(limit * 3, 12)
+        keyword_hits = self.keyword.search(query, deep)
+        vector_hits = self.vector.search(query, deep)
+        # 查询本身也可能触发降级；纯关键词兜底不套用于融合降噪的字面闸。
+        if getattr(self.vector, "degraded", False):
+            return keyword_hits[:limit]
         # 非 CJK 查询没有 bigram 覆盖率信号，不能套字面闸，否则精确命中也会被清空。
         literal_gate = bool(CJK_RE.search(query))
         keyword_hits = [
             hit
-            for hit in self.keyword.search(query, deep)
+            for hit in keyword_hits
             if not literal_gate or bigram_coverage(query, hit.text) >= MIN_QUERY_COVERAGE
         ]
-        vector_hits = self.vector.search(query, deep)
         if not vector_hits:
             return keyword_hits[:limit]
         if not keyword_hits:

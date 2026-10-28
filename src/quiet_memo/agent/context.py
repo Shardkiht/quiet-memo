@@ -6,7 +6,7 @@ from typing import Callable
 
 from ..infra.config import ChatConfig
 from ..infra.tokens import estimate_messages_tokens, estimate_tokens
-from ..llm import Summarizer, fallback_summary
+from ..llm import Summarizer
 from .session import Session, SessionStore, new_message_id, transcript
 
 SUMMARY_MAX_CHARS = 1200
@@ -182,17 +182,24 @@ class ContextManager:
             if cutoff <= 0:
                 break
             evicted = history[:cutoff]
-            user_texts = [
-                record["content"]
+            pending_ids = {record["id"] for record in session.undistilled_messages()}
+            user_records = [
+                record
                 for record in evicted
-                if record.get("type") == "message" and record.get("role") == "user"
+                if record.get("type") == "message"
+                and record.get("role") == "user"
+                and record.get("id") in pending_ids
             ]
-            if user_texts and self.flush:
+            distilled_ids: list[str] = []
+            if user_records and self.flush:
                 try:
-                    flushed = self.flush(user_texts)
+                    flushed = self.flush([record["content"] for record in user_records])
                 except Exception as exc:
-                    events.append(f"Memory distillation during compaction failed: {exc}")
                     flushed = {"error": str(exc)}
+                if flushed.get("error"):
+                    events.append(f"Memory distillation during compaction failed: {flushed['error']}")
+                else:
+                    distilled_ids = [record["id"] for record in user_records]
 
             summary_text = self.summarizer.summarize(
                 summary_text,
@@ -212,6 +219,7 @@ class ContextManager:
                     "id": new_message_id(),
                     "content": summary_text,
                     "covered_records": covered,
+                    "distilled_ids": distilled_ids,
                     "records": cutoff,
                     "tokens": estimate_tokens(summary_text),
                 },
@@ -255,7 +263,3 @@ class ContextManager:
         while cutoff < len(history) and history[cutoff].get("type") != "message":
             cutoff += 1
         return cutoff
-
-
-def default_summary(previous: str, text: str, max_chars: int = SUMMARY_MAX_CHARS) -> str:
-    return fallback_summary(previous, text, max_chars)

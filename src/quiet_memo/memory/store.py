@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import secrets
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -97,6 +99,16 @@ class MemoryStore:
     def topic_path(self, topic: str) -> Path:
         return self.root / f"{slugify(topic)}.md"
 
+    def fingerprint(self) -> tuple[tuple[str, int, int], ...]:
+        """按文件名排序返回 (文件名, 纳秒修改时间, 字节数)，供派生缓存失效判断。"""
+        if not self.root.exists():
+            return ()
+        items: list[tuple[str, int, int]] = []
+        for path in sorted(self.root.glob("*.md")):
+            stat = path.stat()
+            items.append((path.name, stat.st_mtime_ns, stat.st_size))
+        return tuple(items)
+
     def _read(self, path: Path, topic: str) -> tuple[dict, str]:
         raw = path.read_text(encoding="utf-8") if path.exists() else ""
         match = FRONTMATTER_RE.match(raw)
@@ -111,7 +123,19 @@ class MemoryStore:
 
     def _write(self, path: Path, meta: dict, body: str) -> None:
         front = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False).strip()
-        path.write_text(f"---\n{front}\n---\n\n{body.lstrip()}", encoding="utf-8")
+        temporary: Path | None = None
+        try:
+            # 同目录保证 replace 不跨文件系统；关闭后替换以兼容 Windows。
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=path.parent,
+                prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(f"---\n{front}\n---\n\n{body.lstrip()}")
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     @staticmethod
     def new_entry_id(stamp: datetime | None = None) -> str:
@@ -131,7 +155,9 @@ class MemoryStore:
         extra: dict[str, str] | None = None,
         entry_id: str | None = None,
         supersedes: str | None = None,
+        known_ids: set[str] | None = None,
     ) -> Entry:
+        """追加条目；批量调用可传入含停用条目的完整 ID 集合，由调用方增量维护。"""
         self.ensure()
         # 条目格式是单行 bullet；多行文本压成一行，避免正文行在解析时被静默丢弃。
         text = re.sub(r"\s*\n\s*", " ", text).strip()
@@ -139,8 +165,10 @@ class MemoryStore:
             raise ValueError("条目内容为空。")
         stamp = when or datetime.now()
         # ID 必须全局唯一：批量导入可能挤在同一秒，只靠随机数会生日碰撞。
+        if known_ids is None:
+            known_ids = {entry.id for entry in self.entries(include_inactive=True)}
         entry_id = entry_id or self.new_entry_id(stamp)
-        while any(entry.id == entry_id for entry in self.entries(include_inactive=True)):
+        while entry_id in known_ids:
             entry_id = self.new_entry_id(stamp)
         path = self.topic_path(topic)
         meta, body = self._read(path, slugify(topic))
@@ -269,6 +297,7 @@ class MemoryStore:
                 if entry is None or entry.id != entry_id:
                     continue
                 lines[index] = self._rewrite_status(line, entry, status)
+                meta["updated"] = datetime.now().date()
                 self._write(path, meta, "\n".join(lines) + "\n")
                 return True
         return False

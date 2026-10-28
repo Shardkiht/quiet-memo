@@ -46,6 +46,25 @@ def test_resolve_missing_returns_none(tmp_path):
     assert PendingQueue(tmp_path).resolve("nope", "rejected") is None
 
 
+def test_save_failure_leaves_pending_queue_intact(tmp_path, monkeypatch):
+    from quiet_memo.memory import queue as queue_module
+
+    queue = PendingQueue(tmp_path)
+    queue.add(make_item())
+    before = queue.pending_path.read_text(encoding="utf-8")
+
+    def fail_replace(source, target):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(queue_module.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="disk full"):
+        queue.add(make_item("p-2"))
+
+    assert queue.pending_path.read_text(encoding="utf-8") == before
+    assert [item.id for item in queue.all()] == ["p-1"]
+    assert not [item for item in queue.dir.iterdir() if item.name.endswith(".tmp")]
+
+
 def test_resolve_only_removes_the_targeted_duplicate(tmp_path):
     queue = PendingQueue(tmp_path)
     queue.add(make_item("p-dup"))

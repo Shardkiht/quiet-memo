@@ -5,6 +5,7 @@ import pytest
 pytestmark = pytest.mark.memory
 
 from datetime import datetime
+from pathlib import Path
 
 from quiet_memo.memory.store import MemoryStore, slugify
 
@@ -108,13 +109,34 @@ def test_entry_uses_trailing_code_tags(tmp_path):
 
 def test_set_status_rewrites_tag(tmp_path):
     store = MemoryStore(tmp_path)
-    entry = store.append("housing", "预算 4000")
+    entry = store.append("housing", "预算 4000", when=datetime(2020, 1, 1, 12, 0, 0))
     assert store.set_status(entry.id, "superseded")
 
     raw = (tmp_path / "memories" / "housing.md").read_text(encoding="utf-8")
     assert "`status=superseded`" in raw
     assert store.entries("housing") == []
     assert store.find(entry.id).status == "superseded"
+    # 状态变化也是文件变更，front matter 的 updated 不能停留在旧日期。
+    assert store.topics()[0].updated == datetime.now().date().isoformat()
+
+
+def test_write_failure_leaves_original_file_intact(tmp_path, monkeypatch):
+    from quiet_memo.memory import store as store_module
+
+    store = MemoryStore(tmp_path)
+    store.append("housing", "原始条目")
+    path = tmp_path / "memories" / "housing.md"
+    before = path.read_text(encoding="utf-8")
+
+    def fail_replace(source, target):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store_module.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="disk full"):
+        store.append("housing", "新条目")
+
+    assert path.read_text(encoding="utf-8") == before
+    assert not [item for item in path.parent.iterdir() if item.name.endswith(".tmp")]
 
 
 def test_inline_code_in_text_is_kept(tmp_path):

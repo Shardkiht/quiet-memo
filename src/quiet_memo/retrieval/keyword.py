@@ -49,17 +49,8 @@ class KeywordRetriever:
         self._bm25: BM25Okapi | None = None
         self._fingerprint: tuple[tuple[str, int, int], ...] | None = None
 
-    def _file_fingerprint(self) -> tuple[tuple[str, int, int], ...]:
-        if not self.store.root.exists():
-            return ()
-        items: list[tuple[str, int, int]] = []
-        for path in sorted(self.store.root.glob("*.md")):
-            stat = path.stat()
-            items.append((path.name, stat.st_mtime_ns, stat.st_size))
-        return tuple(items)
-
     def _index(self) -> tuple[list[Entry], BM25Okapi | None]:
-        fingerprint = self._file_fingerprint()
+        fingerprint = self.store.fingerprint()
         if self._bm25 is None or fingerprint != self._fingerprint:
             self._entries = self.store.entries()
             corpus = [list(tokenize(entry.text)) for entry in self._entries]

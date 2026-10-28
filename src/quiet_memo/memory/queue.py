@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +28,19 @@ class PendingQueue:
     def _save(self, items: list[PendingItem]) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         content = "\n".join(item.model_dump_json() for item in items)
-        self.pending_path.write_text(content + ("\n" if content else ""), encoding="utf-8")
+        temporary: Path | None = None
+        try:
+            # 使用独立临时文件，只在完整写入并关闭后替换 pending。
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=self.dir,
+                prefix=f".{self.pending_path.name}.", suffix=".tmp", delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+                handle.write(content + ("\n" if content else ""))
+            os.replace(temporary, self.pending_path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def all(self) -> list[PendingItem]:
         return self._load()

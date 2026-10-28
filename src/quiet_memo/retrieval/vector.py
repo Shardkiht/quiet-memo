@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import time
+from collections.abc import Callable
 
 import numpy as np
 
@@ -12,6 +14,7 @@ from .base import SearchHit
 
 MIN_SCORE = 0.05
 CACHE_FILENAME = "vectors.npz"
+RETRY_COOLDOWN_SECONDS = 60.0
 
 
 def text_hash(text: str) -> str:
@@ -52,18 +55,39 @@ class LocalEmbedder:
 class VectorRetriever:
     """numpy 暴力余弦检索；vectors.npz 是派生缓存，删除后下次检索自动重建。"""
 
-    def __init__(self, store: MemoryStore, embedder, batch_size: int = 32):
+    def __init__(
+        self,
+        store: MemoryStore,
+        embedder,
+        batch_size: int = 32,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.store = store
         self.embedder = embedder
         self.batch_size = batch_size
         self.cache_path = store.vault / ".quiet-memo" / CACHE_FILENAME
         self._entries: list[Entry] = []
         self._matrix: np.ndarray | None = None
-        self._fingerprint: tuple | None = None
+        self._fingerprint: tuple[tuple[str, int, int], ...] | None = None
         self._degraded = False
+        self._clock = clock
+        self._retry_at = 0.0
+
+    @property
+    def degraded(self) -> bool:
+        """向量后端是否降级；冷却到期后的成功重试会清除此状态。"""
+        return self._degraded
+
+    def _mark_degraded(self) -> None:
+        self._degraded = True
+        self._retry_at = self._clock() + RETRY_COOLDOWN_SECONDS
 
     def sync(self) -> None:
         """与记忆条目对齐：复用未变更向量，只为新增/变更条目计算 embedding。"""
+        if self._degraded and self._clock() < self._retry_at:
+            return
+        fingerprint = self.store.fingerprint()
         entries = self.store.entries()
         # 同 ID 条目只保留首个：历史数据若存在重复 ID，去重避免矩阵行错位。
         unique: dict[str, Entry] = {}
@@ -90,21 +114,24 @@ class VectorRetriever:
                 vectors = np.array(
                     self.embedder.embed([entry.text for entry in batch]), dtype=np.float32
                 )
-                if len(vectors) != len(batch):
-                    raise ValueError("embedding 返回数量与输入不一致")
+                if vectors.ndim != 2 or vectors.shape[0] != len(batch):
+                    raise ValueError("embedding 返回形状或数量与输入不一致")
+                if vectors.shape[1] == 0 or not np.isfinite(vectors).all():
+                    raise ValueError("embedding 返回空维度或非有限数值")
+                if rows and vectors.shape[1] != rows[0].shape[1]:
+                    raise ValueError("embedding 返回维度与已有向量不一致")
                 rows.append(_unit(vectors))
+            matrix = np.vstack(rows) if rows else None
         except Exception:
-            # embedding 失败：保留已缓存子集，缺的条目本轮检索不到，下次检索重试同步。
-            self._degraded = True
-            fresh = []
-            rows = [cached[keep]] if keep else []
-        else:
-            self._degraded = False
+            # 冷却内停用整条向量路；不覆盖成功缓存，恢复后仍可增量复用。
+            self._mark_degraded()
+            return
 
-        matrix = np.vstack(rows) if rows else cached[keep] if keep else None
         kept_ids = {ids[index] for index in keep}
         self._entries = [entry for entry in entries if entry.id in kept_ids] + fresh
         self._matrix = matrix
+        self._fingerprint = fingerprint
+        self._degraded = False
         if fresh or len(keep) != len(ids):
             self._save_cache(self._entries, matrix)
 
@@ -112,17 +139,23 @@ class VectorRetriever:
         query = query.strip()
         if not query:
             return []
-        fingerprint = self._file_fingerprint()
-        if fingerprint != self._fingerprint or self._degraded:
+        if self._degraded and self._clock() < self._retry_at:
+            return []
+        if self.store.fingerprint() != self._fingerprint or self._degraded:
             self.sync()
-            self._fingerprint = fingerprint
-        if self._matrix is None or not self._entries:
+        if self._degraded or self._matrix is None or not self._entries:
             return []
         try:
-            vector = _unit(np.array([self.embedder.embed_query(query)], dtype=np.float32))[0]
+            vector = np.array(self.embedder.embed_query(query), dtype=np.float32)
+            if vector.ndim != 1 or vector.shape[0] != self._matrix.shape[1]:
+                raise ValueError("查询 embedding 返回维度与条目向量不一致")
+            if not np.isfinite(vector).all():
+                raise ValueError("查询 embedding 返回非有限数值")
+            vector = _unit(vector[None, :])[0]
+            scores = self._matrix @ vector
         except Exception:
+            self._mark_degraded()
             return []
-        scores = self._matrix @ vector
         hits: list[SearchHit] = []
         for index in np.argsort(-scores)[:limit]:
             score = float(scores[index])
@@ -141,15 +174,6 @@ class VectorRetriever:
             )
         return hits
 
-    def _file_fingerprint(self) -> tuple[tuple[str, int, int], ...]:
-        if not self.store.root.exists():
-            return ()
-        items = []
-        for path in sorted(self.store.root.glob("*.md")):
-            stat = path.stat()
-            items.append((path.name, stat.st_mtime_ns, stat.st_size))
-        return tuple(items)
-
     def _load_cache(self) -> tuple[list[str], list[str], np.ndarray | None]:
         if not self.cache_path.exists():
             return [], [], None
@@ -160,9 +184,15 @@ class VectorRetriever:
                 ids = data["ids"].tolist()
                 hashes = data["hashes"].tolist()
                 matrix = np.asarray(data["vectors"], dtype=np.float32)
+            if (
+                matrix.ndim != 2
+                or matrix.shape[1] == 0
+                or len(ids) != len(hashes)
+                or len(ids) != matrix.shape[0]
+                or not np.isfinite(matrix).all()
+            ):
+                return [], [], None
         except Exception:
-            return [], [], None
-        if len(ids) != matrix.shape[0]:
             return [], [], None
         return ids, hashes, matrix
 

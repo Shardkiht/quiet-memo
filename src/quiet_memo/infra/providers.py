@@ -17,6 +17,7 @@ from .config import (
     default_config_path,
     default_vault_path,
     load_config,
+    toml_literal,
     write_example_config,
 )
 from .dialogs import ask
@@ -283,18 +284,18 @@ def test_connection(llm: LLMConfig) -> tuple[bool, str]:
 def write_config(path: Path, config: Config) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     content = f'''# quiet-memo 配置（由 qm setup 生成）
-vault = "{config.vault.as_posix()}"
+vault = {toml_literal(config.vault.as_posix())}
 
 confidence_threshold = {config.confidence_threshold}
 auto_push = {str(config.auto_push).lower()}
 
 [llm]
-provider = "{config.llm.provider}"
-base_url = "{config.llm.base_url}"
-model = "{config.llm.model}"
-api_key_env = "{config.llm.api_key_env}"
-reasoning_effort = "{config.llm.reasoning_effort or ''}"
-fallbacks = [{", ".join(f'"{item}"' for item in config.llm.fallbacks)}]
+provider = {toml_literal(config.llm.provider)}
+base_url = {toml_literal(config.llm.base_url)}
+model = {toml_literal(config.llm.model)}
+api_key_env = {toml_literal(config.llm.api_key_env)}
+reasoning_effort = {toml_literal(config.llm.reasoning_effort or '')}
+fallbacks = {toml_literal(config.llm.fallbacks)}
 num_retries = {config.llm.num_retries}
 temperature = {config.llm.temperature}
 timeout = {config.llm.timeout}
@@ -312,25 +313,25 @@ recall_context_turns = {config.chat.recall_context_turns}
 extract_on_exit = {str(config.chat.extract_on_exit).lower()}
 
 [retrieval]
-method = "{config.retrieval.method}"
+method = {toml_literal(config.retrieval.method)}
 
 [retrieval.embedding]
-backend = "{config.retrieval.embedding.backend}"
-model = "{config.retrieval.embedding.model}"
-provider = "{config.retrieval.embedding.provider}"
-base_url = "{config.retrieval.embedding.base_url}"
-api_key_env = "{config.retrieval.embedding.api_key_env}"
+backend = {toml_literal(config.retrieval.embedding.backend)}
+model = {toml_literal(config.retrieval.embedding.model)}
+provider = {toml_literal(config.retrieval.embedding.provider)}
+base_url = {toml_literal(config.retrieval.embedding.base_url)}
+api_key_env = {toml_literal(config.retrieval.embedding.api_key_env)}
 
 [search]
 enabled = {str(config.search.enabled).lower()}
-providers = [{", ".join(f'"{item}"' for item in config.search.providers)}]
-base_url = "{config.search.base_url}"
+providers = {toml_literal(config.search.providers)}
+base_url = {toml_literal(config.search.base_url)}
 timeout = {config.search.timeout}
 max_results = {config.search.max_results}
 cache_ttl = {config.search.cache_ttl}
-transport = "{config.search.transport}"
+transport = {toml_literal(config.search.transport)}
 auto_start = {str(config.search.auto_start).lower()}
-engines = [{", ".join(f'"{item}"' for item in config.search.engines)}]
+engines = {toml_literal(config.search.engines)}
 fetch_timeout = {config.search.fetch_timeout}
 '''
     tmp = path.with_name(path.name + ".tmp")

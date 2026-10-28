@@ -14,7 +14,6 @@ ACCENT = "#8FAECB"
 ACCENT_DIM = "#46586B"
 MUTED = "#808080"
 SUCCESS = "#d0d0d0"
-WARNING = "#D9A66C"
 
 console = Console(
     theme=Theme(

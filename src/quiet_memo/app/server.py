@@ -20,8 +20,8 @@ def build_server(
 ) -> FastMCP:
     svc = service or MemoryService(config or load_config())
     search_config = svc.config.search
-    search_router = (
-        search_router or build_search_router(search_config, svc.config.vault)
+    search_router = search_router or (
+        build_search_router(search_config, svc.config.vault)
         if search_config.enabled
         else None
     )

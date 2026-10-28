@@ -136,3 +136,120 @@ def test_create_retries_id_collision_without_overwrite(tmp_path, monkeypatch):
     assert first.id == "s-20260101-000000-aaaa"
     assert second.id == "s-20260101-000000-ffff"
     assert store.load(first.id).records[0]["id"] == first.id
+
+
+def test_unconsolidated_filters_threshold_before_limit(tmp_path):
+    store = SessionStore(tmp_path)
+    sessions = []
+    for index, count in enumerate((5, 1, 2, 1)):
+        session = store.create()
+        sessions.append(session)
+        for number in range(count):
+            store.append(session, {
+                "type": "message", "id": f"m{index}-{number}", "role": "user",
+                "content": f"合成陈述 {index}-{number}",
+                "at": f"2026-01-0{index + 1}T12:00:00",
+            })
+
+    assert [s.id for s in store.unconsolidated(3, min_new_messages=3)] == [sessions[0].id]
+    assert [s.id for s in store.unconsolidated(3)] == [s.id for s in reversed(sessions[1:])]
+    assert store.unconsolidated(3, exclude=sessions[0].id, min_new_messages=3) == []
+
+
+def test_distillation_tracks_ids_separately_from_new_summary_boundaries(tmp_path):
+    store, session = make_store(tmp_path)
+    store.append(session, {"type": "message", "id": "m1", "role": "user", "content": "旧版已沉淀"})
+    store.append(session, {"type": "summary", "content": "旧版摘要", "covered_records": 2})
+    store.append(session, {"type": "message", "id": "m2", "role": "user", "content": "首次抽取失败"})
+    store.append(session, {
+        "type": "summary", "content": "失败后仍压缩", "covered_records": 4, "distilled_ids": [],
+    })
+    store.append(session, {"type": "message", "id": "m3", "role": "user", "content": "后续抽取成功"})
+    store.append(session, {
+        "type": "summary", "content": "后续摘要", "covered_records": 6, "distilled_ids": ["m3"],
+    })
+    store.append(session, {"type": "message", "id": "m4", "role": "user", "content": "新消息"})
+
+    loaded = store.load(session.id)
+    assert loaded.user_texts_after_summary() == ["新消息"]
+    assert loaded.user_texts_after_distilled() == ["首次抽取失败", "新消息"]
+    store.append(loaded, {"type": "distilled", "up_to": "m4"})
+    assert store.load(session.id).user_texts_after_distilled() == []
+
+
+@pytest.mark.parametrize("succeeded", [False, True])
+def test_undo_preserves_distillation_receipts_but_excludes_undone_messages(tmp_path, succeeded):
+    store, session = make_store(tmp_path)
+    store.append(session, {"type": "message", "id": "m1", "role": "user", "content": "保留陈述"})
+    store.append(session, {"type": "message", "id": "m2", "role": "user", "content": "撤销陈述"})
+    store.append(session, {
+        "type": "summary", "content": "撤销后失效的摘要", "covered_records": 2,
+        "distilled_ids": ["m1"] if succeeded else [],
+    })
+    store.append(session, {"type": "undo", "message_id": "m2"})
+
+    loaded = store.load(session.id)
+    assert loaded.summary_text() == ""
+    assert loaded.user_texts() == ["保留陈述"]
+    assert loaded.user_texts_after_distilled() == ([] if succeeded else ["保留陈述"])
+
+
+def test_list_reuses_cached_summary_until_file_changes(tmp_path, monkeypatch):
+    store, session = make_store(tmp_path)
+    store.append(session, {
+        "type": "message", "id": new_message_id(), "role": "user", "content": "第一条",
+    })
+    calls = 0
+    original = store.load
+
+    def counting(session_id):
+        nonlocal calls
+        calls += 1
+        return original(session_id)
+
+    monkeypatch.setattr(store, "load", counting)
+
+    first = store.list()
+    second = store.list()
+    assert calls == 1
+    assert first == second
+
+    store.append(session, {
+        "type": "message", "id": new_message_id(), "role": "user", "content": "第二条",
+    })
+    third = store.list()
+    assert calls == 2
+    assert third[0]["messages"] == 2
+
+
+def test_unconsolidated_skips_unchanged_consolidated_files(tmp_path, monkeypatch):
+    store, session = make_store(tmp_path)
+    message_id = new_message_id()
+    store.append(session, {
+        "type": "message", "id": message_id, "role": "user", "content": "已经沉淀",
+    })
+    store.append(session, {"type": "distilled", "up_to": message_id})
+    calls = 0
+    original = store.load
+
+    def counting(session_id):
+        nonlocal calls
+        calls += 1
+        return original(session_id)
+
+    monkeypatch.setattr(store, "load", counting)
+
+    assert store.unconsolidated(3) == []
+    assert store.unconsolidated(3, min_new_messages=3) == []
+    assert calls == 1
+
+
+def test_distilled_high_water_mark_does_not_move_backwards(tmp_path):
+    store, session = make_store(tmp_path)
+    for number in range(3):
+        store.append(session, {
+            "type": "message", "id": f"m{number}", "role": "user", "content": f"陈述{number}",
+        })
+    store.append(session, {"type": "distilled", "up_to": "m1"})
+    store.append(session, {"type": "distilled", "up_to": "m0"})
+    assert store.load(session.id).user_texts_after_distilled() == ["陈述2"]

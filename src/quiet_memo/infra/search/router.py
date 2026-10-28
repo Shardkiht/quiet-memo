@@ -14,6 +14,7 @@ from .base import (
     SearchProvider,
     SearchQuery,
     SearchResult,
+    assert_public_fetch_url,
 )
 from .cache import SearchCache
 from .open_websearch import OpenWebSearchProvider
@@ -143,17 +144,24 @@ class SearchRouter:
         text = url.strip()
         if not text:
             raise ValueError("抓取地址为空")
+        assert_public_fetch_url(text)
         failures: list[SearchFailure] = []
         for name in self.order:
             provider = self.registry.get(name)
             if provider is None or "fetch" not in provider.capabilities:
                 continue
             try:
-                return provider.fetch(FetchQuery(text, max_chars))
+                result = provider.fetch(FetchQuery(text, max_chars))
             except ProviderError as exc:
                 failures.append(SearchFailure.from_error(exc))
+                continue
             except Exception as exc:
                 failures.append(SearchFailure(name, "unavailable", str(exc)))
+                continue
+            if result.final_url and result.final_url != text:
+                # 上游 daemon 已逐跳校验；这里对最终地址再拦一次私网回落。
+                assert_public_fetch_url(result.final_url, "重定向后的抓取地址")
+            return result
         if failures:
             detail = "；".join(f"{item.provider}: {item.detail}" for item in failures)
             # 这里失败的是抓取而不是搜索；provider 标明 fetch，避免上层误判成搜索故障。

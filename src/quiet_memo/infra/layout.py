@@ -14,7 +14,3 @@ def widths(cols: int | None = None) -> tuple[int, int, int]:
     left = 2
     right = max(0, cols - left - width)
     return left, width, right
-
-
-def indent(cols: int | None = None) -> str:
-    return " " * widths(cols)[0]

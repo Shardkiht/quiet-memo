@@ -65,12 +65,7 @@ class ChatCommandsMixin:
             if not argument:
                 self.add_card("Usage: /recall <query>")
             else:
-                hits = self.service.recall(argument, 10)
-                self.add_card(
-                    "\n".join(f"[{hit.topic}] {hit.score:.2f} · {hit.text}" for hit in hits)
-                    if hits
-                    else "No matching memories."
-                )
+                self._run_recall(argument)
         elif command == "/remember":
             if not argument:
                 self.add_card("Usage: /remember <text>")
@@ -138,9 +133,7 @@ class ChatCommandsMixin:
     def _pending_apply(self, action: str, item_id: str, override: str | None) -> None:
         try:
             if action == "approve":
-                entry = self.service.approve(item_id)
-                if override and override != entry.text:
-                    entry = self.service.correct(entry.id, override, reason="人工改写后写入")
+                entry = self.service.approve(item_id, text_override=override)
                 message = f"Saved [{entry.topic}] {entry.text}"
             else:
                 item = self.service.reject(item_id)
@@ -172,7 +165,7 @@ class ChatCommandsMixin:
             if matched is None:
                 self.add_card(f"No matching topic: {name}")
                 return
-            entries = self.service.store.entries(topic=matched["topic"])
+            entries = self.service.topic_entries(matched["topic"])
             lines = [f"{matched['title']} ({matched['topic']}) · {len(entries)} entries", ""]
             for entry in entries:
                 tag = "" if entry.status == "active" else f" ({entry.status})"
@@ -309,6 +302,31 @@ class ChatCommandsMixin:
         self._set_busy(False)
         self._drain_pending_intent()
 
+    def _run_recall(self, query: str) -> None:
+        self._set_busy(True)
+        self.run_worker(
+            partial(self._recall_work, query), group="ask", thread=True,
+            exclusive=True, exit_on_error=False,
+        )
+
+    def _recall_work(self, query: str) -> None:
+        try:
+            hits = self.service.recall(query, 10)
+            message = (
+                "\n".join(f"[{hit.topic}] {hit.score:.2f} · {hit.text}" for hit in hits)
+                if hits else "No matching memories."
+            )
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"Recall failed: {exc}")
+            return
+        self.call_from_thread(self._after_recall, message)
+
+    def _after_recall(self, message: str) -> None:
+        self.add_card(message)
+        self.update_status()
+        self._set_busy(False)
+        self._drain_pending_intent()
+
     def _run_remember(self, text: str) -> None:
         self._set_busy(True)
         self.run_worker(
@@ -341,8 +359,22 @@ class ChatCommandsMixin:
     # ---------- 设置类选择器（逻辑在 actions.py） ----------
 
     def _open_models(self, refresh: bool = False) -> None:
+        # keyring/供应商元数据查询可能很慢，不能在 UI 线程先算选项再开选择器。
+        self.run_worker(
+            partial(self._open_models_work, refresh),
+            group="models",
+            thread=True,
+            exit_on_error=False,
+        )
+
+    def _open_models_work(self, refresh: bool) -> None:
         fetched = None if refresh else cached_provider_models(self.service.config.llm)
-        self._show_model_picker(self._model_entries(fetched), background_refresh=True)
+        try:
+            entries = self._model_entries(fetched)
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"Loading models failed: {exc}")
+            return
+        self.call_from_thread(self._show_model_picker, entries, True, refresh)
 
     def _model_entries(self, fetched: list[str] | None = None) -> list[tuple]:
         options = actions.model_options(self.service, fetched)
@@ -361,7 +393,10 @@ class ChatCommandsMixin:
         return model_entries[:1] + manage_entries + model_entries[1:]
 
     def _show_model_picker(
-        self, entries: list[tuple], background_refresh: bool = False
+        self,
+        entries: list[tuple],
+        background_refresh: bool = False,
+        refresh: bool = False,
     ) -> None:
         self._drain_pending_intent()
         picker = PickScreen(
@@ -372,29 +407,30 @@ class ChatCommandsMixin:
         )
         self.push_screen(picker)
         if background_refresh:
-            self._refresh_models(picker)
+            self._refresh_models(picker, refresh)
 
-    def _refresh_models(self, picker: PickScreen) -> None:
+    def _refresh_models(self, picker: PickScreen, refresh: bool = False) -> None:
         self.run_worker(
-            partial(self._refresh_models_work, picker),
+            partial(self._refresh_models_work, picker, refresh),
             group="models",
             thread=True,
             exit_on_error=False,
         )
 
-    def _refresh_models_work(self, picker: PickScreen) -> None:
+    def _refresh_models_work(self, picker: PickScreen, refresh: bool = False) -> None:
         try:
-            fetched = fetch_provider_models(self.service.config.llm, refresh=True)
+            fetched = fetch_provider_models(self.service.config.llm, refresh=refresh)
+            entries = self._model_entries(fetched) if fetched else None
         except Exception:
             return
-        if fetched:
-            self.call_from_thread(self._apply_fetched_models, picker, fetched)
+        if entries is not None:
+            self.call_from_thread(self._apply_fetched_models, picker, entries)
 
-    def _apply_fetched_models(self, picker: PickScreen, fetched: list[str]) -> None:
+    def _apply_fetched_models(self, picker: PickScreen, entries: list[tuple]) -> None:
         # 异步刷新完成时用户可能已离开 /model；只更新仍然打开的这一屏。
         if self.screen is not picker:
             return
-        picker.update_options(self._model_entries(fetched))
+        picker.update_options(entries)
 
     def _model_picked(self, value) -> None:
         if value is None:

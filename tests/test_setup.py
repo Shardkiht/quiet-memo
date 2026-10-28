@@ -5,16 +5,19 @@ import pytest
 pytestmark = pytest.mark.config
 
 import sys
+import tomllib
 import types
 
 from quiet_memo.infra.config import (
     ChatConfig,
     Config,
+    ConfigError,
     EmbeddingConfig,
     LLMConfig,
     RetrievalConfig,
     SearchConfig,
     load_config,
+    toml_literal,
 )
 from quiet_memo.infra.providers import PRESETS, write_config
 
@@ -81,6 +84,44 @@ def test_write_config_roundtrip(tmp_path):
     assert loaded.retrieval.embedding.api_key_env == "DASHSCOPE_API_KEY"
     assert loaded.vault == config.vault
     assert not (tmp_path / "quiet-memo.toml.tmp").exists()
+
+
+def test_load_config_reports_invalid_toml(tmp_path):
+    path = tmp_path / "quiet-memo.toml"
+    path.write_text("[chat\ncontext_window = 1000\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="TOML 语法错误"):
+        load_config(path)
+
+
+def test_load_config_rejects_wrong_types_and_ranges(tmp_path):
+    cases = [
+        ('[chat]\ncontext_window = "big"\n', "必须是整数"),
+        ("[chat]\ncontext_window = 0\n", "必须大于 0"),
+        ("confidence_threshold = 1.5\n", "必须在 0 到 1 之间"),
+        ("auto_push = \"yes\"\n", "必须是布尔值"),
+        ("[search]\nproviders = [1, 2]\n", "必须是字符串"),
+    ]
+    for content, message in cases:
+        path = tmp_path / "quiet-memo.toml"
+        path.write_text(content, encoding="utf-8")
+        with pytest.raises(ConfigError, match=message):
+            load_config(path)
+
+
+def test_write_config_escapes_special_characters(tmp_path):
+    path = tmp_path / "quiet-memo.toml"
+    vault = tmp_path / 'vault "quoted" \\ path\x7f'
+    write_config(path, Config(vault=vault, llm=LLMConfig(model="model\x7f")))
+
+    loaded = load_config(path)
+    assert loaded.vault == vault
+    assert loaded.llm.model == "model\x7f"
+
+
+def test_toml_literal_roundtrips_unicode_and_controls():
+    value = '中文 "quote" \\ backslash \x7f'
+    assert tomllib.loads(f"value = {toml_literal(value)}")["value"] == value
 
 
 def test_load_config_defaults_to_hybrid_local(tmp_path):
