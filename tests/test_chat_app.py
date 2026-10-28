@@ -10,7 +10,7 @@ from quiet_memo.agent.runtime import AgentRuntime
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.app.chat_app import ChatApp, SidebarToggle
 from quiet_memo.app.chat_input import BarInput
-from quiet_memo.app.chat_widgets import SLASH_COMMANDS
+from quiet_memo.app.command_catalog import SLASH_COMMANDS
 from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, RetrievalConfig, SearchConfig
 from quiet_memo.llm import AssistantTurn
 from quiet_memo.memory.extractor import StaticExtractor
@@ -141,7 +141,12 @@ async def test_session_switch_drops_previous_context_usage(tmp_path, action):
         assert not app.busy
         assert app.runtime.last_plan is None
         assert "0/32K" in str(app.query_one("#status", Static).content)
-        assert widget.has_focus
+        # 重建 transcript 后焦点恢复可能晚一帧，busy 释放不等于 focus 已处理。
+        for _ in range(50):
+            await pilot.pause()
+            if widget.has_focus:
+                break
+        assert widget.has_focus, app.focused
         if action == "new":
             assert not app.runtime.has_session
         else:

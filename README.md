@@ -318,7 +318,8 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 ```text
 src/quiet_memo/
 ├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
-│                 chat_widgets.py, chat_input.py, actions.py, ui.py, session_ui.py
+│                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
+│                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py              # Agent 循环、系统提示词、压缩、工具、会话

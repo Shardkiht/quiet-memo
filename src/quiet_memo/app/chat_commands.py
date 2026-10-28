@@ -7,7 +7,8 @@ from textual.widgets import Input
 from ..infra.tokens import format_tokens
 from ..llm import cached_provider_models, fetch_provider_models
 from . import actions
-from .chat_widgets import PickScreen, SLASH_COMMANDS, SessionPickerScreen, TextInputScreen
+from .chat_widgets import PickScreen, SessionPickerScreen, TextInputScreen
+from .command_catalog import SLASH_COMMANDS
 from .session_ui import visible_sessions
 
 

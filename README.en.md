@@ -319,7 +319,8 @@ Credential detection considers assignment syntax and separators. It permits Chin
 ```text
 src/quiet_memo/
 ├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
-│                 chat_widgets.py, chat_input.py, actions.py, ui.py, session_ui.py
+│                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
+│                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP entry points
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py              # Agent loop, system prompt, compaction, tools, sessions

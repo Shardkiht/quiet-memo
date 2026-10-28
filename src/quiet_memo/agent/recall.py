@@ -28,6 +28,10 @@ REWRITE_PROMPT = """把当前问题和最近对话合并成一个用于检索个
 3. 非中文的问题，先补上对应的中文说法（记忆库以中文为主）。
 4. 不要回答问题，不要解释，只输出一行查询。"""
 
+COMBINED_QUERY_MAX_CHARS = 400
+REWRITE_MAX_TOKENS = 120
+REWRITTEN_QUERY_MAX_CHARS = 200
+
 
 @dataclass(slots=True)
 class RecallQuery:
@@ -70,7 +74,7 @@ class RecallQueryBuilder:
         if not needs_context and not attribute:
             return RecallQuery(text, cue=cue)
 
-        combined = " ".join([*recent, text])[-400:]
+        combined = " ".join([*recent, text])[-COMBINED_QUERY_MAX_CHARS:]
         if not self.rewrite or (self.llm.requires_api_key() and not self.llm.api_key()):
             return RecallQuery(combined, cue=cue)
 
@@ -86,12 +90,12 @@ class RecallQueryBuilder:
                     },
                 ],
                 temperature=0.0,
-                max_tokens=120,
+                max_tokens=REWRITE_MAX_TOKENS,
             )
             content = (response.choices[0].message.content or "").strip()
             query = content.splitlines()[0].strip().strip("\"'“”")
             if query:
-                return RecallQuery(query[:200], cue=cue, rewritten=True)
+                return RecallQuery(query[:REWRITTEN_QUERY_MAX_CHARS], cue=cue, rewritten=True)
         except Exception:
             pass
         return RecallQuery(combined, cue=cue)
