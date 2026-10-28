@@ -66,7 +66,3 @@ class LLMSummarizer:
             )
         except Exception:
             return fallback_summary(previous, transcript, max_chars)
-
-
-class SessionSummarizer(Summarizer):  # pragma: no cover - 兼容旧名
-    pass

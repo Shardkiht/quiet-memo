@@ -7,6 +7,7 @@ pytestmark = pytest.mark.agent
 from quiet_memo.agent.context import ContextManager
 from quiet_memo.agent.session import SessionStore, new_message_id
 from quiet_memo.infra.config import ChatConfig
+from quiet_memo.infra.tokens import estimate_messages_tokens
 
 
 class FakeSummarizer:
@@ -18,7 +19,7 @@ class FakeSummarizer:
         return f"摘要-{len(self.calls)}"
 
 
-def build_session(store):
+def build_session(store, repeat=3):
     session = store.create()
     for index in range(6):
         store.append(
@@ -27,7 +28,7 @@ def build_session(store):
                 "type": "message",
                 "id": new_message_id(),
                 "role": "user",
-                "content": f"第 {index} 轮用户消息：" + "这是一个比较长的偏好描述。" * 3,
+                "content": f"第 {index} 轮用户消息：" + "这是一个比较长的偏好描述。" * repeat,
             },
         )
         store.append(
@@ -172,3 +173,90 @@ def test_no_compaction_with_only_current_message(tmp_path):
 
     assert not plan.compacted
     assert plan.summary == ""
+
+
+@pytest.mark.parametrize("raise_error", [False, True])
+def test_failed_flush_still_compacts_and_keeps_messages_for_retry(tmp_path, raise_error):
+    store = SessionStore(tmp_path)
+    session = build_session(store, repeat=80)
+    original_texts = session.user_texts()
+    store.append(session, {"type": "message", "id": "current", "role": "user", "content": "当前问题"})
+
+    def failed_flush(texts):
+        if raise_error:
+            raise RuntimeError("synthetic timeout")
+        return {"error": "synthetic timeout"}
+
+    manager = ContextManager(
+        ChatConfig(context_window=4096, reserve_output_tokens=512, keep_recent_tokens=1500),
+        FakeSummarizer(), store, flush=failed_flush,
+    )
+    plan = manager.prepare(session, "系统提示", "当前问题", current_id="current")
+
+    assert plan.compacted
+    assert estimate_messages_tokens(plan.messages) <= manager.input_budget
+    assert plan.flushed == {"error": "synthetic timeout"}
+    assert any("distillation" in event and "failed" in event for event in plan.events)
+    loaded = store.load(session.id)
+    assert loaded.covered_records() > 0
+    assert loaded.latest_summary()["distilled_ids"] == []
+    assert loaded.user_texts_after_distilled() == original_texts + ["当前问题"]
+
+
+def test_later_successful_compaction_does_not_cover_an_earlier_failed_flush(tmp_path):
+    store = SessionStore(tmp_path)
+    session = build_session(store, repeat=80)
+    attempts = []
+
+    def flush(texts):
+        attempts.append(texts)
+        if len(attempts) == 1:
+            raise RuntimeError("synthetic timeout")
+        return {"admitted": len(texts), "queued": 0}
+
+    manager = ContextManager(
+        ChatConfig(context_window=4096, reserve_output_tokens=512, keep_recent_tokens=1500),
+        FakeSummarizer(), store, flush=flush,
+    )
+    manager.prepare(session, "系统提示", "继续", force=True)
+    failed_texts = list(attempts[0])
+    loaded = store.load(session.id)
+    for number in range(3):
+        store.append(loaded, {
+            "type": "message", "id": f"later-{number}", "role": "user",
+            "content": f"后续合成陈述 {number}：" + "合成陈述" * 80,
+        })
+    plan = manager.prepare(loaded, "系统提示", "继续", force=True)
+
+    assert plan.compacted
+    assert len(attempts) >= 2
+    pending = store.load(session.id).user_texts_after_distilled()
+    assert all(text in pending for text in failed_texts)
+    assert all(text not in pending for text in attempts[-1])
+
+
+def test_compaction_without_flush_does_not_acknowledge_messages(tmp_path):
+    store = SessionStore(tmp_path)
+    session = build_session(store)
+    manager = ContextManager(
+        ChatConfig(context_window=1000, reserve_output_tokens=100, keep_recent_tokens=100),
+        FakeSummarizer(), store,
+    )
+    plan = manager.prepare(session, "系统提示", "继续", force=True)
+    assert plan.compacted
+    assert store.load(session.id).user_texts_after_distilled() == session.user_texts()
+
+
+def test_compaction_does_not_flush_already_distilled_messages(tmp_path):
+    store = SessionStore(tmp_path)
+    session = build_session(store)
+    store.append(session, {"type": "distilled", "up_to": session.last_user_message_id()})
+    flushed = []
+    manager = ContextManager(
+        ChatConfig(context_window=1000, reserve_output_tokens=100, keep_recent_tokens=100),
+        FakeSummarizer(), store, flush=lambda texts: flushed.append(texts),
+    )
+    plan = manager.prepare(session, "系统提示", "继续", force=True)
+    assert plan.compacted
+    assert not flushed
+    assert not store.load(session.id).needs_consolidation()

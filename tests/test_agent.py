@@ -77,6 +77,21 @@ def test_start_defers_session_creation(tmp_path):
     assert len(store.list()) == 1
 
 
+@pytest.mark.parametrize("action", ["start", "resume"])
+def test_session_change_clears_last_plan(tmp_path, action):
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="收到")]))
+    runtime.ask("合成提问")
+    session_id = runtime.current.id
+    assert runtime.last_plan is not None
+
+    if action == "start":
+        runtime.start()
+    else:
+        runtime.resume(session_id)
+
+    assert runtime.last_plan is None
+
+
 def test_close_without_session_is_noop(tmp_path):
     runtime, _ = build_runtime(tmp_path, FakeChatModel([]))
 
@@ -1003,3 +1018,91 @@ def test_consolidate_skips_active_session_even_when_scan_includes_it(tmp_path, m
 
     assert result["scanned"] == 0
     assert result["consolidated"] == 0
+
+
+@pytest.mark.parametrize("recovery", ["close", "startup"])
+def test_failed_compaction_flush_keeps_budget_and_recovers_all_chunks(tmp_path, monkeypatch, recovery):
+    from quiet_memo.agent import runtime as runtime_module
+    from quiet_memo.infra.tokens import estimate_messages_tokens
+
+    monkeypatch.setattr(runtime_module, "DISTILL_MAX_CHARS", 3000)
+
+    class BudgetModel(FakeChatModel):
+        def chat(self, messages, tools, on_delta=None):
+            assert estimate_messages_tokens(messages) + 512 <= 4096
+            return super().chat(messages, tools, on_delta=on_delta)
+
+    class FlakyExtractor:
+        failing = True
+
+        def __init__(self):
+            self.inputs = []
+
+        def extract(self, text, context=""):
+            self.inputs.append(text)
+            if self.failing and len(self.inputs) == 2:
+                raise RuntimeError("synthetic extraction timeout")
+            return ExtractionResult(memories=[])
+
+    runtime, service = build_runtime(
+        tmp_path, BudgetModel([AssistantTurn(content="正常回答")]), extract_on_exit=True,
+    )
+    runtime.config.context_window = 4096
+    runtime.config.reserve_output_tokens = 512
+    runtime.config.keep_recent_tokens = 1000
+    runtime.config.auto_recall = 0
+    extractor = FlakyExtractor()
+    service.extractor = extractor
+    session = runtime.ensure_session()
+    contents = [f"synthetic entry {number}: " + "synthetic-entry " * 400 for number in range(8)]
+    for number, content in enumerate(contents):
+        runtime.sessions.append(session, {
+            "type": "message", "id": f"old-{number}", "role": "user", "content": content,
+        })
+        runtime.sessions.append(session, {
+            "type": "assistant", "id": f"answer-{number}", "content": "Acknowledged.",
+        })
+
+    reply = runtime.ask("继续", on_delta=lambda _: None)
+    assert reply.content == "正常回答"
+    assert reply.compacted
+    assert session.latest_summary()["distilled_ids"] == []
+    assert len(extractor.inputs) == 2
+    loaded = runtime.sessions.load(session.id)
+    assert loaded.user_texts_after_distilled() == contents + ["继续"]
+
+    extractor.failing = False
+    extractor.inputs.clear()
+    if recovery == "close":
+        runtime.resume(session.id)
+        assert runtime.close()["error"] is None
+    else:
+        runtime.start()
+        assert runtime.consolidate_pending()["consolidated"] == 1
+
+    assert "".join(extractor.inputs) == "\n---\n".join(contents + ["继续"])
+    assert not runtime.sessions.load(session.id).needs_consolidation()
+    extractor.inputs.clear()
+    runtime.start()
+    assert runtime.consolidate_pending()["scanned"] == 0
+    assert not extractor.inputs
+
+
+def test_consolidate_does_not_let_short_sessions_hide_eligible_sessions(tmp_path):
+    runtime, _ = build_runtime(tmp_path, FakeChatModel([]), extract_on_exit=True)
+    sessions = []
+    for number, count in enumerate((5, 1, 2, 1)):
+        session = runtime.sessions.create()
+        sessions.append(session)
+        for index in range(count):
+            runtime.sessions.append(session, {
+                "type": "message", "id": f"m{number}-{index}", "role": "user",
+                "content": f"合成陈述 {number}-{index}",
+                "at": f"2026-01-0{number + 1}T12:00:00",
+            })
+
+    result = runtime.consolidate_pending(limit=3, min_new_messages=3)
+    assert result["consolidated"] == 1
+    assert not runtime.sessions.load(sessions[0].id).needs_consolidation()
+    assert all(runtime.sessions.load(s.id).needs_consolidation() for s in sessions[1:])
+    assert runtime.consolidate_pending()["consolidated"] == 3

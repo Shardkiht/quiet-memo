@@ -24,7 +24,14 @@ from .extractor import ImportExtractor, LLMExtractor
 from .models import Candidate, Entry, PendingItem
 from .policy import decide
 from .queue import PendingQueue
-from .store import STATUS_ACTIVE, STATUS_DELETED, STATUS_SUPERSEDED, MemoryStore
+from .store import (
+    STATUS_ACTIVE,
+    STATUS_DELETED,
+    STATUS_SUPERSEDED,
+    MemoryStore,
+    normalize_text,
+    slugify,
+)
 
 
 VAULT_README = """# quiet-memo vault
@@ -240,14 +247,19 @@ class MemoryService:
         queued: list[PendingItem] = []
         duplicates: list[str] = []
         blocked: list[str] = []
+        # 锁内每批只扫描一次；停用条目仍占用 ID，但不参与重复与冲突检测。
+        all_entries = self.store.entries(include_inactive=True)
+        known_ids = {entry.id for entry in all_entries}
+        active_entries = [entry for entry in all_entries if entry.status == STATUS_ACTIVE]
+        known_texts = {normalize_text(entry.text) for entry in active_entries}
         for candidate in candidates:
             if contains_secret(candidate.text):
                 blocked.append(candidate.text)
                 continue
-            if self.store.has_text(candidate.text):
+            if normalize_text(candidate.text) in known_texts:
                 duplicates.append(candidate.text)
                 continue
-            conflicts = find_conflicts(candidate, self.store.entries())
+            conflicts = find_conflicts(candidate, active_entries)
             if conflicts:
                 item = self._queue_candidate(
                     candidate,
@@ -263,11 +275,18 @@ class MemoryService:
             decision = decide(candidate, self.config.confidence_threshold)
             if decision.admit:
                 if dry_run:
-                    admitted.append(
-                        Entry(id="(dry-run)", topic=candidate.topic, text=candidate.text, timestamp="")
+                    entry = Entry(
+                        id="(dry-run)", topic=slugify(candidate.topic),
+                        text=candidate.text, timestamp="",
                     )
                 else:
-                    admitted.append(self._append_candidate(candidate, source, session_id, message_id))
+                    entry = self._append_candidate(
+                        candidate, source, session_id, message_id, known_ids=known_ids
+                    )
+                admitted.append(entry)
+                active_entries.append(entry)
+                known_texts.add(normalize_text(entry.text))
+                known_ids.add(entry.id)
             else:
                 queued.append(
                     self._queue_candidate(
@@ -285,6 +304,7 @@ class MemoryService:
         session_id: str | None = None,
         message_id: str | None = None,
         supersedes: str | None = None,
+        known_ids: set[str] | None = None,
     ) -> Entry:
         extra = {"session": session_id or "", "message": message_id or ""}
         return self.store.append(
@@ -295,6 +315,7 @@ class MemoryService:
             title=candidate.title,
             extra=extra,
             supersedes=supersedes,
+            known_ids=known_ids,
         )
 
     def _queue_candidate(
@@ -397,16 +418,21 @@ class MemoryService:
     def pending(self) -> list[PendingItem]:
         return self.queue.all()
 
-    def approve(self, item_id: str) -> Entry:
+    def approve(self, item_id: str, text_override: str | None = None) -> Entry:
         with self.write_lock:
-            return self._approve_locked(item_id)
+            return self._approve_locked(item_id, text_override)
 
-    def _approve_locked(self, item_id: str) -> Entry:
+    def _approve_locked(self, item_id: str, text_override: str | None = None) -> Entry:
         item = self.queue.get(item_id)
         if item is None:
             raise KeyError(f"待确认项不存在：{item_id}")
-        if contains_secret(item.text):
+        text = item.text if text_override is None else text_override.strip()
+        if text_override is not None and not text:
+            raise ValueError("内容为空。")
+        if contains_secret(text):
             raise ValueError("检测到密钥或敏感信息，已拦截写入。")
+        if self.store.has_text(text):
+            raise ValueError("相同内容已存在。")
         supersedes = item.conflict_with
         if supersedes:
             old = self.store.find(supersedes)
@@ -414,16 +440,19 @@ class MemoryService:
                 self.store.set_status(supersedes, STATUS_SUPERSEDED)
         entry = self.store.append(
             item.topic,
-            item.text,
+            text,
             source=f"{item.source}+approved",
             confidence=item.confidence,
-            note="人工确认",
+            note="人工确认" if text_override is None else "人工改写后确认",
             title=item.title,
             extra={"session": item.session_id or "", "message": item.message_id or ""},
             supersedes=supersedes,
         )
         self.queue.resolve(item_id, "approved")
-        self.audit.write("approve", item=item_id, entry=entry.id, supersedes=supersedes or "")
+        override_fields = {"text_override": text} if text_override is not None else {}
+        self.audit.write(
+            "approve", item=item_id, entry=entry.id, supersedes=supersedes or "", **override_fields
+        )
         return entry
 
     def reject(self, item_id: str) -> PendingItem:
@@ -439,6 +468,9 @@ class MemoryService:
 
     def topics(self) -> list[dict]:
         return [topic.model_dump() for topic in self.store.topics()]
+
+    def topic_entries(self, topic: str) -> list[Entry]:
+        return self.store.entries(topic=topic)
 
     def history(self, limit: int = 10) -> list[dict]:
         return self.repo.history(limit)

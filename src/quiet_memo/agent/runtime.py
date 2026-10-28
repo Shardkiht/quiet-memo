@@ -70,6 +70,7 @@ class AgentRuntime:
     def start(self) -> None:
         """进入新对话。会话文件在第一条消息发送时才创建。"""
         self.session = None
+        self.last_plan = None
         self._closed = False
 
     def ensure_session(self) -> Session:
@@ -84,6 +85,7 @@ class AgentRuntime:
 
     def resume(self, session_id: str) -> Session:
         self.session = self.sessions.load(session_id)
+        self.last_plan = None
         self._closed = False
         return self.session
 
@@ -304,7 +306,9 @@ class AgentRuntime:
         if not self.config.extract_on_exit:
             return result
         exclude = self.session.id if self.session is not None else None
-        for session in self.sessions.unconsolidated(limit, exclude=exclude):
+        for session in self.sessions.unconsolidated(
+            limit, exclude=exclude, min_new_messages=min_new_messages
+        ):
             if self.session is not None and session.id == self.session.id:
                 # 后台补记期间用户可能切进这个会话；活跃会话不在后台追加记录。
                 continue

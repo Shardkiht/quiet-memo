@@ -117,6 +117,37 @@ async def test_undo_restores_last_message_for_editing(tmp_path):
         assert raw_texts == ["原始提问", "编辑后的提问"]
 
 
+@pytest.mark.parametrize("action", ["new", "resume"])
+async def test_session_switch_drops_previous_context_usage(tmp_path, action):
+    app = build_app(tmp_path, [AssistantTurn(content="合成回复")])
+    target = app.sessions.create()
+    app.sessions.append(target, {
+        "type": "message", "id": new_message_id(), "role": "user", "content": "历史合成提问",
+    })
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "新合成提问"
+        await pilot.press("enter")
+        await _wait_reply(app, pilot)
+        assert app.runtime.last_plan is not None
+        if action == "new":
+            app._new_session()
+        else:
+            app._switch_session(target.id)
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.busy
+        assert app.runtime.last_plan is None
+        assert "0/32K" in str(app.query_one("#status", Static).content)
+        assert widget.has_focus
+        if action == "new":
+            assert not app.runtime.has_session
+        else:
+            assert app.runtime.current.id == target.id
+
+
 async def test_status_bar_renders_context_usage(tmp_path):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
@@ -389,7 +420,11 @@ async def test_model_picker_uses_cache_and_refreshes_in_background(tmp_path, mon
         picker = app.screen
         assert isinstance(picker, PickScreen)
         assert not app.busy
-        labels = [item.label for item in picker.query("#pick-list OptionItem")]
+        for _ in range(50):
+            await pilot.pause()
+            labels = [item.label for item in picker.query("#pick-list OptionItem")]
+            if labels:
+                break
         assert any("cached-model" in label for label in labels)
         assert not any("fresh-model" in label for label in labels)
 
@@ -973,6 +1008,72 @@ async def test_pending_interactive_approve(tmp_path):
         assert app.service.store.has_text("低置信的偏好内容")
         cards = [str(w.render()) for w in app.query(".card")]
         assert any("Saved" in c for c in cards)
+
+
+async def test_pending_interactive_edit_approves_only_final_text(tmp_path):
+    from textual.widgets import ListView
+
+    from quiet_memo.app.chat_widgets import PickScreen, TextInputScreen
+    from quiet_memo.memory.models import Candidate, PendingItem
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        item = PendingItem.from_candidate(
+            Candidate(text="可能喜欢浅烘", topic="preferences", confidence=0.5),
+            "chat", "low confidence",
+        )
+        app.service.queue.add(item)
+        app.refresh_pending()
+
+        widget = app.query_one("#input", Input)
+        widget.value = "/pending"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen) and app.screen.query_one(ListView).has_focus:
+                break
+        picker = app.screen
+        assert isinstance(picker, PickScreen)
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, PickScreen) and app.screen is not picker:
+                if app.screen.query_one(ListView).has_focus:
+                    break
+        assert isinstance(app.screen, PickScreen) and app.screen is not picker
+        await pilot.press("down")
+        listing = app.screen.query_one(ListView)
+        assert listing.highlighted_child.label == "Edit and approve"
+        await pilot.press("enter")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, TextInputScreen):
+                if app.screen.query_one("#pick-input", Input).has_focus:
+                    break
+        assert isinstance(app.screen, TextInputScreen)
+        field = app.screen.query_one("#pick-input", Input)
+        assert field.value == item.text
+        field.value = "喜欢中烘咖啡"
+        await pilot.press("enter")
+        for _ in range(100):
+            await pilot.pause()
+            if not app.service.pending() and widget.has_focus and not app.busy:
+                break
+
+        entries = app.service.store.entries(include_inactive=True)
+        assert [(entry.text, entry.status, entry.supersedes) for entry in entries] == [
+            ("喜欢中烘咖啡", "active", None)
+        ]
+        assert app.service.pending() == []
+        assert app.runtime.has_session is False
+        assert not app.query(".bubble")
+        assert not app.query(".reply")
+        assert not app.busy
+        assert widget.value == ""
+        assert widget.has_focus
+        cards = [str(card.render()) for card in app.query(".card")]
+        assert any("Saved" in card and "喜欢中烘咖啡" in card for card in cards)
 
 
 async def test_topics_command_lists_and_drills(tmp_path):

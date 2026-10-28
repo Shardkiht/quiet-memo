@@ -113,7 +113,7 @@ README 面向用户，必须始终与 `src/quiet_memo` 的当前架构一致。�
 
 ## 提交
 
-- 沿用现有提交风格：`feat(scope): ...`、`fix(scope): ...`、`refactor(scope): ...`、`style(scope): ...`，主题行简短。
+- 提交信息一律使用英文，沿用现有提交风格：`feat(scope): ...`、`fix(scope): ...`、`refactor(scope): ...`、`style(scope): ...`，主题行简短。
 - 不提交生成物、本地配置或用户数据。
 - 只有明确要求时才执行 `git push`。
 

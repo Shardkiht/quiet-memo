@@ -215,21 +215,8 @@ class ChatApp(ChatCommandsMixin, App):
             self.call_from_thread(self.notify, "Web search started")
 
     def _run_catchup(self) -> None:
-        """启动补沉淀：扫描异常终止/抽取失败的会话并补记，同时提交未保存的 vault 变更。
-
-        会话扫描很便宜；git 查询和提交都放后台，避免启动时阻塞 UI。
-        """
-        exclude = self.runtime.current.id if self.runtime.has_session else None
-        pending = self.sessions.unconsolidated(limit=3, exclude=exclude)
-        if pending and self.runtime.config.extract_on_exit:
-            # 补沉淀是后台维护，不占用交互 busy；切换会话和提问都不等它。
-            self.notify(f"Catching up on {len(pending)} unfinished session(s) in the background")
-            self.run_worker(
-                self._catchup_work, group="catchup", thread=True, exit_on_error=False
-            )
-            return
         self.run_worker(
-            self._background_commit_work, group="startup", thread=True, exit_on_error=False
+            self._catchup_work, group="catchup", thread=True, exit_on_error=False
         )
 
     def _catchup_work(self) -> None:
@@ -246,19 +233,6 @@ class ChatApp(ChatCommandsMixin, App):
         self.add_card(f"Startup catch-up failed: {message}")
         self.refresh_pending()
         self.update_status()
-
-    def _background_commit_work(self) -> None:
-        try:
-            commit = self.service.commit_pending_changes()
-        except Exception as exc:
-            self.call_from_thread(self._finish_error, f"Startup auto-commit failed: {exc}")
-            return
-        if commit:
-            self.call_from_thread(self._after_background_commit, commit)
-
-    def _after_background_commit(self, commit: str) -> None:
-        self.notify(f"Auto-committed uncommitted vault changes: {commit}")
-        self.refresh_sessions()
 
     def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
         if auto_commit:
@@ -371,16 +345,6 @@ class ChatApp(ChatCommandsMixin, App):
                 event.prevent_default()
                 palette.close()
                 return
-        # Del 删除侧栏高亮的会话；其他按键不受影响。
-        if event.key != "delete":
-            return
-        view = self.query_one("#sessions", ListView)
-        if not view.has_focus:
-            return
-        item = view.highlighted_child
-        if isinstance(item, SessionItem):
-            event.prevent_default()
-            self.confirm_delete_session(item.row)
 
     def _new_session(self) -> None:
         if self.busy:

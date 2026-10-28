@@ -121,32 +121,36 @@ class Session:
             if record.get("type") == "message" and record.get("role") == "user"
         ]
 
-    def _distill_cursor_index(self) -> int:
-        # 最后一次成功沉淀覆盖到的消息记录位置；从未沉淀过则回退到摘要边界。
-        for index in range(len(self.records) - 1, -1, -1):
-            record = self.records[index]
+    def undistilled_messages(self) -> list[dict]:
+        positions = {
+            record["id"]: index
+            for index, record in enumerate(self.records)
+            if record.get("id")
+        }
+        covered = 0
+        distilled_ids: set[str] = set()
+        # 沉淀是不可由 undo 撤回的写入结果，确认信息须读取原始流而非有效会话投影。
+        for record in self.records:
             if record.get("type") == "distilled":
-                up_to = record.get("up_to")
-                if up_to:
-                    message_index = next(
-                        (j for j, r in enumerate(self.records) if r.get("id") == up_to),
-                        None,
-                    )
-                    if message_index is not None:
-                        return message_index
-        return self.covered_records() - 1
-
-    def user_texts_after_distilled(self) -> list[str]:
-        """自上次沉淀游标（或摘要边界）之后的用户消息——避免来回切换重复抽取。"""
-        start = max(self._distill_cursor_index(), self.covered_records() - 1)
+                covered = max(covered, positions.get(record.get("up_to"), -1) + 1)
+            elif record.get("type") == "summary":
+                if "distilled_ids" in record:
+                    distilled_ids.update(record["distilled_ids"])
+                else:
+                    # 旧摘要没有逐消息确认信息，沿用原有边界；新摘要的空列表不代表已沉淀。
+                    covered = max(covered, int(record.get("covered_records", 0)))
         active_ids = {id(record) for record in self.active_records()}
         return [
-            record["content"]
-            for record in self.records[start + 1 :]
+            record
+            for record in self.records[covered:]
             if id(record) in active_ids
             and record.get("type") == "message"
             and record.get("role") == "user"
+            and record.get("id") not in distilled_ids
         ]
+
+    def user_texts_after_distilled(self) -> list[str]:
+        return [record["content"] for record in self.undistilled_messages()]
 
     def estimated_tokens(self) -> int:
         return sum(
@@ -159,6 +163,9 @@ class Session:
 class SessionStore:
     def __init__(self, vault: Path):
         self.root = Path(vault) / "sessions"
+        self._listing_cache: dict[str, tuple[tuple[int, int], dict]] = {}
+        # 补沉淀扫描只需知道文件还有多少待抽取消息，不必保留完整会话。
+        self._undistilled_cache: dict[str, tuple[tuple[int, int], int]] = {}
 
     def create(self) -> Session:
         stamp = datetime.now()
@@ -213,46 +220,99 @@ class SessionStore:
         if not path.exists():
             return False
         path.unlink()
+        self._listing_cache.pop(session_id, None)
+        self._undistilled_cache.pop(session_id, None)
         return True
+
+    def _listing_row(self, path: Path, with_tokens: bool) -> dict | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._listing_cache.get(path.stem)
+        if cached is None or cached[0] != signature:
+            try:
+                session = self.load(path.stem)
+            except (json.JSONDecodeError, KeyError):
+                return None
+            row = {
+                "id": session.id,
+                "started_at": session.started_at,
+                "updated_at": session.updated_at,
+                "messages": len(session.messages),
+                # token 估算要遍历全部记录，按需计算后缓存在同一行里。
+                "tokens": session.estimated_tokens() if with_tokens else None,
+                "summaries": sum(1 for record in session.records if record.get("type") == "summary"),
+                "title": session.title(),
+            }
+            self._listing_cache[path.stem] = (signature, row)
+        else:
+            row = cached[1]
+            if with_tokens and row.get("tokens") is None:
+                try:
+                    row["tokens"] = self.load(path.stem).estimated_tokens()
+                except (json.JSONDecodeError, KeyError):
+                    return None
+        result = dict(row)
+        if not with_tokens:
+            result["tokens"] = 0
+        return result
 
     def list(self, limit: int = 20, with_tokens: bool = True) -> list[dict]:
         if not self.root.exists():
             return []
         sessions = []
+        seen: set[str] = set()
         for path in self.root.glob("*.jsonl"):
-            try:
-                session = self.load(path.stem)
-            except (json.JSONDecodeError, KeyError):
+            row = self._listing_row(path, with_tokens)
+            if row is None:
                 continue
-            sessions.append(
-                {
-                    "id": session.id,
-                    "started_at": session.started_at,
-                    "updated_at": session.updated_at,
-                    "messages": len(session.messages),
-                    # token 估算要遍历全部记录，侧栏高频刷新时传 with_tokens=False 跳过。
-                    "tokens": session.estimated_tokens() if with_tokens else 0,
-                    "summaries": sum(1 for record in session.records if record.get("type") == "summary"),
-                    "title": session.title(),
-                }
-            )
+            seen.add(path.stem)
+            sessions.append(row)
+        for stale in set(self._listing_cache) - seen:
+            self._listing_cache.pop(stale, None)
         sessions.sort(key=lambda item: item["updated_at"], reverse=True)
         return sessions[:limit]
 
-    def unconsolidated(self, limit: int = 3, exclude: str | None = None) -> list[Session]:
-        """按最近更新优先，找出漏沉淀的会话（异常终止或退出抽取失败）。"""
+    def unconsolidated(
+        self, limit: int = 3, exclude: str | None = None, min_new_messages: int = 1
+    ) -> list[Session]:
+        """先筛选达到沉淀阈值的会话，再按最近更新限量返回。"""
         if not self.root.exists():
             return []
+        needed = max(1, min_new_messages)
         found: list[tuple[str, Session]] = []
+        seen: set[str] = set()
         for path in self.root.glob("*.jsonl"):
             if exclude and path.stem == exclude:
                 continue
             try:
+                stat = path.stat()
+            except OSError:
+                continue
+            seen.add(path.stem)
+            signature = (stat.st_mtime_ns, stat.st_size)
+            cached = self._undistilled_cache.get(path.stem)
+            if cached is not None and cached[0] == signature:
+                if cached[1] < needed:
+                    continue
+                try:
+                    session = self.load(path.stem)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+                found.append((session.updated_at, session))
+                continue
+            try:
                 session = self.load(path.stem)
             except (json.JSONDecodeError, KeyError):
                 continue
-            if session.needs_consolidation():
+            count = len(session.user_texts_after_distilled())
+            self._undistilled_cache[path.stem] = (signature, count)
+            if count >= needed:
                 found.append((session.updated_at, session))
+        for stale in set(self._undistilled_cache) - seen:
+            self._undistilled_cache.pop(stale, None)
         found.sort(key=lambda item: item[0], reverse=True)
         return [session for _, session in found[:limit]]
 

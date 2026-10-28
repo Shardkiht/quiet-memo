@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 
 import httpx
 import pytest
@@ -22,6 +23,7 @@ from quiet_memo.infra.search import (
     SearchRouter,
     build_search_router,
 )
+from quiet_memo.infra.search.base import assert_public_fetch_url
 from quiet_memo.infra.search import daemon as daemon_module
 from quiet_memo.infra.search.cache import SearchCache
 from quiet_memo.infra.search.daemon import ensure_daemon
@@ -95,7 +97,101 @@ def test_http_provider_maps_fetch_result():
     assert "2026-09-21" in result.content
 
 
-def test_router_fetch_uses_fetch_capable_provider():
+@pytest.fixture
+def public_dns(monkeypatch):
+    from quiet_memo.infra.search import base as search_base
+
+    monkeypatch.setattr(
+        search_base.socket,
+        "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port))
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "ftp://example.com/file",
+        "javascript:alert(1)",
+        "http://localhost:8080/admin",
+        "http://127.0.0.1:8080/admin",
+        "http://[::1]/admin",
+        "http://10.0.0.5/",
+        "http://192.168.1.1/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://0.0.0.0/",
+    ],
+)
+def test_fetch_url_rejects_non_public_targets(url):
+    with pytest.raises(ValueError):
+        assert_public_fetch_url(url)
+
+
+def test_fetch_url_rejects_private_dns_answer(monkeypatch):
+    from quiet_memo.infra.search import base as search_base
+
+    monkeypatch.setattr(
+        search_base.socket,
+        "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("127.0.0.1", port))
+        ],
+    )
+    with pytest.raises(ValueError, match="非公网"):
+        assert_public_fetch_url("https://rebind.example/")
+
+
+def test_fetch_url_allows_configured_fake_ip(monkeypatch):
+    from quiet_memo.infra.search import base as search_base
+
+    monkeypatch.setenv("FAKE_IP_CIDRS", "198.18.0.0/15")
+    monkeypatch.setattr(
+        search_base.socket,
+        "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("198.18.0.7", port))
+        ],
+    )
+
+    assert_public_fetch_url("https://example.com/")
+
+
+def test_router_fetch_rejects_private_url_before_provider():
+    class CountingProvider:
+        name = "fake"
+        capabilities = {"fetch"}
+        calls = 0
+
+        def fetch(self, query):
+            self.calls += 1
+            return FetchResult(query.url, query.url, "Title", "正文")
+
+    provider = CountingProvider()
+    router = SearchRouter({"fake": provider}, order=["fake"])
+
+    with pytest.raises(ValueError, match="私网或本机"):
+        router.fetch("http://127.0.0.1:8080/admin", 1000)
+    assert provider.calls == 0
+
+
+def test_router_fetch_rejects_private_redirect_target(public_dns):
+    class RedirectingProvider:
+        name = "fake"
+        capabilities = {"fetch"}
+
+        def fetch(self, query):
+            return FetchResult(query.url, "http://10.0.0.5/secret", "Title", "正文")
+
+    router = SearchRouter({"fake": RedirectingProvider()}, order=["fake"])
+
+    with pytest.raises(ValueError, match="私网或本机"):
+        router.fetch("https://example.com/start", 1000)
+
+
+def test_router_fetch_uses_fetch_capable_provider(public_dns):
     class FetchProvider:
         name = "fake"
         capabilities = {"search", "fetch"}
@@ -655,6 +751,7 @@ def test_agent_fetch_tool_returns_page_content(tmp_path):
     session = SessionStore(config.vault).create()
     tools = build_tools(service, session, search_router=FetchRouter())
 
+    assert tools._tools["fetch_web"].executor == "network"
     outcome = tools.execute("fetch_web", {"url": "https://example.com/news"})
 
     assert outcome.ok is True

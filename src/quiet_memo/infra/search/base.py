@@ -1,11 +1,72 @@
 from __future__ import annotations
 
+import ipaddress
+import os
+import socket
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Protocol
+from urllib.parse import urlsplit
 
 MAX_SEARCH_ENGINES = 3
+
+
+def _fake_ip_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """与 open-websearch 同名的 FAKE_IP_CIDRS：代理的合成 DNS 结果不算私网目标。"""
+    networks = []
+    for item in os.environ.get("FAKE_IP_CIDRS", "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+def _is_blocked_address(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+    allowed: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
+) -> bool:
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    if address.is_global:
+        return False
+    return not any(address in network for network in allowed)
+
+
+def assert_public_fetch_url(url: str, label: str = "抓取地址") -> None:
+    """抓取入口只接受公网 http(s) 地址，作为上游 daemon 校验之外的纵深防御。"""
+    parts = urlsplit(url)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"{label}必须是 http 或 https 链接")
+    host = (parts.hostname or "").rstrip(".").lower()
+    if not host:
+        raise ValueError(f"{label}缺少主机名")
+    if host == "localhost" or host.endswith(".localhost"):
+        raise ValueError(f"{label}不能指向本机地址")
+    allowed = _fake_ip_networks()
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        if _is_blocked_address(literal, allowed):
+            raise ValueError(f"{label}不能指向私网或本机地址")
+        return
+    try:
+        port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except ValueError:
+        raise ValueError(f"{label}端口不合法") from None
+    except OSError as exc:
+        raise ValueError(f"{label}无法解析主机名：{host}") from exc
+    for info in infos:
+        address = ipaddress.ip_address(str(info[4][0]).split("%", 1)[0])
+        if _is_blocked_address(address, allowed):
+            raise ValueError(f"{label}解析到非公网地址，已拒绝抓取")
 
 
 def normalize_search_engines(value: object, allowed: Sequence[str]) -> tuple[str, ...]:
