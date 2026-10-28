@@ -8,6 +8,32 @@ from datetime import datetime
 from pathlib import Path
 
 from quiet_memo.memory.store import MemoryStore, slugify
+from quiet_memo.memory.models import MemoryContext
+
+
+def test_context_tag_roundtrip_and_status_change_preserve_id(tmp_path):
+    store = MemoryStore(tmp_path)
+    context = MemoryContext(
+        event_time="2024-06", location="合成`展馆\n入口", location_kind="event",
+        emotion="当时开心", emotion_at="event", emotion_source="explicit",
+    )
+    entry = store.append("events", "参加合成展览", context=context, when=datetime(2026, 1, 1))
+    assert store.find(entry.id).context == context
+    assert entry.timestamp == "2026-01-01T00:00:00"
+    assert store.set_status(entry.id, "deleted")
+    loaded = store.find(entry.id)
+    assert loaded.id == entry.id and loaded.context == context
+    assert loaded.text == "参加合成展览"
+    raw = store.topic_path("events").read_text(encoding="utf-8")
+    assert "~qm-escaped~" in raw
+    assert len([line for line in raw.splitlines() if line.startswith("- ")]) == 1
+
+
+def test_legacy_entry_and_empty_context_keep_original_format(tmp_path):
+    store = MemoryStore(tmp_path)
+    entry = store.append("test", "旧格式", context=MemoryContext())
+    assert store.find(entry.id).context is None
+    assert "`context=" not in store.topic_path("test").read_text(encoding="utf-8")
 
 
 def test_append_creates_frontmatter_and_entry(tmp_path):

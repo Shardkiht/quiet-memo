@@ -75,6 +75,14 @@ PRESETS: tuple[ProviderPreset, ...] = (
         ("qwen-plus", "qwen-max", "qwen-turbo"),
     ),
     ProviderPreset(
+        "spark",
+        "讯飞星火 Spark（MaaS）",
+        "https://maas-api.cn-huabei-1.xf-yun.com/v2",
+        "spark-x2.6",
+        "SPARK_API_KEY",
+        ("spark-x2.6", "spark-x2.6-4b", "spark-x2.6-preview", "spark-x2.5"),
+    ),
+    ProviderPreset(
         "openai",
         "OpenAI",
         "https://api.openai.com/v1",
@@ -95,6 +103,10 @@ PRESETS: tuple[ProviderPreset, ...] = (
 
 
 MODEL_LABELS = {
+    "spark-x2.6": "Spark X2.6",
+    "spark-x2.6-4b": "Spark X2.6 4B",
+    "spark-x2.6-preview": "Spark X2.6 Preview",
+    "spark-x2.5": "Spark X2.5",
     "deepseek-flash": "DeepSeek Flash",
     "deepseek-v4-pro": "DeepSeek V4 Pro",
     "deepseek-chat": "DeepSeek Chat",
@@ -117,6 +129,7 @@ PROVIDER_LABELS = {
     "deepseek": "DeepSeek",
     "siliconflow": "SiliconFlow",
     "dashscope": "百炼",
+    "spark": "讯飞星火",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
     "custom": "自定义",

@@ -8,7 +8,7 @@ pytestmark = pytest.mark.memory
 
 from quiet_memo.infra.config import Config, LLMConfig, RetrievalConfig
 from quiet_memo.memory.extractor import StaticExtractor
-from quiet_memo.memory.models import Candidate, ExtractionResult, PendingItem
+from quiet_memo.memory.models import Candidate, ExtractionResult, MemoryContext, PendingItem
 from quiet_memo.memory.service import MemoryService
 
 
@@ -20,6 +20,52 @@ def make_service(tmp_path, candidates):
     service = MemoryService(config, extractor=extractor)
     service.init_vault()
     return service
+
+
+@pytest.mark.parametrize("confidence", [0.95, 0.5])
+def test_context_survives_admission_and_pending_approval(tmp_path, confidence):
+    context = MemoryContext(event_time="2024-06", time_text="2024年6月")
+    svc = make_service(tmp_path, [Candidate(text="2024年6月参加合成展览", confidence=confidence, context=context)])
+    result = svc.memorize("合成对话", session_id="s-test", message_id="m-test")
+    if result.queued:
+        assert svc.pending()[0].context == context
+        entry = svc.approve(result.queued[0].id)
+    else:
+        entry = result.admitted[0]
+        assert result.to_dict()["admitted"][0]["context"]["event_time"] == "2024-06"
+    assert svc.store.find(entry.id).context == context
+    assert entry.metadata["session"] == "s-test"
+    assert entry.metadata["message"] == "m-test"
+
+
+def test_approve_rewrite_drops_stale_context(tmp_path):
+    svc = make_service(tmp_path, [Candidate(
+        text="2024年参观合成展馆", confidence=0.5,
+        context=MemoryContext(event_time="2024", location="合成展馆", location_kind="event"),
+    )])
+    item = svc.memorize("合成对话").queued[0]
+    entry = svc.approve(item.id, text_override="2025年参观合成展馆")
+    assert entry.context is None
+    resolved = json.loads(svc.queue.resolved_path.read_text(encoding="utf-8"))
+    assert resolved["context"]["event_time"] == "2024"
+
+
+def test_context_credentials_block_before_admission_or_queue(tmp_path):
+    svc = make_service(tmp_path, [Candidate(
+        text="合成事件", confidence=0.5,
+        context=MemoryContext(location="密码是 synthetic-only", location_kind="event"),
+    )])
+    result = svc.memorize("合成对话")
+    assert result.blocked == ["合成事件"]
+    assert svc.pending() == [] and svc.store.entries() == []
+
+
+def test_import_dry_run_includes_context_without_writing(tmp_path):
+    svc = make_service(tmp_path, [])
+    candidate = Candidate(text="2024年合成事件", confidence=0.95, context=MemoryContext(event_time="2024"))
+    result = svc.import_text("合成文档", dry_run=True, extractor=StaticExtractor(ExtractionResult(memories=[candidate])))
+    assert result.admitted[0].context == candidate.context
+    assert svc.store.entries() == []
 
 
 def test_init_creates_vault_git_and_readme(tmp_path):

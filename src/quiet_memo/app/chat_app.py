@@ -333,19 +333,20 @@ class ChatApp(ChatCommandsMixin, App):
 
     def _after_session_switch(self, stats: dict, label: str | None) -> None:
         self._clear_chat()
+        message = None
         if label is None:
             self.add_welcome()
             message = "New session · created after your first message"
         else:
             self.build_transcript()
-            message = f"Resumed {label}"
         if stats.get("admitted") or stats.get("queued"):
-            message += f" (previous session distilled: {stats['admitted']} written, {stats['queued']} pending)"
+            message = f"{message or ''} (previous session distilled: {stats['admitted']} written, {stats['queued']} pending)".strip()
         self._sync_current_session()
         self.refresh_pending()
         self.update_status()
         self._set_busy(False)
-        self.notify(message)
+        if message:
+            self.notify(message)
         self.query_one("#input", Input).focus()
         self._drain_pending_intent()
 

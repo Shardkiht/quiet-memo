@@ -265,6 +265,73 @@ async def test_history_pages_preserve_records_and_flat_reply_widgets(tmp_path):
     assert session.path.read_bytes() == original
 
 
+@pytest.mark.parametrize("restored", [False, True])
+async def test_assistant_markdown_can_be_selected_and_copied(tmp_path, restored):
+    from quiet_memo.app.chat_widgets import ChatReply
+
+    app = build_app(tmp_path, [AssistantTurn(content="**合成回复** sample")])
+    if restored:
+        session = app.sessions.create()
+        app.sessions.append(session, {"type": "assistant", "content": "**合成回复** sample"})
+        app.runtime.resume(session.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        if not restored:
+            app.query_one("#input", Input).value = "合成提问"
+            await pilot.press("enter")
+            await _wait_reply(app, pilot)
+        reply = app.query_one(ChatReply)
+        await pilot.pause()
+        await pilot.mouse_down(reply, offset=(0, 0))
+        await pilot.hover(reply, offset=(7, 0))
+        await pilot.mouse_up(reply, offset=(7, 0))
+        await pilot.pause()
+        assert app.screen.get_selected_text() == "合成回复 "
+        await pilot.press("ctrl+c")
+        assert app.clipboard == "合成回复 "
+        assert not reply.query("*")
+
+
+async def test_resume_session_does_not_show_success_notification(tmp_path, monkeypatch):
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(session, {"type": "assistant", "content": "合成历史回复"})
+    async with app.run_test(size=(120, 40)) as pilot:
+        notifications = []
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notifications.append(message))
+        app._switch_session(session.id)
+        await _wait_reply(app, pilot)
+        assert app.runtime.current.id == session.id
+        assert not notifications
+        assert not app.query_one("#input", Input).disabled
+
+
+async def test_reply_selection_tracks_stream_updates_and_resize(tmp_path):
+    from textual.selection import SELECT_ALL
+    from quiet_memo.app.chat_widgets import ChatReply
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._stream_append("12:00", "**合成标题**\n\n")
+        app._stream_flush()
+        await pilot.pause()
+        reply = app.query_one(ChatReply)
+        assert "合成标题" in reply.get_selection(SELECT_ALL)[0]
+        app._stream_append("12:00", "- 合成条目\n\n```python\nprint('sample')\n```\n\n" + "wrapped words " * 12)
+        app._stream_flush()
+        await pilot.pause()
+        wide = reply.get_selection(SELECT_ALL)[0]
+        assert "合成条目" in wide and "print('sample')" in wide
+        assert "**" not in wide and "```" not in wide
+        await pilot.resize_terminal(80, 40)
+        await pilot.pause()
+        narrow = reply.get_selection(SELECT_ALL)[0]
+        assert narrow.count("wrapped") == 12
+        assert len(narrow.splitlines()) > len(wide.splitlines())
+        reply.text_select_all()
+        await pilot.press("ctrl+c")
+        assert app.clipboard == narrow
+
+
 async def test_switch_clears_previous_history_page_state(tmp_path):
     from quiet_memo.app.chat_widgets import HistoryMore, TranscriptView
 

@@ -11,7 +11,7 @@ from urllib.parse import quote, unquote
 
 import yaml
 
-from .models import Entry, TopicInfo
+from .models import Entry, MemoryContext, TopicInfo
 
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 ENTRY_LINE_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}) — (.*)$")
@@ -21,7 +21,7 @@ COMMENT_LINE_RE = re.compile(
 SLUG_RE = re.compile(r"[^\w\u4e00-\u9fff-]+")
 TAG_AT_END_RE = re.compile(r"\s+`([A-Za-z_][\w-]*)=([^`]*)`$")
 KNOWN_TAG_KEYS = frozenset(
-    {"id", "status", "supersedes", "source", "confidence", "note", "session", "message"}
+    {"id", "status", "supersedes", "source", "confidence", "note", "session", "message", "context"}
 )
 ESCAPED_TAG_PREFIX = "~qm-escaped~"
 
@@ -167,6 +167,7 @@ class MemoryStore:
         entry_id: str | None = None,
         supersedes: str | None = None,
         known_ids: set[str] | None = None,
+        context: MemoryContext | None = None,
     ) -> Entry:
         """追加条目；批量调用可传入含停用条目的完整 ID 集合，由调用方增量维护。"""
         self.ensure()
@@ -198,6 +199,8 @@ class MemoryStore:
         for key, value in (extra or {}).items():
             if value:
                 tags[key] = value
+        if context is not None and context.model_dump(exclude_none=True):
+            tags["context"] = context.model_dump_json(exclude_none=True)
         line = (
             f"- {stamp.isoformat(timespec='seconds')} — {text}"
             f"  {_render_tags(tags)}"

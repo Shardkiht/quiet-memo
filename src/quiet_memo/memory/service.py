@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from ..infra.config import Config, LLMConfig, RetrievalConfig, default_config_path, load_config
@@ -21,7 +24,8 @@ from ..retrieval import (
 from .audit import AuditLog
 from .detect import contains_secret, find_conflicts
 from .extractor import ImportExtractor, LLMExtractor
-from .models import Candidate, Entry, PendingItem
+from .inference import InferenceStore
+from .models import Candidate, Entry, Inference, InferenceKind, PendingItem
 from .policy import decide
 from .queue import PendingQueue
 from .store import (
@@ -43,6 +47,7 @@ VAULT_README = """# quiet-memo vault
 - `.quiet-memo/pending.jsonl`：低置信、冲突或敏感候选，等待人工确认。
 - `.quiet-memo/resolved.jsonl`：已确认/已拒绝记录。
 - `.quiet-memo/audit.jsonl`：更正、删除等审计记录。
+- `.quiet-memo/inferences.jsonl`：独立假设与去重后的事实来源，不参与事实检索。
 - `SOUL.md`（可选）：自定义人设，替代系统提示词里的默认人设段。
 - 全部变更由 Git 跟踪，可回滚、可审计。
 """
@@ -129,7 +134,10 @@ class MemorizeResult:
     def to_dict(self) -> dict:
         return {
             "admitted": [
-                {"id": entry.id, "topic": entry.topic, "text": entry.text, "timestamp": entry.timestamp}
+                {
+                    "id": entry.id, "topic": entry.topic, "text": entry.text, "timestamp": entry.timestamp,
+                    **({"context": entry.context.model_dump(exclude_none=True)} if entry.context else {}),
+                }
                 for entry in self.admitted
             ],
             "queued": [item.model_dump() for item in self.queued],
@@ -149,6 +157,7 @@ class MemoryService:
         self.config = config
         self.store = MemoryStore(config.vault)
         self.queue = PendingQueue(config.vault)
+        self.inferences = InferenceStore(config.vault)
         self.repo = GitRepo(config.vault)
         self.audit = AuditLog(config.vault)
         self.extractor = extractor or LLMExtractor(config.llm)
@@ -253,7 +262,9 @@ class MemoryService:
         active_entries = [entry for entry in all_entries if entry.status == STATUS_ACTIVE]
         known_texts = {normalize_text(entry.text) for entry in active_entries}
         for candidate in candidates:
-            if contains_secret(candidate.text):
+            if contains_secret(candidate.text) or (
+                candidate.context is not None and contains_secret(candidate.context.model_dump_json())
+            ):
                 blocked.append(candidate.text)
                 continue
             if normalize_text(candidate.text) in known_texts:
@@ -278,6 +289,10 @@ class MemoryService:
                     entry = Entry(
                         id="(dry-run)", topic=slugify(candidate.topic),
                         text=candidate.text, timestamp="",
+                        metadata=(
+                            {"context": candidate.context.model_dump_json(exclude_none=True)}
+                            if candidate.context else {}
+                        ),
                     )
                 else:
                     entry = self._append_candidate(
@@ -316,6 +331,7 @@ class MemoryService:
             extra=extra,
             supersedes=supersedes,
             known_ids=known_ids,
+            context=candidate.context,
         )
 
     def _queue_candidate(
@@ -350,6 +366,30 @@ class MemoryService:
             if self.store.has_text(text):
                 raise ValueError("相同内容已存在。")
             return self.store.append(topic, text, source="user-note", confidence=1.0, title=title)
+
+    def propose_inference(
+        self, text: str, source_ids: list[str], kind: InferenceKind = "profile"
+    ) -> Inference:
+        """登记假设，证据只接受当前有效的事实 ID；不自动确认或注入聊天。"""
+        text = text.strip()
+        if not text:
+            raise ValueError("推断内容不能为空。")
+        if contains_secret(text):
+            raise ValueError("检测到密钥或密码类信息，拒绝保存推断。")
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        item = Inference(
+            id="", text=text, kind=kind, source_ids=source_ids,
+            created_at=stamp, updated_at=stamp,
+        )
+        with self.write_lock:
+            active_ids = {entry.id for entry in self.store.entries()}
+            if not set(item.source_ids) <= active_ids:
+                raise ValueError("推断证据必须是当前有效的事实条目，不能使用推断、已删除或已更正的来源。")
+            identity = json.dumps(
+                [item.kind, normalize_text(item.text), item.source_ids], ensure_ascii=False
+            )
+            item.id = "inf-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+            return self.inferences.add(item)
 
     def correct(self, entry_id: str, text: str, reason: str = "") -> Entry:
         with self.write_lock:
@@ -429,7 +469,10 @@ class MemoryService:
         text = item.text if text_override is None else text_override.strip()
         if text_override is not None and not text:
             raise ValueError("内容为空。")
-        if contains_secret(text):
+        if contains_secret(text) or (
+            text_override is None and item.context is not None
+            and contains_secret(item.context.model_dump_json())
+        ):
             raise ValueError("检测到密钥或敏感信息，已拦截写入。")
         if self.store.has_text(text):
             raise ValueError("相同内容已存在。")
@@ -458,6 +501,8 @@ class MemoryService:
             note="人工确认" if text_override is None else "人工改写后确认",
             title=item.title,
             extra={"session": item.session_id or "", "message": item.message_id or ""},
+            # 改写正文后旧上下文未必适用，不沿用原候选的日期、地点与情绪。
+            context=item.context if text_override is None else None,
             supersedes=supersedes,
         )
         if supersedes:

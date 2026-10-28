@@ -42,7 +42,7 @@ qm
 | Capability | Details |
 | --- | --- |
 | Local-first | Markdown is the single source of truth; Git handles versioning and audit |
-| Multiple models | DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and custom compatible endpoints |
+| Multiple models | DeepSeek, SiliconFlow, DashScope, iFLYTEK Spark, OpenRouter, OpenAI, and custom compatible endpoints |
 | MCP | Let MCP clients use the same local memory vault |
 | Hybrid retrieval | BM25 with optional vectors; falls back to keyword retrieval if the vector backend is unavailable |
 | Web search | Optional local open-websearch integration; external content is treated as reference material |
@@ -80,7 +80,7 @@ confidence_threshold = 0.8
 auto_push = false
 
 [llm]
-provider = "deepseek"          # litellm provider: deepseek/siliconflow/dashscope/openrouter/openai/custom
+provider = "deepseek"          # provider: deepseek/siliconflow/dashscope/spark/openrouter/openai/custom
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-flash"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -126,6 +126,18 @@ engines = ["bing"]              # Upstream engines; use ["baidu"] or ["sogou"] w
 fetch_timeout = 25.0            # Separate timeout for fetching page text (seconds)
 ```
 
+Select iFLYTEK Spark MaaS in `qm setup`, or replace `[llm]` above with this configuration and set the `SPARK_API_KEY` environment variable. Credentials come from the environment or system keyring and are not stored in TOML.
+
+```toml
+[llm]
+provider = "spark"
+base_url = "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+model = "spark-x2.6"
+api_key_env = "SPARK_API_KEY"
+```
+
+Spark uses a MaaS Bearer API key. Its adapter keeps server sampling defaults and maps the output limit to `max_completion_tokens`. Streaming and tool calls are supported; JSON extraction uses prompt constraints.
+
 If Chinese output is garbled in Windows Git Bash, add `export PYTHONUTF8=1`. Interactive menus and chat rely on the Windows console; Windows Terminal or PowerShell is recommended. Git Bash users can try `winpty`.
 
 Web search is enabled by default but requires a local open-websearch daemon; see [Web search](#web-search) for startup and configuration.
@@ -137,7 +149,7 @@ Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
 - The model can call `recall / read_topic / memorize / correct / forget / review_pending`. `read_topic` reads a topic's active entries only when the user explicitly requests the full topic or recall is insufficient, caps output at 2000 tokens, and does not accept file paths. The model calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
-- Resumed sessions initially display the existing summary and the latest 10 unsummarized message records. Click “加载更早的记录” (load earlier records) to page through older messages after the summary boundary; the original history is retained. Each reply uses a single Markdown-rendering widget to reduce mounting and cleanup overhead for long replies.
+- Resumed sessions initially display the existing summary and the latest 10 unsummarized message records. Click “加载更早的记录” (load earlier records) to page through older messages after the summary boundary; the original history is retained. Successful resume does not show a notification; failures still show an error. Each reply uses a single Markdown-rendering widget to reduce mounting and cleanup overhead for long replies. Select reply text with the mouse and press Ctrl+C to copy it.
 - Context usage after resuming or undoing is estimated and cached in the background. The status shows “计算中” (calculating) until ready; changes to the session, messages, or persona trigger a new estimate, and stale results cannot overwrite the current session.
 - Resuming a session replays previous user messages and assistant replies; use `qm chat --resume <id>`. Session switches never block: the previous session's distillation runs in the background and notifies when done. The bottom context meter resets to zero after switching and updates from the new session's context plan on the next turn, rather than retaining the previous session's usage.
 - `/undo` withdraws the latest user turn and its subsequent replies, then restores the original text for editing. It appends an `undo` event instead of rewriting JSONL; after resending, the withdrawn turn stays out of context and future distillation.
@@ -319,6 +331,22 @@ Corrections use a "new entry + `supersedes`" pattern, and the old entry's status
 
 Trailing tag values containing backticks or line breaks are stored with a `~qm-escaped~` prefix and percent encoding, then decoded on read. Ordinary tags keep their existing format, and entry IDs remain stable.
 
+Extraction and import support an optional trailing `context` JSON tag. Unsupported fields remain absent; existing Markdown needs no migration:
+
+| Field | Meaning |
+| --- | --- |
+| `event_time` | Event/fact date, separate from the entry's recording `timestamp` |
+| `valid_from` / `valid_to` | Explicitly supplied validity dates; a missing end date does not mean permanent validity |
+| `time_text` | Original time expression; relative wording without a reliable reference date remains unresolved |
+| `location` / `location_kind` | Location and its type: `event` or `residence`; both must be supplied together |
+| `emotion` / `emotion_source` / `emotion_at` | Explicit emotional wording, with source `explicit`; `event` means the feeling at the time, `expression` means the feeling when discussing it now and is the default |
+
+Fact dates accept only `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, preserving precision without inventing month/day values or converting time zones. Device location is never collected; tone-based guesses, sarcasm, and ambiguous emotions are not stored as emotional facts. Entry text retains these qualifications. Context does not yet filter or rerank retrieval. Credential checks cover context as well as text. Ordinary approval preserves context; edited approval and manual correction discard potentially stale context, while the original pending candidate remains auditable.
+
+The backend `MemoryService.propose_inference(text, source_ids, kind)` appends hypotheses separately to `.quiet-memo/inferences.jsonl`, using kind `profile` or `emotion` and initial status `hypothesis`. Evidence must reference active fact entries and is deduplicated. Repeating the same kind, normalized text, and evidence set returns the existing record without increasing confidence or appending another record. Inference IDs and deleted or superseded facts cannot support new hypotheses.
+
+This is a backend foundation with no CLI/TUI/MCP inference entry points or automatic generation, confirmation, or chat injection. The model reserves `confirmed / rejected / superseded` states; user review, invalidation of existing hypotheses after source changes, and damaged-log recovery remain planned. Hypotheses are excluded from fact retrieval.
+
 Editing a candidate in `/pending` validates the final text and writes one memory directly, without first admitting and then correcting the original. Conflicting candidates still replace the old entry through `supersedes`. The original candidate remains in `resolved.jsonl`, while the audit record stores the edited text as `text_override`. Rejected blank or detected credential input leaves the candidate and old entry unchanged.
 
 Approving a stale conflicting candidate follows the replacement chain to the current active entry. If the original entry was deleted, is missing, or has an ambiguous replacement chain, approval is rejected and the candidate is retained. User messages, assistant replies, summaries, titles, and tool arguments have detected credentials hidden before appending to session files; new user messages are also sanitized before reaching the model. Existing sessions and Git history are not rewritten automatically.
@@ -338,7 +366,7 @@ src/quiet_memo/
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py              # Agent loop, system prompt, compaction, tools, sessions
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py
 │                                                   # Memory domain and write decisions
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever interface + BM25/vector/hybrid
@@ -360,6 +388,17 @@ README demo media lives in `docs/assets/` and contains no personal memory vault 
 
 ## Testing
 
+Install locked dependencies into the project's own virtual environment, then run tests:
+
+```bash
+uv sync --frozen
+uv run pytest
+```
+
+`uv.toml` keeps dependency caches under the ignored `.cache/uv`; once populated, use `uv sync --frozen --offline`. In VS Code, select `.venv` to use the pytest test panel and the current-file/full-suite debugger configurations. Fixtures isolate configuration, vaults, and credentials; real API keys are unnecessary.
+
+Restricted Windows environments that block loopback TCP may hang while asyncio creates its `socketpair`. With the locked pytest-asyncio version, set `$env:QUIET_MEMO_TEST_PIPE_LOOP = "1"` in PowerShell before running tests to wake the Proactor through a local pipe. This affects tests only, grants no network access, and does not modify application runtime behavior. Ordinary Windows and Ubuntu runs retain the default event loop.
+
 Run focused categories for local changes and the full suite before committing:
 
 ```bash
@@ -373,6 +412,14 @@ uv run pytest
 ```
 
 Categories are `ui` (TUI), `agent` (runtime/sessions/context), `memory` (store/extraction/policy/queue), `retrieval` (local retrieval), `cli`, `config`, `mcp`, and `search` (web search). LLM paths use a fixed extractor and fake models; without real API keys, no online verification is claimed.
+
+The offline synthetic parsing and write-decision regression also runs through pytest:
+
+```bash
+uv run python evals/memory_eval.py
+```
+
+It covers extraction-output parsing, conflicts, date precision, locations, explicit emotion, and credential checks in context. Model outputs are fixed, so it does not measure real-model semantic extraction. See [evals/README.md](evals/README.md) for scope and limitations, and [docs/HANDOFF.md](docs/HANDOFF.md) for handoff status.
 
 ## Retrieval evaluation
 
@@ -396,8 +443,8 @@ The full backlog lives in [GitHub Issues](https://github.com/Shardkiht/quiet-mem
 
 | Difficulty | Direction | Scope |
 | --- | --- | --- |
-| Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Separate recording time from event/valid time; optional location; distinguish explicit emotion from tone-based inference |
-| Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Store hypotheses separately with evidence; prevent self-reinforcement; support confirmation, rejection, and correction |
+| Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Basic fields and storage are implemented; original time anchors, relative-date resolution, and inferred emotion remain planned |
+| Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Separate storage and evidence deduplication are implemented; confirmation, rejection, correction, and source invalidation remain planned |
 | Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Distinguish historical change from contradiction; use time, location, and emotion to supplement hybrid retrieval |
 | High | [Dream memory / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | Incremental background reflection, reviewable hypotheses, and recoverable background jobs |
 | High | [Dynamic user profiles](https://github.com/Shardkiht/quiet-memo/issues/9) | Evidence-linked, evolving personal preferences and recent states with user corrections |
@@ -410,4 +457,4 @@ Other backlog items:
 - Daily scheduled commit daemon
 - A `qm consolidate` subcommand for manual or scheduled vault-wide catch-up (startup catch-up and auto-commit already exist)
 
-These are **planned**, not implemented in the current release; refer to the other README sections for supported functionality.
+The table distinguishes implemented foundations from remaining plans; refer to the other README sections for supported behavior and limitations.

@@ -86,7 +86,18 @@ def complete(
         kwargs["max_tokens"] = max_tokens
     if config.fallbacks:
         kwargs["fallbacks"] = config.fallbacks
+    _adapt_spark_params(config, kwargs)
     return litellm.completion(**kwargs)
+
+
+def _adapt_spark_params(config: LLMConfig, kwargs: dict) -> None:
+    if config.provider.strip().lower() != "spark":
+        return
+    # MaaS 固定采样参数，thinking 不等于 OpenAI reasoning_effort；JSON 由提示词约束。
+    for name in ("temperature", "reasoning_effort", "response_format", "stream_options"):
+        kwargs.pop(name, None)
+    if "max_tokens" in kwargs:
+        kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
 
 
 def embed_texts(config: LLMConfig, texts: list[str], batch_size: int = 32) -> list[list[float]]:
@@ -149,6 +160,8 @@ def model_metadata(model: str) -> dict:
 @lru_cache(maxsize=128)
 def supported_params(model: str) -> tuple[str, ...]:
     """读取 LiteLLM 认为该模型支持的 OpenAI 参数。"""
+    if model.startswith("openai/spark-"):
+        return ("tools", "tool_choice", "stream", "max_tokens", "max_completion_tokens")
     # 自定义 OpenAI 兼容端点统一用 openai/ 前缀；LiteLLM 对未知 id 会回退成
     # 通用 OpenAI 参数表，不能据此判断供应商真的支持 reasoning_effort 等能力。
     if model.startswith("openai/") and "/" in model[len("openai/"):]:
@@ -288,6 +301,7 @@ class LiteLLMChatModel:
             kwargs["tools"] = tools
         if self.config.fallbacks:
             kwargs["fallbacks"] = self.config.fallbacks
+        _adapt_spark_params(self.config, kwargs)
 
         content_parts: list[str] = []
         tool_acc: dict[int, dict] = {}

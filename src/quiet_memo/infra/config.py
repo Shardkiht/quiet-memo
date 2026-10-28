@@ -44,8 +44,8 @@ class LLMConfig:
     def litellm_model(self) -> str:
         provider = (self.provider or "").strip().lower()
         model = (self.model or "").strip()
-        # LiteLLM 没有 siliconflow provider；硅基流动走 OpenAI 兼容协议 + api_base。
-        if provider in ("", "custom", "openai-compatible", "siliconflow"):
+        # 硅基流动与 Spark MaaS 使用 OpenAI 兼容协议，不走旧版 Spark 鉴权适配。
+        if provider in ("", "custom", "openai-compatible", "siliconflow", "spark"):
             return model if model.startswith("openai/") else f"openai/{model}"
         if model.startswith(f"{provider}/"):
             return model
@@ -145,6 +145,7 @@ def infer_provider(base_url: str) -> str:
         ("api.deepseek.com", "deepseek"),
         ("siliconflow.cn", "siliconflow"),
         ("dashscope.aliyuncs.com", "dashscope"),
+        ("maas-api.cn-huabei-1.xf-yun.com", "spark"),
         ("openrouter.ai", "openrouter"),
         ("api.openai.com", "openai"),
     )

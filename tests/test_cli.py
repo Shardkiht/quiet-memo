@@ -45,6 +45,16 @@ def test_truncate_to_tokens_respects_limit():
     assert truncate_to_tokens("短文本", 20) == "短文本"
 
 
+@pytest.mark.parametrize("budget", [0, 1, 2, 5, 20])
+@pytest.mark.parametrize("text", ["清淡咖啡" * 30, "coffee and tea " * 30, "合成 coffee 茶 " * 30])
+def test_offline_token_truncation_respects_small_budgets(monkeypatch, budget, text):
+    from quiet_memo.infra import tokens
+
+    monkeypatch.setattr(tokens, "_ENCODING", False)
+    truncated = tokens.truncate_to_tokens(text, budget)
+    assert tokens.estimate_tokens(truncated) <= budget
+
+
 def test_init_vault_updates_existing_config(tmp_path):
     import tomllib
 

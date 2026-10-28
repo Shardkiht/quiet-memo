@@ -39,6 +39,19 @@ def test_parse_import_accepts_valid_payload():
     assert result.memories[0].topic == "preferences"
 
 
+def test_import_extractor_preserves_explicit_context(monkeypatch):
+    monkeypatch.setattr(LLMConfig, "api_key", lambda self: "synthetic-key")
+    captured = []
+
+    def fake_complete(config, messages, **kwargs):
+        captured.extend(messages)
+        return response('{"memories":[{"text":"2024年参观合成展馆","confidence":0.95,"context":{"event_time":"2024","location":"合成展馆","location_kind":"event"}}]}')
+
+    svc_result = ImportExtractor(LLMConfig(), completer=fake_complete).extract("2024年参观合成展馆")
+    assert svc_result.memories[0].context.event_time == "2024"
+    assert "禁止用抽取或写入当天" in captured[0]["content"]
+
+
 def test_parse_import_rejects_invalid_item():
     with pytest.raises(ExtractorError, match="第 1 条"):
         parse_import('{"memories":[{"text":"x","confidence":1.5}]}')

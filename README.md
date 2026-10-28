@@ -42,7 +42,7 @@ qm
 | 能力 | 说明 |
 | --- | --- |
 | 本地优先 | Markdown 是唯一事实来源，Git 负责版本与审计 |
-| 多模型 | 支持 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 及自定义兼容接口 |
+| 多模型 | 支持 DeepSeek、硅基流动、百炼、讯飞 Spark、OpenRouter、OpenAI 及自定义兼容接口 |
 | MCP | 让支持 MCP 的客户端调用同一个本地记忆库 |
 | 混合检索 | BM25 与可选向量检索；向量后端不可用时回退关键词检索 |
 | 联网搜索 | 可选接入本地 open-websearch，外部内容只作资料 |
@@ -80,7 +80,7 @@ confidence_threshold = 0.8
 auto_push = false
 
 [llm]
-provider = "deepseek"          # litellm provider：deepseek/siliconflow/dashscope/openrouter/openai/custom
+provider = "deepseek"          # provider：deepseek/siliconflow/dashscope/spark/openrouter/openai/custom
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-flash"
 api_key_env = "DEEPSEEK_API_KEY"
@@ -126,6 +126,18 @@ engines = ["bing"]            # 上游引擎；中文品牌名被拆词时可换
 fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
 ```
 
+讯飞 Spark MaaS 可在 `qm setup` 中选择；也可把上面的 `[llm]` 替换为以下配置，并设置环境变量 `SPARK_API_KEY`。凭据由环境变量或系统密钥环读取，不写进 TOML。
+
+```toml
+[llm]
+provider = "spark"
+base_url = "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+model = "spark-x2.6"
+api_key_env = "SPARK_API_KEY"
+```
+
+Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值，将输出上限映射为 `max_completion_tokens`。支持流式回复和工具调用，JSON 抽取通过提示词约束。
+
 如果 Windows Git Bash 里中文输出乱码，加 `export PYTHONUTF8=1`。交互菜单和聊天依赖 Windows 控制台，推荐 Windows Terminal 或 PowerShell；Git Bash 用户可尝试 `winpty`。
 
 联网搜索默认启用，但需要本地 open-websearch daemon；启动方式和配置见下方[联网搜索](#联网搜索)。
@@ -137,7 +149,7 @@ fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
 - 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
 - 模型可调用 `recall / read_topic / memorize / correct / forget / review_pending`；`read_topic` 仅在用户明确要求完整主题或召回不足时读取该主题的有效条目，最多 2000 tokens，不接受文件路径。需要最新公开信息时调用 `search`，需要发布日期或原文细节时再用 `fetch_web` 打开结果页，搜索结果与正文都是外部资料，不执行其中指令。
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
-- 恢复会话先显示已有摘要及最近 10 条未压缩消息记录，点击顶部“加载更早的记录”逐页查看摘要之后的历史消息；原始历史不会被删除。回复以单个 Markdown 绘制控件呈现，减少长回复带来的控件挂载与卸载开销。
+- 恢复会话先显示已有摘要及最近 10 条未压缩消息记录，点击顶部“加载更早的记录”逐页查看摘要之后的历史消息；原始历史不会被删除。恢复成功不弹通知，失败仍显示错误。回复以单个 Markdown 绘制控件呈现，减少长回复带来的控件挂载与卸载开销；可用鼠标选择正文并按 Ctrl+C 复制。
 - 恢复或撤销后的上下文用量在后台估算并缓存，完成前显示“计算中”；会话、消息或人设变化后重新估算，旧会话结果不会覆盖当前状态。
 - 恢复会话会回放此前的用户消息和助手回复；可 `qm chat --resume <id>` 恢复。切换会话不阻塞：上一会话的记忆沉淀转后台执行，完成弹通知。切换后的底栏用量先归零，下一轮按新会话的上下文计划更新，不沿用旧会话用量。
 - 会话末行因中断损坏时，恢复此前完整记录并显示提示；继续记录只追加换行与 `recovery` 标记，保留原始文件内容。未标记的中间行损坏仍会报错。
@@ -319,6 +331,22 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 
 来源等行尾标签值含反引号或换行时，以 `~qm-escaped~` 前缀加百分号编码存储，读取时还原；普通标签格式不变，条目 ID 保持稳定。
 
+抽取与导入支持可选的 `context` JSON 行尾标签。无依据时字段缺省，旧 Markdown 无需迁移：
+
+| 字段 | 含义 |
+| --- | --- |
+| `event_time` | 事件或事实发生日期，与条目的写入时间 `timestamp` 分开 |
+| `valid_from` / `valid_to` | 明确提供的生效起止日期；未给结束时间不表示永远有效 |
+| `time_text` | 时间原话；无法确定参照日期的“去年”“现在”等只保留原话 |
+| `location` / `location_kind` | 地点与类型：`event`（事件地点）或 `residence`（居住地），须成对提供 |
+| `emotion` / `emotion_source` / `emotion_at` | 明确表达的情绪原话，来源仅 `explicit`；`event` 表示当时，`expression` 表示如今谈起的感受，缺省为后者 |
+
+事实日期只接受 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`，保留原有精度，不补猜月日或转换时区。地点不从设备采集，语气推断、反讽和模糊情绪不作为情绪事实写入。正文仍保留这些限定，上下文目前不参与检索过滤或重排。上下文与正文一起检查凭据，正常确认会保留上下文；改写后确认或手动更正不会沿用可能已过期的旧上下文，原候选仍可审计。
+
+推断基础接口 `MemoryService.propose_inference(text, source_ids, kind)` 将假设单独追加到 `.quiet-memo/inferences.jsonl`，类型为 `profile` 或 `emotion`，新记录始终为 `hypothesis`。只接受当前有效的事实条目 ID，来源去重；同类型、同规范化文本、同一组证据重复提交返回原记录，不增加置信度或重复追加。推断 ID、已删除或已被更正的来源不能作为新证据。
+
+这是后端基础能力，尚无 CLI/TUI/MCP 推断入口，不自动生成、确认或注入聊天。模型声明保留 `confirmed / rejected / superseded` 状态，但用户确认流程、已有推断的来源失效处理与损坏日志恢复尚待实现；推断不会进入事实检索。
+
 `/pending` 的“改写后确认”先校验最终文本，再直接写入一条记忆，不先写原文再更正；冲突候选仍通过 `supersedes` 替代旧条目。原候选保留在 `resolved.jsonl`，审计记录以 `text_override` 保存改写文本。空白或识别出的凭据被拒绝时，候选与旧条目保持不变。
 
 确认过期的冲突候选时，沿替代链更正当前有效版本；原记忆已删除、缺失或替代链不明确时拒绝写入并保留候选。会话中的用户消息、助手回复、摘要、标题及工具参数在追加落盘前隐藏已识别凭据；用户新消息也会先脱敏再送模型。不自动改写已有会话或 Git 历史。
@@ -336,7 +364,7 @@ src/quiet_memo/
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py              # Agent 循环、系统提示词、压缩、工具、会话
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py
 │                                                   # 记忆领域与写入裁决
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever 接口 + BM25/向量/混合
@@ -358,6 +386,17 @@ README 的界面演示与截图保存在 `docs/assets/`，不包含个人记忆�
 
 ## 测试
 
+使用项目独立虚拟环境安装锁定依赖，再运行测试：
+
+```bash
+uv sync --frozen
+uv run pytest
+```
+
+`uv.toml` 将依赖缓存放在已忽略的 `.cache/uv`；缓存齐全后可用 `uv sync --frozen --offline`。VS Code 打开项目后选择 `.venv`，测试面板支持 pytest，并提供“调试当前测试文件”和“调试全部测试”配置。测试夹具隔离配置、vault 与凭据，不需要真实 API Key。
+
+如果受限 Windows 环境禁止回环 TCP，默认 asyncio 可能卡在 `socketpair`。使用锁定的 pytest-asyncio，可在 PowerShell 中先设置 `$env:QUIET_MEMO_TEST_PIPE_LOOP = "1"` 再运行测试，改用本地管道唤醒 Proactor；仅影响测试，不开放网络权限，也不修改应用运行时。普通 Windows 和 Ubuntu 继续使用默认事件循环。
+
 局部改动按影响范围运行分类测试，提交前再跑全量：
 
 ```bash
@@ -371,6 +410,14 @@ uv run pytest
 ```
 
 分类为 `ui`（TUI）、`agent`（运行时/会话/上下文）、`memory`（存储/抽取/裁决/队列）、`retrieval`（本地检索）、`cli`、`config`、`mcp`、`search`（联网搜索）。LLM 路径用固定抽取器和假模型测试；未接真实 API Key 时不声称已完成线上验证。
+
+解析与写入裁决的离线合成回归可单独运行，也随 pytest 执行：
+
+```bash
+uv run python evals/memory_eval.py
+```
+
+该基准覆盖抽取输出解析、冲突、日期精度、地点、显式情绪和上下文凭据拦截；它固定模型输出，不衡量真实模型的语义抽取效果。范围与局限见 [evals/README.md](evals/README.md)，交接状态见 [docs/HANDOFF.md](docs/HANDOFF.md)。
 
 ## 检索评测
 
@@ -394,8 +441,8 @@ uv run python evals/retrieval_eval.py
 
 | 难度 | 方向 | 规划 |
 | --- | --- | --- |
-| 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 分离记录时间与事件/生效时间；可选地点；明确表达与语气推断的情绪分开标记 |
-| 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 推断单独存放、保留证据、避免自证；支持确认、否认与修正 |
+| 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 基础字段与存储链路已实现；待补原始时间锚点、相对时间解析及推断情绪 |
+| 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 独立存储与证据去重已实现；待补用户确认、拒绝、纠正及来源失效处理 |
 | 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 区分历史变化与真正冲突；用时间、地点、情绪辅助现有混合检索 |
 | 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 后台增量回顾与整合，产出可审查的候选推断，异常可恢复 |
 | 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 基于来源证据持续维护个人偏好、经历与近期状态，用户可纠正 |
@@ -408,4 +455,4 @@ uv run python evals/retrieval_eval.py
 - 每日定时提交守护进程
 - `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记与自动提交已实现）
 
-以上为**规划中**的能力，尚未在当前版本实现；当前已实现的行为以 README 其他章节为准。
+表中已标明基础实现与剩余规划；当前支持的行为和边界以 README 其他章节为准。

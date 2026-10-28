@@ -68,8 +68,18 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
     if encoding is not None:
         try:
             tokens = encoding.encode(text, disallowed_special=())
-            return encoding.decode(tokens[:budget]) + suffix
+            prefix = encoding.decode(tokens[:budget], errors="ignore")
+            while prefix and estimate_tokens(prefix + suffix) > max_tokens:
+                prefix = prefix[:-1]
+            return prefix + suffix
         except Exception:
             pass
-    limit = max(1, int(len(text) * budget / max(estimate_tokens(text), 1)))
-    return text[:limit] + suffix
+    # 字符估算含固定开销，极小预算可能连一个汉字也放不下。
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if estimate_tokens(text[:middle] + suffix) <= max_tokens:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low] + suffix

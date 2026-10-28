@@ -12,6 +12,7 @@ confidence_threshold = 0.8
 auto_push = false
 
 [llm]
+provider = "deepseek"
 # 任意 OpenAI 兼容接口。DeepSeek 示例：
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-flash"
@@ -21,6 +22,13 @@ api_key_env = "DEEPSEEK_API_KEY"
 reasoning_effort = ""
 temperature = 0.1
 timeout = 60.0
+
+# 讯飞 Spark MaaS：将上面 [llm] 的对应字段替换为：
+# provider = "spark"
+# base_url = "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+# model = "spark-x2.6"
+# api_key_env = "SPARK_API_KEY"
+# Spark 由供应商控制采样参数，不发送 temperature / reasoning_effort。
 
 [chat]
 # 自动召回时参考最近几轮用户消息

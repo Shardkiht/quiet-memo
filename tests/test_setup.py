@@ -19,10 +19,10 @@ from quiet_memo.infra.config import (
     load_config,
     toml_literal,
 )
-from quiet_memo.infra.providers import PRESETS, write_config
+from quiet_memo.infra.providers import PRESETS, display_model, provider_label, write_config
 
 
-@pytest.mark.parametrize("provider", ["custom", "deepseek"])
+@pytest.mark.parametrize("provider", ["custom", "deepseek", "spark"])
 def test_model_change_preserves_same_provider_endpoint_and_credentials(tmp_path, monkeypatch, provider):
     from types import SimpleNamespace
     from quiet_memo.app import actions
@@ -60,6 +60,74 @@ def test_litellm_model_names():
         == "openai/qwen-max"
     )
     assert LLMConfig(provider="openai", model="openai/gpt-4o-mini").litellm_model() == "openai/gpt-4o-mini"
+
+
+def test_spark_preset_and_configuration_roundtrip(tmp_path):
+    from quiet_memo.infra.config import infer_provider
+
+    preset = next(item for item in PRESETS if item.key == "spark")
+    assert preset.base_url == "https://maas-api.cn-huabei-1.xf-yun.com/v2"
+    assert preset.model == "spark-x2.6"
+    assert preset.api_key_env == "SPARK_API_KEY"
+    llm = LLMConfig(provider=preset.key, base_url=preset.base_url, model=preset.model, api_key_env=preset.api_key_env)
+    assert llm.litellm_model() == "openai/spark-x2.6"
+    assert infer_provider(preset.base_url) == "spark"
+    assert provider_label("spark") == "讯飞星火"
+    assert display_model(preset.model) == "Spark X2.6"
+    path = tmp_path / "config.toml"
+    write_config(path, Config(vault=tmp_path / "vault", llm=llm))
+    assert load_config(path).llm == llm
+
+
+def test_spark_chat_parameters_match_maas_contract(monkeypatch):
+    from types import SimpleNamespace
+    from quiet_memo.llm import client
+
+    calls = []
+    monkeypatch.setenv("SPARK_API_KEY", "synthetic-key")
+    fake = SimpleNamespace(completion=lambda **kwargs: calls.append(kwargs) or "response")
+    monkeypatch.setattr(client, "_litellm", lambda: fake)
+    preset = next(item for item in PRESETS if item.key == "spark")
+    config = LLMConfig(provider="spark", model=preset.model, base_url=preset.base_url,
+                       api_key_env=preset.api_key_env, reasoning_effort="high")
+    tools = [{"type": "function", "function": {"name": "synthetic_tool", "parameters": {"type": "object"}}}]
+    assert client.complete(config, [{"role": "user", "content": "合成输入"}], tools=tools,
+                           response_format={"type": "json_object"}, max_tokens=128) == "response"
+    sent = calls[0]
+    assert sent["model"] == "openai/spark-x2.6"
+    assert sent["api_base"] == preset.base_url
+    assert sent["api_key"] == "synthetic-key"
+    assert sent["tools"] == tools and sent["max_completion_tokens"] == 128
+    assert not {"temperature", "reasoning_effort", "response_format", "max_tokens"} & sent.keys()
+
+
+def test_spark_streaming_preserves_deltas_and_usage(monkeypatch):
+    from types import SimpleNamespace
+    from quiet_memo.llm import client
+
+    calls = []
+    monkeypatch.setenv("SPARK_API_KEY", "synthetic-key")
+    chunks = [
+        {"choices": [{"delta": {"content": "合成"}}]},
+        {"choices": [{"delta": {"content": "回复"}}], "usage": {"prompt_tokens": 3, "completion_tokens": 2}},
+    ]
+    fake = SimpleNamespace(completion=lambda **kwargs: calls.append(kwargs) or iter(chunks),
+                           completion_cost=lambda **kwargs: 0)
+    monkeypatch.setattr(client, "_litellm", lambda: fake)
+    config = LLMConfig(provider="spark", model="spark-x2.6", api_key_env="SPARK_API_KEY", reasoning_effort="high")
+    deltas = []
+    result = client.LiteLLMChatModel(config).chat([{"role": "user", "content": "合成输入"}], [], on_delta=deltas.append)
+    assert result.content == "合成回复" and deltas == ["合成", "回复"]
+    assert result.usage.prompt_tokens == 3 and result.usage.completion_tokens == 2
+    assert calls[0]["stream"] is True
+    assert not {"temperature", "reasoning_effort", "stream_options"} & calls[0].keys()
+
+
+def test_spark_does_not_offer_openai_reasoning_effort():
+    from quiet_memo.llm.client import supported_params
+
+    assert "reasoning_effort" not in supported_params("openai/spark-x2.6")
+    assert "tools" in supported_params("openai/spark-x2.6")
 
 
 def test_write_config_roundtrip(tmp_path):

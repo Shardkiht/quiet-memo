@@ -6,13 +6,46 @@ from __future__ import annotations
 
 from rich.markup import escape
 from rich.markdown import Markdown as RichMarkdown
+from rich.text import Text
 from textual.app import ComposeResult
+from textual.content import Content
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.selection import Selection
+from textual.style import Style
+from textual.strip import Strip
+from textual.visual import RenderOptions, RichVisual
 from textual.widgets import Input, Label, ListView, ListItem, Static
 
 from ..agent.session import Session
 from .command_catalog import SLASH_COMMANDS
+
+
+class _SelectableMarkdown(RichVisual):
+    """Rich Markdown 本身不提供文本坐标，转成 Content 后才能选择和高亮。"""
+
+    def __init__(self, widget: Static, markdown: str) -> None:
+        super().__init__(widget, RichMarkdown(markdown))
+        self._content_cache: tuple[int, Content] | None = None
+
+    def selectable_content(self, width: int) -> Content:
+        width = max(1, width)
+        if self._content_cache is None or self._content_cache[0] != width:
+            console = self._widget.app.console
+            options = self._widget.app.console_options.update(width=width, highlight=False)
+            text = Text.assemble(*(
+                (segment.text, segment.style)
+                for segment in console.render(self._renderable, options)
+                if not segment.control
+            ))
+            text = text[:len(text.plain.rstrip("\n"))]
+            self._content_cache = (width, Content.from_rich_text(text))
+        return self._content_cache[1]
+
+    def render_strips(
+        self, width: int, height: int | None, style: Style, options: RenderOptions
+    ) -> list[Strip]:
+        return self.selectable_content(width).render_strips(width, height, style, options)
 
 
 class ChatReply(Static):
@@ -20,11 +53,16 @@ class ChatReply(Static):
 
     def __init__(self, content: str, **kwargs) -> None:
         self._markdown = content
-        super().__init__(RichMarkdown(content), **kwargs)
+        super().__init__(**kwargs)
+        super().update(_SelectableMarkdown(self, content))
 
     def update(self, content: str) -> None:
         self._markdown = content
-        super().update(RichMarkdown(content))
+        super().update(_SelectableMarkdown(self, content))
+
+    def get_selection(self, selection: Selection) -> tuple[str, str]:
+        content = self.visual.selectable_content(self.content_size.width)
+        return selection.extract(str(content)), "\n"
 
 
 class HistoryMore(Static):

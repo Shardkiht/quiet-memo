@@ -19,6 +19,25 @@ class Extractor(Protocol):
     def extract(self, text: str, context: str = "") -> ExtractionResult: ...
 
 
+CONTEXT_PROMPT = """
+
+可选上下文 context（没有依据时省略整个字段或相应子字段）：
+- event_time 是事件/事实发生日期，valid_from / valid_to 是明确提供的生效起止日期。
+  日期只接受 YYYY、YYYY-MM、YYYY-MM-DD，保留原有精度，不能补猜月日。
+  time_text 保留时间原话。没有可靠的原始陈述日期时，“去年”“现在”等只写 time_text，
+  不填 event_time / valid_from / valid_to；禁止用抽取或写入当天代替原始陈述时间。
+  日期沿用原始表述的日历日期，不做时区换算；未给结束时间不代表永远有效。
+- location 仅取用户明确提供或可靠上下文中的地点；同时提供 location_kind：
+  event（事件地点）或 residence（居住地）。事件地点不能默认成当前住址，不采集设备位置。
+- emotion 只取用户明确表达的情绪原话，必须标记 emotion_source="explicit"；
+  emotion_at="event" 表示事件当时，"expression" 表示如今谈起的感受，无法区分时用 expression。
+  反讽、玩笑、模糊语气与模型推断不写情绪字段，不推断心理疾病或敏感人格标签。
+- 上下文是补充，正文仍须保留日期、地点、情绪及不确定性的限定，不能靠元数据改变原意。
+例如："context":{"event_time":"2024-06","time_text":"2024年6月","location":"合成展馆","location_kind":"event"}。
+只输出这些已定义字段，不能在 context 中写置信度、推断标签或其他新字段。
+"""
+
+
 SYSTEM_PROMPT = """你是一个个人记忆抽取器。从对话内容中抽取用户本人明确陈述、值得长期保留的信息。
 
 规则：
@@ -35,6 +54,9 @@ SYSTEM_PROMPT = """你是一个个人记忆抽取器。从对话内容中抽取�
 {"memories":[{"text":"...","topic":"...","title":"中文主题名","confidence":0.9,"sensitive":false,"kind":"add","reason":""}]}
 
 kind 取 add（新增）、update（更新既有事实）、conflict（与既有事实冲突）。没有可记内容返回 {"memories":[]}。"""
+
+
+SYSTEM_PROMPT += CONTEXT_PROMPT
 
 
 def _strip_fences(content: str) -> str:
@@ -135,6 +157,9 @@ IMPORT_PROMPT = """你是个人记忆导入器。把给定的档案或笔记内�
 {"memories":[{"text":"...","topic":"preferences","title":"中文主题名","confidence":0.9}]}
 
 没有可整理内容返回 {"memories":[]}。"""
+
+
+IMPORT_PROMPT += CONTEXT_PROMPT
 
 
 def parse_import(content: str) -> ExtractionResult:
