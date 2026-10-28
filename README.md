@@ -390,12 +390,22 @@ uv run python evals/retrieval_eval.py
 
 ## Roadmap
 
-完整待办以 [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues) 为准。
+完整待办以 [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues) 为准。以下按**大致实现难度由低到高**排列；实际开发顺序可按收益与依赖调整，所有新增功能均服务于**个人日常聊天记忆**，不扩展成通用工作 Agent。
 
-- [梦境记忆](https://github.com/Shardkiht/quiet-memo/issues/8)：后台回顾、反思与整合已有记忆，保留来源，区分用户事实与待确认推断。
-- [用户画像](https://github.com/Shardkiht/quiet-memo/issues/9)：从已确认记忆中后台沉淀偏好、目标与约束，支持增量更新、来源追溯和用户纠正。
-- 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
+| 难度 | 方向 | 规划 |
+| --- | --- | --- |
+| 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 分离记录时间与事件/生效时间；可选地点；明确表达与语气推断的情绪分开标记 |
+| 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 推断单独存放、保留证据、避免自证；支持确认、否认与修正 |
+| 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 区分历史变化与真正冲突；用时间、地点、情绪辅助现有混合检索 |
+| 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 后台增量回顾与整合，产出可审查的候选推断，异常可恢复 |
+| 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 基于来源证据持续维护个人偏好、经历与近期状态，用户可纠正 |
+| 很高 / 长期 | [跨 AI 客户端主动召回](https://github.com/Shardkiht/quiet-memo/issues/13) | 在客户端能力允许时，无需显式提醒即可适时调用个人记忆 |
+| 持续工程 | [记忆质量评测与回归](https://github.com/Shardkiht/quiet-memo/issues/14) | 扩展抽取/冲突、时间变化、情绪推断、隐含召回等合成测试，不以一次发布为终点 |
+
+其他待办：
+
 - 真实模型 dogfood 与成本统计
 - 每日定时提交守护进程
 - `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记与自动提交已实现）
-- 导入抽取时注入 vault 已有主题列表，避免增量导入产生碎片主题
+
+以上为**规划中**的能力，尚未在当前版本实现；当前已实现的行为以 README 其他章节为准。
