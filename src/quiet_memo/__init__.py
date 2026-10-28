@@ -1,3 +1,3 @@
 """quiet-memo: silent-first personal memory on local Markdown + Git."""
 
-__version__ = "0.3.1"
+__version__ = "0.3.1.1"

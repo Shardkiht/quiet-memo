@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import date
 from functools import partial
 from urllib.parse import urlsplit
 
@@ -15,7 +16,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Label, ListView, ListItem, Markdown, Static
 
 from ..agent.runtime import AgentRuntime
-from ..agent.session import SessionStore
+from ..agent.session import Session, SessionStore
 from ..infra.search.daemon import ensure_search_daemon
 from ..infra.tokens import format_tokens
 from ..llm import ChatModelError
@@ -30,6 +31,8 @@ from .chat_widgets import (
     SessionItem,
     SessionPickerScreen,
     SidebarToggle,
+    ChatReply,
+    TranscriptView,
 )
 from .session_ui import visible_sessions
 
@@ -60,9 +63,12 @@ class ChatApp(ChatCommandsMixin, App):
         self.pending_count = 0
         self._pending_switch: str | None = None
         self._pending_new = False
-        self._stream_widget: Markdown | None = None
+        self._stream_widget: ChatReply | None = None
         self._stream_buffer = ""
         self._stream_flush_scheduled = False
+        self._usage_cache: dict[tuple, int] = {}
+        self._usage_request: tuple | None = None
+        self._usage_failed: tuple | None = None
 
     # ---------- 布局 ----------
 
@@ -76,7 +82,7 @@ class ChatApp(ChatCommandsMixin, App):
                 yield ListView(id="sessions")
             with Vertical(id="main"):
                 yield SidebarToggle("»", id="show-sidebar")
-                yield VerticalScroll(id="chat", classes="thin-scroll")
+                yield TranscriptView(id="chat", classes="thin-scroll")
                 yield CommandPalette()
                 yield BarInput(placeholder="Message or /command", id="input")
                 yield Static("", id="status")
@@ -383,7 +389,7 @@ class ChatApp(ChatCommandsMixin, App):
         return self.query_one("#chat", VerticalScroll)
 
     def _clear_chat(self) -> None:
-        self._chat().remove_children()
+        self.query_one("#chat", TranscriptView).clear_transcript()
 
     def _scroll_end(self) -> None:
         self.call_after_refresh(self._chat().scroll_end, animate=False)
@@ -408,64 +414,7 @@ class ChatApp(ChatCommandsMixin, App):
         )
 
     def build_transcript(self) -> None:
-        session = self.runtime.current
-        widgets = []
-        if session.damaged_tail_line is not None:
-            widgets.append(Static(
-                "会话末行不完整，已恢复此前完整记录；原文件内容仍保留。", classes="card"
-            ))
-        summary = session.summary_text()
-        if summary:
-            widgets.append(Static("Earlier summary", classes="who-ai"))
-            widgets.append(Markdown(summary, classes="reply"))
-        # 先按回合收集，工具结果按 call_id 挂回对应 assistant，回放时顺序与当时一致。
-        turns: list[dict] = []
-        tool_results: dict[str, dict] = {}
-        for record in session.records_after_summary():
-            record_type = record.get("type")
-            if record_type == "tool":
-                tool_results[str(record.get("tool_call_id"))] = record
-                continue
-            if record_type == "message":
-                if record.get("role") == "user" and str(record.get("content") or "").strip():
-                    turns.append(record)
-                continue
-            if record_type != "assistant":
-                continue
-            content = str(record.get("content") or "")
-            if content.strip() or record.get("tool_calls"):
-                turns.append(record)
-        if len(turns) > 40:
-            widgets.append(Static(f"{len(turns) - 40} earlier records omitted", classes="card"))
-            turns = turns[-40:]
-        for record in turns:
-            content = str(record.get("content") or "")
-            at = str(record.get("at") or "")
-            stamp = at[11:16] if len(at) >= 16 else None
-            if record.get("type") == "message":
-                if stamp:
-                    widgets.append(Static(f"You · {stamp}", classes="who-user"))
-                widgets.append(Vertical(Static(content, classes="bubble"), classes="user-turn"))
-                continue
-            if content.strip():
-                label = f"{ASSISTANT_NAME} · {stamp}" if stamp else ASSISTANT_NAME
-                widgets.append(Static(label, classes="who-ai"))
-                widgets.append(Markdown(content, classes="reply"))
-            for call in record.get("tool_calls") or []:
-                result = tool_results.get(str(call.get("id")))
-                if result is None:
-                    continue
-                event = self._tool_event_label(call, result)
-                memo = event.startswith(("Saved", "Corrected", "Deleted"))
-                widgets.append(
-                    Static(
-                        f"✓ {event}" if memo else event,
-                        classes="event-card memo" if memo else "event-card",
-                    )
-                )
-        # 一次挂载整段历史，避免逐条 mount 在长会话里反复触发布局。
-        if widgets:
-            self._chat().mount(*widgets)
+        self.query_one("#chat", TranscriptView).show_session(self.runtime.current)
         self._scroll_end()
 
     @staticmethod
@@ -507,7 +456,7 @@ class ChatApp(ChatCommandsMixin, App):
     def add_assistant_turn(self, content: str, stamp: str, meta: str | None = None) -> None:
         chat = self._chat()
         chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))
-        chat.mount(Markdown(content or "(empty reply)", classes="reply"))
+        chat.mount(ChatReply(content or "(empty reply)", classes="reply"))
         if meta:
             chat.mount(Static(meta, classes="meta"))
         chat.mount(Static("", classes="divider"))
@@ -540,16 +489,67 @@ class ChatApp(ChatCommandsMixin, App):
     def refresh_pending(self) -> None:
         self.pending_count = len(self.service.pending())
 
+    def _usage_key(self) -> tuple | None:
+        session = self.runtime.session
+        if session is None:
+            return None
+        try:
+            stat = (self.service.config.vault / "SOUL.md").stat()
+            persona = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            persona = None
+        return (session.id, len(session.records), self.runtime.model_label, persona, date.today())
+
+    def _request_usage(self, key: tuple) -> None:
+        if key == self._usage_request or key == self._usage_failed:
+            return
+        session = self.runtime.current
+        # 固定本次估算的事件快照；切换或继续输入后，旧结果不得覆盖新会话。
+        snapshot = Session(session.id, session.started_at, session.path, list(session.records))
+        self._usage_request = key
+        self.run_worker(partial(self._usage_work, key, snapshot), group="usage",
+                        thread=True, exclusive=True, exit_on_error=False)
+
+    def _usage_work(self, key: tuple, session: Session) -> None:
+        try:
+            used = self.runtime.context.estimate_usage(session, self.runtime._system_prompt())
+        except Exception:
+            used = None
+        try:
+            self.call_from_thread(self._after_usage, key, used)
+        except RuntimeError:
+            pass  # 界面已退出，不再投递状态更新。
+
+    def _after_usage(self, key: tuple, used: int | None) -> None:
+        if self._usage_request == key:
+            self._usage_request = None
+        if key != self._usage_key() or self.runtime.last_plan is not None:
+            return
+        if used is None:
+            self._usage_failed = key
+            self.notify("上下文用量估算失败")
+        else:
+            self._usage_cache[key] = used
+            while len(self._usage_cache) > 16:
+                del self._usage_cache[next(iter(self._usage_cache))]
+        self.update_status()
+
     def update_status(self) -> None:
         total = self.service.config.chat.context_window
         plan = self.runtime.last_plan
-        used = plan.estimated_tokens if plan is not None else self.runtime.context_usage()
+        key = self._usage_key()
+        used = plan.estimated_tokens if plan is not None else self._usage_cache.get(key, 0)
+        estimating = plan is None and key is not None and key not in self._usage_cache
+        if estimating:
+            self._request_usage(key)
         percent = used / max(total, 1)
         blocks = min(10, max(0, round(percent * 10)))
         # 用量条用制表横线（━ 已用 / ─ 剩余）：块/阴影字符在部分 CJK 字体会画成竖线；
         # 低占用时百分比恒为 0%，直接展示“已用/上限”数字。
         bar = f"[#8a8b90]{'━' * blocks}[/][#2f3035]{'─' * (10 - blocks)}[/]"
         used_text = format_tokens(used) if used else "0"
+        if estimating:
+            used_text = "估算失败" if key == self._usage_failed else "计算中"
         text = (
             f"[#c2c3c7]◆ {self.runtime.model_label}[/] [#5f6068]·[/] "
             f"[#8a8b90]Context[/] {bar} [#8a8b90]{used_text}/{format_tokens(total)}[/]"
@@ -632,7 +632,7 @@ class ChatApp(ChatCommandsMixin, App):
         if self._stream_widget is None:
             chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))
             self._stream_buffer = ""
-            self._stream_widget = Markdown("", classes="reply")
+            self._stream_widget = ChatReply("", classes="reply")
             chat.mount(self._stream_widget)
         self._stream_buffer += delta
         if not self._stream_flush_scheduled:

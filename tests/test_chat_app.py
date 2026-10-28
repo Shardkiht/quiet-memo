@@ -70,6 +70,14 @@ async def _wait_reply(app, pilot, limit=200):
     raise AssertionError("等待回复超时")
 
 
+async def _wait_context_usage(app, pilot):
+    for _ in range(100):
+        await pilot.pause()
+        if "计算中" not in str(app.query_one("#status", Static).content):
+            return
+    raise AssertionError("等待后台上下文统计超时")
+
+
 async def test_chat_roundtrip(tmp_path):
     app = build_app(tmp_path, [AssistantTurn(content="收到，已了解。")])
     async with app.run_test(size=(120, 40)) as pilot:
@@ -141,6 +149,7 @@ async def test_session_switch_drops_previous_context_usage(tmp_path, action):
                 break
         assert not app.busy
         assert app.runtime.last_plan is None
+        await _wait_context_usage(app, pilot)
         status = str(app.query_one("#status", Static).content)
         if action == "new":
             assert "0/32K" in status
@@ -188,7 +197,7 @@ async def test_resumed_session_shows_its_own_context_usage(tmp_path):
     app.runtime.resume(target.id)
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.pause()
+        await _wait_context_usage(app, pilot)
         assert app.runtime.last_plan is None
         usage = app.runtime.context_usage()
         assert usage > 0
@@ -208,7 +217,7 @@ async def test_undo_recomputes_context_usage(tmp_path):
 
         app.runtime.undo()
         app.update_status()
-        await pilot.pause()
+        await _wait_context_usage(app, pilot)
 
         assert app.runtime.last_plan is None
         usage = app.runtime.context_usage()
@@ -231,6 +240,123 @@ async def test_status_context_usage_matches_last_plan(tmp_path):
         assert f"{format_tokens(plan.estimated_tokens)}/32K" in str(
             app.query_one("#status", Static).content
         )
+
+
+async def test_history_pages_preserve_records_and_flat_reply_widgets(tmp_path):
+    from quiet_memo.app.chat_widgets import ChatReply, HistoryMore, TranscriptView
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    for index in range(14):
+        app.sessions.append(session, {"type": "message", "id": f"u{index}", "role": "user", "content": f"合成提问{index}"})
+        app.sessions.append(session, {"type": "assistant", "id": f"a{index}", "content": f"# 合成回复{index}\n\n" + "- 合成条目\n" * 30})
+    original = session.path.read_bytes()
+    app.runtime.resume(session.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert len(app.query(ChatReply)) == TranscriptView.PAGE_SIZE // 2
+        assert "合成提问0" not in str([widget.content for widget in app.query(".bubble")])
+        while app.query(HistoryMore):
+            app.query_one(HistoryMore).action_load()
+            await pilot.pause()
+        assert [str(widget.content) for widget in app.query(".bubble")] == [f"合成提问{i}" for i in range(14)]
+        assert len(app.query(ChatReply)) == 14
+        assert all(len(reply.query("*")) == 0 for reply in app.query(ChatReply))
+    assert session.path.read_bytes() == original
+
+
+async def test_switch_clears_previous_history_page_state(tmp_path):
+    from quiet_memo.app.chat_widgets import HistoryMore, TranscriptView
+
+    app = build_app(tmp_path, [])
+    first, second = app.sessions.create(), app.sessions.create()
+    for index in range(22):
+        app.sessions.append(first, {"type": "message", "id": f"m{index}", "role": "user", "content": f"旧会话{index}"})
+    app.sessions.append(second, {"type": "message", "id": "new", "role": "user", "content": "新会话"})
+    app.runtime.resume(first.id)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert app.query(HistoryMore)
+        app._switch_session(second.id)
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.query(HistoryMore)
+        app.query_one(TranscriptView).load_earlier()
+        assert [str(widget.content) for widget in app.query(".bubble")] == ["新会话"]
+
+
+async def test_context_estimation_uses_worker_cache_and_rejects_stale_results(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(session, {"type": "message", "id": "m1", "role": "user", "content": "合成陈述"})
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    main_thread = threading.get_ident()
+
+    def estimate(snapshot, prompt):
+        calls.append(threading.get_ident())
+        entered.set()
+        assert release.wait(5)
+        return 1234
+
+    monkeypatch.setattr(app.runtime.context, "estimate_usage", estimate)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.runtime.resume(session.id)
+        try:
+            app.update_status()
+            assert await asyncio.to_thread(entered.wait, 3)
+            for _ in range(4):
+                app.update_status()
+            assert len(calls) == 1 and calls[0] != main_thread
+            assert not app.query_one("#input", Input).disabled
+            app.runtime.start()
+            app.update_status()
+        finally:
+            release.set()
+        await pilot.pause()
+        assert "0/32K" in str(app.query_one("#status", Static).content)
+        app.runtime.resume(session.id)
+        app.update_status()
+        for _ in range(50):
+            await pilot.pause()
+            if app._usage_request is None:
+                break
+        assert f"{format_tokens(1234)}/32K" in str(app.query_one("#status", Static).content)
+        before = len(calls)
+        for _ in range(4):
+            app.update_status()
+        await pilot.pause()
+        assert len(calls) == before
+        app.sessions.append(app.runtime.current, {"type": "undo", "message_id": "m1"})
+        app.update_status()
+        await pilot.pause()
+        assert len(calls) == before + 1
+
+
+async def test_context_estimation_failure_keeps_input_enabled(tmp_path, monkeypatch):
+    app = build_app(tmp_path, [])
+    session = app.sessions.create()
+    app.sessions.append(session, {"type": "message", "id": "m1", "role": "user", "content": "合成陈述"})
+    app.runtime.resume(session.id)
+    calls = []
+
+    def fail(*args):
+        calls.append(1)
+        raise RuntimeError("合成统计失败")
+
+    monkeypatch.setattr(app.runtime.context, "estimate_usage", fail)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        assert "估算失败" in str(app.query_one("#status", Static).content)
+        assert not app.query_one("#input", Input).disabled
+        app.update_status()
+        await pilot.pause()
+        assert len(calls) == 1
 
 
 async def test_slash_help_card(tmp_path):

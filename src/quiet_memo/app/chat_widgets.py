@@ -5,12 +5,116 @@
 from __future__ import annotations
 
 from rich.markup import escape
+from rich.markdown import Markdown as RichMarkdown
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListView, ListItem, Static
 
+from ..agent.session import Session
 from .command_catalog import SLASH_COMMANDS
+
+
+class ChatReply(Static):
+    """整条回复用一个可缓存控件绘制，避免每个 Markdown 块再注册一组子控件。"""
+
+    def __init__(self, content: str, **kwargs) -> None:
+        self._markdown = content
+        super().__init__(RichMarkdown(content), **kwargs)
+
+    def update(self, content: str) -> None:
+        self._markdown = content
+        super().update(RichMarkdown(content))
+
+
+class HistoryMore(Static):
+    can_focus = True
+    BINDINGS = [("enter", "load", "加载历史"), ("space", "load", "加载历史")]
+
+    def on_click(self) -> None:
+        self.action_load()
+
+    def action_load(self) -> None:
+        self.parent.load_earlier()
+
+
+class TranscriptView(VerticalScroll):
+    PAGE_SIZE = 10
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._turns: list[dict] = []
+        self._tools: dict[str, dict] = {}
+        self._start = 0
+        self._more: HistoryMore | None = None
+
+    def clear_transcript(self) -> None:
+        self._turns = []
+        self._tools = {}
+        self._start = 0
+        self._more = None
+        self.remove_children()
+
+    def show_session(self, session: Session) -> None:
+        self._turns = []
+        self._tools = {}
+        for record in session.records_after_summary():
+            kind = record.get("type")
+            if kind == "tool":
+                self._tools[str(record.get("tool_call_id"))] = record
+            elif kind == "message" and record.get("role") == "user" and str(record.get("content") or "").strip():
+                self._turns.append(record)
+            elif kind == "assistant" and (str(record.get("content") or "").strip() or record.get("tool_calls")):
+                self._turns.append(record)
+        widgets = []
+        if session.damaged_tail_line is not None:
+            widgets.append(Static("会话末行不完整，已恢复此前完整记录；原文件内容仍保留。", classes="card"))
+        summary = session.summary_text()
+        if summary:
+            widgets.extend([Static("Earlier summary", classes="who-ai"), ChatReply(summary, classes="reply")])
+        self._start = max(0, len(self._turns) - self.PAGE_SIZE)
+        if self._start:
+            self._more = HistoryMore(f"加载更早的记录（剩余 {self._start} 条）", classes="card")
+            widgets.append(self._more)
+        widgets.extend(self._widgets(self._turns[self._start:]))
+        if widgets:
+            self.mount(*widgets)
+
+    def _widgets(self, turns: list[dict]) -> list:
+        widgets = []
+        for record in turns:
+            content = str(record.get("content") or "")
+            stamp = str(record.get("at") or "")[11:16]
+            if record.get("type") == "message":
+                if stamp:
+                    widgets.append(Static(f"You · {stamp}", classes="who-user"))
+                widgets.append(Vertical(Static(content, classes="bubble"), classes="user-turn"))
+                continue
+            if content.strip():
+                widgets.append(Static(f"qmo · {stamp}" if stamp else "qmo", classes="who-ai"))
+                widgets.append(ChatReply(content, classes="reply"))
+            for call in record.get("tool_calls") or []:
+                result = self._tools.get(str(call.get("id")))
+                if result is not None:
+                    event = self.app._tool_event_label(call, result)
+                    memo = event.startswith(("Saved", "Corrected", "Deleted"))
+                    widgets.append(Static(f"✓ {event}" if memo else event,
+                                          classes="event-card memo" if memo else "event-card"))
+        return widgets
+
+    def load_earlier(self) -> None:
+        if not self._start or self._more is None:
+            return
+        more = self._more
+        start = max(0, self._start - self.PAGE_SIZE)
+        self.mount(*self._widgets(self._turns[start:self._start]), after=more)
+        self._start = start
+        if start:
+            more.update(f"加载更早的记录（剩余 {start} 条）")
+        else:
+            more.remove()
+            self._more = None
+        self.call_after_refresh(self.scroll_home, animate=False)
 
 
 class OptionItem(ListItem):
