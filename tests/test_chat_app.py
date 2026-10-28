@@ -212,6 +212,24 @@ async def test_command_palette_escape_closes(tmp_path):
         assert not palette.display
 
 
+async def test_command_palette_sits_above_input(tmp_path):
+    from quiet_memo.app.chat_app import CommandPalette
+
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        widget = app.query_one("#input", Input)
+        widget.value = "/"
+        await pilot.pause()
+        palette = app.query_one("#cmd-palette", CommandPalette)
+        assert palette.display
+        assert palette.region.bottom <= widget.region.y, (
+            f"palette={palette.region} input={widget.region}"
+        )
+        assert palette.region.x == widget.region.x, (
+            f"palette={palette.region} input={widget.region}"
+        )
+
+
 async def test_command_palette_columns_align(tmp_path):
     from quiet_memo.app.chat_app import CommandPalette
     from quiet_memo.app.chat_widgets import CommandRow

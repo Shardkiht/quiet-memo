@@ -116,8 +116,9 @@ class ChatApp(ChatCommandsMixin, App):
     /* 1 行正文 + 1 行上边框；height:1 会被边框吃掉整个内容区。 */
     #status { width: 1fr; height: 2; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
 
-    /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语 */
-    #cmd-palette { layer: overlay; dock: bottom; offset-y: -4; width: 64; height: auto; max-height: 16; background: $panel; border: round #383a42; padding: 0 1; display: none; }
+    /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语。
+       -6 = status 2 行 + 输入框下边距 1 行 + 输入框 3 行；偏移不够会盖住输入框。 */
+    #cmd-palette { layer: overlay; dock: bottom; offset-x: 3; offset-y: -6; width: 64; height: auto; max-height: 16; background: $panel; border: round #383a42; padding: 0 1; display: none; }
     .cmd-row { width: 1fr; height: 1; padding: 0 1; color: #b9babd; }
     .cmd-row.cmd-active { background: #292b32; }
     .cmd-usage { color: #96979c; }
