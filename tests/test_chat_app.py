@@ -293,6 +293,8 @@ async def test_assistant_markdown_can_be_selected_and_copied(tmp_path, restored)
 
 async def test_resume_session_does_not_show_success_notification(tmp_path, monkeypatch):
     app = build_app(tmp_path, [])
+    # 只观察恢复动作；启动补记线程可能稍后发出独立的自动提交通知。
+    monkeypatch.setattr(app, "_run_catchup", lambda: None)
     session = app.sessions.create()
     app.sessions.append(session, {"type": "assistant", "content": "合成历史回复"})
     async with app.run_test(size=(120, 40)) as pilot:
