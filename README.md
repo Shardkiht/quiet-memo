@@ -2,9 +2,9 @@
 
 # Quiet-Memo
 
-**安静的个人记忆库** —— 从日常对话中无感沉淀**你本人**的事实、偏好和计划
+**让下一次对话，仍然记得你。**
 
-本地 Markdown · Git 可回滚 · MCP 可调用
+将日常对话中的事实、偏好和计划沉淀为本地 Markdown 长期记忆，可审阅、可追溯、可回滚。支持终端对话与 MCP。
 
 [![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
@@ -15,40 +15,45 @@
 
 </div>
 
-## 特性
+不必每次开启新对话都重新解释自己的偏好和计划：告诉它“我喜欢无糖热饮”，换个会话再问，它会从你的记忆库里查找。你也可以打开 Markdown 检查它记住了什么，或更正、忘记某条记录。
 
-| | |
-| --- | --- |
-| **本地优先** | Markdown 是唯一事实来源，Git 负责版本与审计 |
-| **默认静默** | 可信内容直接落盘，不逐条打断；只在必要时提醒 |
-| **完整 Agent** | 交互式对话、会话持久化、上下文压缩、工具循环 |
-| **多模型** | LiteLLM 统一接入 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 等 |
-| **联网搜索** | 可接入本地 open-websearch，结果带来源链接；外部内容只作资料 |
-| **可回滚** | 每次提交自动生成中文总结，供本人审阅 |
+![实际 TUI 操作：保存偏好、开启新会话、召回记忆](docs/assets/quiet-memo-demo.gif)
 
-## 界面预览
-
-```text
- quiet-memo             │  qmo · 14:32
- + New session          │  ┃ 检索「最近的安排」：3 条
-                        │  根据记录，你最近在忙三件事：期末项目收尾、
- 2026-10-26             │  求职准备、固定自习节奏，不建议再加量。
-   14:32 · 4 msgs       │  2 steps · 3.2K tok · $0.0018 · 4.2s
-                        │
-                        │                    You · 14:34
-                        │      我周中加了一天自习，记住下
-                        │
-                        │  ✓ 已记住 [schedule] 周中增加一天图书馆自习
-                        │
-                        │  > Message or /command
-                        │  ◆ deepseek-flash · Context ━───────── 3.2K/200K
-```
+演示操作实际 Textual 界面，使用合成数据与固定模型回复回放；记忆写入和跨会话检索走真实代码，不产生模型费用。[查看静态截图](docs/assets/quiet-memo-demo.png)。
 
 ## 快速开始
 
 需要 Python 3.12+、uv、git。
 
 ```bash
+uv tool install quiet-memo
+qm setup
+qm
+```
+
+`qm setup` 选择模型供应商并配置 API Key。标准安装不需要下载本地向量模型；未安装向量后端时自动使用关键词检索。之后可用 `uv tool upgrade quiet-memo` 更新。
+
+## 为什么用 Quiet-Memo
+
+- **下次对话不用从头讲起**：值得保留的本人陈述可自动沉淀，可信内容静默写入，冲突或不确定内容留待确认。
+- **能检查，也能改正**：记忆是普通 Markdown；更正、软删除与来源有记录，Git 保留版本历史。
+- **中断之后能接着来**：上下文压缩前先尝试沉淀，异常退出或抽取失败后补记，保留原始会话。
+
+| 能力 | 说明 |
+| --- | --- |
+| 本地优先 | Markdown 是唯一事实来源，Git 负责版本与审计 |
+| 多模型 | 支持 DeepSeek、硅基流动、百炼、OpenRouter、OpenAI 及自定义兼容接口 |
+| MCP | 让支持 MCP 的客户端调用同一个本地记忆库 |
+| 混合检索 | BM25 与可选向量检索；向量后端不可用时回退关键词检索 |
+| 联网搜索 | 可选接入本地 open-websearch，外部内容只作资料 |
+
+### 从源码运行
+
+开发或本地修改代码时使用：
+
+```bash
+git clone https://github.com/Shardkiht/quiet-memo.git
+cd quiet-memo
 uv sync
 
 # 可选：启用本地向量检索（fastembed + bge-small-zh，首次运行下载约 100MB 模型）
@@ -342,6 +347,8 @@ src/quiet_memo/
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。
 `retrieval` 会只读 `memory` 的 `models`、`store`、`detect`（条目读取、归一化与字面覆盖判断），这是 `memory ↔ retrieval` 的已知回读；写入与裁决仍只由 `memory` 负责。
 开发约定（代码风格、存储不变量、测试与文档同步）见 [AGENTS.md](AGENTS.md)。
+
+README 的界面演示与截图保存在 `docs/assets/`，不包含个人记忆库数据。
 
 - 检索默认 hybrid：jieba + rank-bm25 与向量余弦两路结果做 RRF 融合；向量由 fastembed 本地推理（可选 extra）或 embedding API 计算，缓存为 `.quiet-memo/vectors.npz` 派生数据（vault 内已 gitignore，删除后自动重建；换 embedding 模型自动失效）。向量后端不可用时回退纯 BM25，`/status` 和 `qm status` 显示当前检索模式。
 - token 预算用 tiktoken 估算，离线失败时回退字符估算。

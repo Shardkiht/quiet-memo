@@ -2,9 +2,9 @@
 
 # Quiet-Memo
 
-**A quiet personal memory store** — it extracts facts, preferences, and plans about **you** from everyday conversations
+**A local-first memory agent that remembers you.**
 
-Local Markdown · Git-reversible · MCP-callable
+Turn everyday conversations into long-term Markdown memories you can inspect, trace, and roll back. Use the terminal chat or connect an MCP client.
 
 [![test](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml/badge.svg)](https://github.com/Shardkiht/quiet-memo/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/quiet-memo)](https://pypi.org/project/quiet-memo/)
@@ -15,40 +15,45 @@ Local Markdown · Git-reversible · MCP-callable
 
 </div>
 
-## Highlights
+Stop repeating your preferences and plans every time you start a chat. Tell it “I prefer unsweetened hot drinks,” open another conversation, and it can look that preference up. Open the Markdown files to inspect what it remembers, correct a fact, or ask it to forget one.
 
-| | |
-| --- | --- |
-| **Local-first** | Markdown is the single source of truth; Git handles versioning and audit |
-| **Silent by default** | Trusted content is written directly without interrupting you item by item |
-| **Full agent** | Interactive chat, persisted sessions, context compaction, and a tool loop |
-| **Multi-model** | LiteLLM integration for DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and more |
-| **Web search** | Optionally connects to a local open-websearch daemon; results include source links and are treated as untrusted material |
-| **Reversible** | Each commit automatically generates a Chinese summary for your review |
+![Actual TUI interaction: save a preference, start a new session, and recall it](docs/assets/quiet-memo-demo.gif)
 
-## Interface preview
-
-```text
- quiet-memo             │  qmo · 14:32
- + New session          │  ┃ recalled "recent plans": 3 hits
-                        │  Three things going on: wrapping up the final project,
- 2026-10-26             │  job hunting, and a fixed study rhythm.
-   14:32 · 4 msgs       │  2 steps · 3.2K tok · $0.0018 · 4.2s
-                        │
-                        │                    You · 14:34
-                        │      I added one more study day, remember that
-                        │
-                        │  ✓ remembered [schedule] one extra library day midweek
-                        │
-                        │  > Message or /command
-                        │  ◆ deepseek-flash · Context ━───────── 3.2K/200K
-```
+The demo operates the actual Textual UI with synthetic data and scripted model replies. Memory writes and cross-session retrieval run through the real implementation, with no paid model requests. [View the still screenshot](docs/assets/quiet-memo-demo.png).
 
 ## Quick start
 
 Requires Python 3.12+, uv, and git.
 
 ```bash
+uv tool install quiet-memo
+qm setup
+qm
+```
+
+`qm setup` selects a model provider and configures its API key. The standard installation does not download a local embedding model; keyword retrieval is used when the vector backend is not installed. Update later with `uv tool upgrade quiet-memo`.
+
+## Why Quiet-Memo
+
+- **Pick up where you left off.** Personal statements worth keeping can be distilled automatically. Trusted content is written quietly; conflicting or uncertain candidates wait for review.
+- **Inspect and correct what it remembers.** Memories are plain Markdown. Corrections, soft deletions, and sources are recorded, with version history in Git.
+- **Continue after interruptions.** It attempts to save memories before context compaction, catches up after abnormal exits or failed extraction, and retains the original session.
+
+| Capability | Details |
+| --- | --- |
+| Local-first | Markdown is the single source of truth; Git handles versioning and audit |
+| Multiple models | DeepSeek, SiliconFlow, DashScope, OpenRouter, OpenAI, and custom compatible endpoints |
+| MCP | Let MCP clients use the same local memory vault |
+| Hybrid retrieval | BM25 with optional vectors; falls back to keyword retrieval if the vector backend is unavailable |
+| Web search | Optional local open-websearch integration; external content is treated as reference material |
+
+### Run from source
+
+For development or local code changes:
+
+```bash
+git clone https://github.com/Shardkiht/quiet-memo.git
+cd quiet-memo
 uv sync
 
 # Optional: enable local vector retrieval (fastembed + bge-small-zh; ~100MB model download on first run)
@@ -344,6 +349,8 @@ src/quiet_memo/
 Dependency direction: `app → agent → memory → retrieval → infra`, `memory/agent → llm → infra`.
 `retrieval` reads only `memory`'s `models`, `store`, and `detect` helpers (entries, normalization, and literal coverage); this is the known `memory ↔ retrieval` back-reference. Writes and decisions stay in `memory`.
 Development conventions (code style, storage invariants, testing, and docs sync) are in [AGENTS.md](AGENTS.md).
+
+README demo media lives in `docs/assets/` and contains no personal memory vault data.
 
 - Retrieval defaults to hybrid: jieba + rank-bm25 and vector cosine runs are fused with RRF. Vectors come from local fastembed inference (optional extra) or an embedding API, cached as derived data in `.quiet-memo/vectors.npz` (gitignored inside the vault; delete it to force a rebuild; switching the embedding model invalidates it automatically). When the embedding backend is unavailable it falls back to plain BM25; `/status` and `qm status` show the active retrieval mode.
 - Token budgets are estimated with tiktoken, falling back to character estimation when offline.
