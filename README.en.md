@@ -394,6 +394,8 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 
 The full todo list lives in [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues).
 
+- [Dream memory](https://github.com/Shardkiht/quiet-memo/issues/8): background review, reflection, and consolidation of existing memories, retaining sources and separating user-stated facts from unconfirmed inferences.
+- [User profiles](https://github.com/Shardkiht/quiet-memo/issues/9): derive preferences, goals, and constraints from confirmed memories in the background, with incremental updates, source traceability, and user corrections.
 - 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon

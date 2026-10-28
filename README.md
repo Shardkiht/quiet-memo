@@ -392,6 +392,8 @@ uv run python evals/retrieval_eval.py
 
 完整待办以 [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues) 为准。
 
+- [梦境记忆](https://github.com/Shardkiht/quiet-memo/issues/8)：后台回顾、反思与整合已有记忆，保留来源，区分用户事实与待确认推断。
+- [用户画像](https://github.com/Shardkiht/quiet-memo/issues/9)：从已确认记忆中后台沉淀偏好、目标与约束，支持增量更新、来源追溯和用户纠正。
 - 20+ 条抽取/冲突评测用例与指标（检索评测已落地 `evals/`）
 - 真实模型 dogfood 与成本统计
 - 每日定时提交守护进程
