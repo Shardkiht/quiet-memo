@@ -392,12 +392,22 @@ On a real 797-entry personal vault (anonymized, aggregate metrics only), after f
 
 ## Roadmap
 
-The full todo list lives in [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues).
+The full backlog lives in [GitHub Issues](https://github.com/Shardkiht/quiet-memo/issues). The directions below are ordered by **approximate implementation difficulty**, not a fixed shipping sequence. All features serve **personal, everyday conversational memory**, not a general-purpose work agent.
 
-- [Dream memory](https://github.com/Shardkiht/quiet-memo/issues/8): background review, reflection, and consolidation of existing memories, retaining sources and separating user-stated facts from unconfirmed inferences.
-- [User profiles](https://github.com/Shardkiht/quiet-memo/issues/9): derive preferences, goals, and constraints from confirmed memories in the background, with incremental updates, source traceability, and user corrections.
-- 20+ extraction/conflict evaluation cases and metrics (retrieval eval lives in `evals/`)
+| Difficulty | Direction | Scope |
+| --- | --- | --- |
+| Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Separate recording time from event/valid time; optional location; distinguish explicit emotion from tone-based inference |
+| Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Store hypotheses separately with evidence; prevent self-reinforcement; support confirmation, rejection, and correction |
+| Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Distinguish historical change from contradiction; use time, location, and emotion to supplement hybrid retrieval |
+| High | [Dream memory / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | Incremental background reflection, reviewable hypotheses, and recoverable background jobs |
+| High | [Dynamic user profiles](https://github.com/Shardkiht/quiet-memo/issues/9) | Evidence-linked, evolving personal preferences and recent states with user corrections |
+| Very high / long-term | [Proactive recall across AI clients](https://github.com/Shardkiht/quiet-memo/issues/13) | Surface relevant memories without explicit prompts where client integrations permit |
+| Ongoing | [Memory quality and regression evaluation](https://github.com/Shardkiht/quiet-memo/issues/14) | Synthetic tests for extraction/conflicts, temporal change, emotional inference, and implicit recall |
+
+Other backlog items:
+
 - Real-model dogfooding and cost tracking
 - Daily scheduled commit daemon
-- A `qm consolidate` subcommand to trigger vault-wide catch-up manually or from a system scheduler (the automatic startup catch-up and auto-commit are already implemented)
-- Inject the vault's existing topic list into import extraction so incremental imports don't fragment topics
+- A `qm consolidate` subcommand for manual or scheduled vault-wide catch-up (startup catch-up and auto-commit already exist)
+
+These are **planned**, not implemented in the current release; refer to the other README sections for supported functionality.
