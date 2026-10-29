@@ -39,6 +39,9 @@ dependencies = [
 [project.optional-dependencies]
 # 本地向量检索：uv sync --extra local-embed
 local-embed = ["fastembed>=0.3"]
+documents = [
+    "markitdown[docx,outlook,pdf,pptx,xls,xlsx]>=0.1.0",
+]
 
 [project.scripts]
 qm = "quiet_memo.app.cli:main"

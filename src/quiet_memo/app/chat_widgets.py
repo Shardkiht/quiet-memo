@@ -8,6 +8,7 @@ from rich.markup import escape
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.content import Content
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -255,6 +256,32 @@ class PickScreen(ModalScreen):
         self.app.call_later(on_result, value)
 
 
+class ModelPickerScreen(PickScreen):
+    """模型列表只显示模型；管理入口使用独立快捷键，搜索框聚焦时也可用。"""
+
+    BINDINGS = [
+        Binding("ctrl+p", "providers", "供应商管理", priority=True),
+        Binding("ctrl+r", "refresh_models", "刷新模型", priority=True),
+        Binding("ctrl+n", "custom_model", "自定义模型", priority=True),
+    ]
+
+    def on_mount(self) -> None:
+        super().on_mount()
+        self.query_one(".pick-hint", Static).update(
+            "输入搜索 · ↓ 选择 · Enter 确认 · Esc 取消\n"
+            "Ctrl+P 供应商管理 · Ctrl+R 刷新 · Ctrl+N 自定义模型"
+        )
+
+    def action_providers(self) -> None:
+        self._finish(("__providers__", ""))
+
+    def action_refresh_models(self) -> None:
+        self._finish(("__refresh__", ""))
+
+    def action_custom_model(self) -> None:
+        self._finish(("__custom__", ""))
+
+
 class NewSessionButton(Static):
     """＋ 新会话：Button 默认 hover 样式（tall 边框 + 整块背景）会盖过虚线框，改 Static 自绘。"""
 
@@ -275,9 +302,10 @@ class CommandRow(Static):
 
     def __init__(self, command: str, usage: str, description: str) -> None:
         self.command = command
+        usage_width = max(len(item[1]) for item in SLASH_COMMANDS)
         # 用法里的 [refresh] 等方括号会被当成 Rich 标记吞掉，须转义后再补空格
         super().__init__(
-            f"[cmd-usage]{escape(f'{usage:<18}')}[/] [cmd-desc]{escape(description)}[/]"
+            f"[cmd-usage]{escape(f'{usage:<{usage_width}}')}[/] [cmd-desc]{escape(description)}[/]"
         )
         self.add_class("cmd-row")
 

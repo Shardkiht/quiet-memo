@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from functools import partial
+from pathlib import Path
+from rich.markup import escape
 
 from textual.widgets import Input
 
 from ..infra.tokens import format_tokens
+from ..infra.documents import DocumentError, SUPPORTED_SUFFIXES, read_document
+from ..memory.extractor import split_chunks
 from ..llm import cached_provider_models, fetch_provider_models
 from . import actions
-from .chat_widgets import PickScreen, SessionPickerScreen, TextInputScreen
+from .chat_widgets import ModelPickerScreen, PickScreen, SessionPickerScreen, TextInputScreen
 from .command_catalog import SLASH_COMMANDS
 from .session_ui import visible_sessions
 
@@ -33,7 +37,7 @@ class ChatCommandsMixin:
         elif command == "/context":
             self._pick_context()
         elif command == "/setup":
-            self.add_card("Preset providers can be configured in /model; full setup (custom endpoints, vault) requires qm setup in a terminal.")
+            self.add_card("在 /model 按 Ctrl+P 管理内置供应商；完整配置（自定义接口、记忆库）请在终端运行 qm setup。")
         elif command == "/new":
             self._new_session()
         elif command in ("/sessions", "/resume"):
@@ -72,6 +76,11 @@ class ChatCommandsMixin:
                 self.add_card("Usage: /remember <text>")
             else:
                 self._run_remember(argument)
+        elif command == "/import":
+            if not argument:
+                self.push_screen(TextInputScreen("导入文件或目录路径（默认预览；末尾加 --apply 写入）", on_result=lambda value: self._run_import(value) if value else None))
+            else:
+                self._run_import(argument)
         elif command == "/pending":
             self._open_pending()
         elif command == "/topics":
@@ -344,6 +353,47 @@ class ChatCommandsMixin:
         self._set_busy(False)
         self._drain_pending_intent()
 
+    def _run_import(self, argument: str) -> None:
+        # 不用 POSIX shlex 拆路径，避免吃掉 Windows 反斜线。
+        argument = argument.strip()
+        apply = argument.endswith(" --apply")
+        filename = argument[:-8].strip() if apply else argument
+        if len(filename) >= 2 and filename[0] == filename[-1] and filename[0] in ("'", '"'):
+            filename = filename[1:-1]
+        if not filename:
+            self.add_card("用法：/import <文件或目录路径> [--apply]")
+            return
+        self._set_busy(True)
+        self.add_card("开始导入：解析在本地完成；抽取会调用配置的模型并可能产生费用。" + ("本次写入记忆。" if apply else "本次只预览，不写入记忆。"))
+        self.run_worker(partial(self._import_work, Path(filename).expanduser(), apply),
+                        group="ask", thread=True, exclusive=True, exit_on_error=False)
+
+    def _import_work(self, path: Path, apply: bool) -> None:
+        try:
+            files = sorted(file for file in path.iterdir() if file.is_file() and file.suffix.lower() in SUPPORTED_SUFFIXES) if path.is_dir() else [path]
+            if not files:
+                raise ValueError("当前目录没有支持的文件（不递归扫描）。")
+            for file in files:
+                try:
+                    chunks = split_chunks(read_document(file))
+                    for index, chunk in enumerate(chunks, 1):
+                        self.call_from_thread(self.add_card, escape(f"正在分析 {file.name}：{index}/{len(chunks)} 块"))
+                        result = self.service.import_text(chunk, source=f"import:{file.name}#chunk:{index}", dry_run=not apply)
+                        lines = [f"{'已处理' if apply else '预览'}：直写 {len(result.admitted)} · 待确认 {len(result.queued)} · 重复 {len(result.duplicates)} · 拦截 {len(result.blocked)}"]
+                        # 只展示已通过凭据裁决的候选；被拦截原文不回显。
+                        lines += [f"[{entry.topic}] {entry.text}" for entry in result.admitted]
+                        lines += [f"待确认 [{item.topic}] {item.text}" for item in result.queued]
+                        self.call_from_thread(self.add_card, escape("\n".join(lines)))
+                except DocumentError as exc:
+                    self.call_from_thread(self.add_card, escape(f"{file.name} 导入失败：{exc}"))
+                except Exception:
+                    self.call_from_thread(self.add_card, escape(f"{file.name} 导入失败，请检查格式、解析依赖和模型配置；已处理部分不会回滚。"))
+            self.call_from_thread(self.refresh_pending)
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"导入失败：{exc}")
+            return
+        self.call_from_thread(self._after_recall, "导入结束。" if apply else "预览结束；确认后用 /import <路径> --apply 重新分析并写入。")
+
     def _run_remember(self, text: str) -> None:
         self._set_busy(True)
         self.run_worker(
@@ -395,19 +445,10 @@ class ChatCommandsMixin:
 
     def _model_entries(self, fetched: list[str] | None = None) -> list[tuple]:
         options = actions.model_options(self.service, fetched)
-        model_entries = [
+        return [
             (option.label, (option.provider, option.model), option.current)
             for option in options
         ]
-        manage_entries = [
-            ("＋ Add provider…", ("__add_provider__", ""), False),
-            ("Update provider key…", ("__update_provider__", ""), False),
-            ("Remove provider…", ("__remove_provider__", ""), False),
-            ("↻ Refresh models", ("__refresh__", ""), False),
-            ("Custom model…", ("__custom__", ""), False),
-        ]
-        # 当前模型保持首行，Provider 操作紧随其后，避免被长模型列表推到屏幕外。
-        return model_entries[:1] + manage_entries + model_entries[1:]
 
     def _show_model_picker(
         self,
@@ -416,7 +457,7 @@ class ChatCommandsMixin:
         refresh: bool = False,
     ) -> None:
         self._drain_pending_intent()
-        picker = PickScreen(
+        picker = ModelPickerScreen(
             f"Current model: {self.runtime.model_label}",
             entries,
             self._model_picked,
@@ -454,6 +495,13 @@ class ChatCommandsMixin:
             self.query_one("#input", Input).focus()
             return
         provider, model = value
+        if provider == "__providers__":
+            self.push_screen(PickScreen(
+                "供应商管理（Esc 返回模型列表）",
+                [("添加供应商", "add"), ("更新供应商 Key", "update"), ("移除供应商", "remove")],
+                self._provider_management_picked,
+            ))
+            return
         if provider == "__refresh__":
             self._open_models(True)
             return
@@ -475,6 +523,12 @@ class ChatCommandsMixin:
         self.add_card(message)
         self.update_status()
         self.query_one("#input", Input).focus()
+
+    def _provider_management_picked(self, action: str | None) -> None:
+        if action is None:
+            self._open_models()
+        else:
+            self._manage_providers(action)
 
     def _manage_providers(self, action: str) -> None:
         options = actions.provider_options(self.service)

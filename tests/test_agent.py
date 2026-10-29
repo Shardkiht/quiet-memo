@@ -77,6 +77,25 @@ def test_start_defers_session_creation(tmp_path):
     assert len(store.list()) == 1
 
 
+def test_natural_file_request_registers_tools_and_reads_without_memory_write(tmp_path):
+    path = tmp_path / "synthetic.txt"
+    path.write_text("用户明确表示偏好合成茶饮", encoding="utf-8")
+    model = FakeChatModel([
+        AssistantTurn(tool_calls=[ToolCall(id="file1", name="read_file", arguments={"path": str(path.resolve())})]),
+        AssistantTurn(content="这份笔记描述了茶饮偏好。"),
+        AssistantTurn(content="收到"),
+    ])
+    runtime, service = build_runtime(tmp_path, model)
+    runtime.config.auto_recall = 0
+    runtime.ask(f'请分析 "{path}"，不要写入记忆')
+    record = next(record for record in runtime.current.records if record.get("type") == "tool")
+    assert record["ok"]
+    assert "合成茶饮" in record["content"]
+    assert service.store.entries() == []
+    runtime.ask("谢谢")
+    assert "read_file" not in str(model.calls[-1][1])
+
+
 def test_ask_redacts_credentials_before_model_and_session(tmp_path):
     model = FakeChatModel([AssistantTurn(content="收到")])
     runtime, _ = build_runtime(tmp_path, model)

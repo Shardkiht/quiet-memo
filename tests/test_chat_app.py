@@ -39,6 +39,45 @@ class FakeSummarizer:
         return "会话摘要"
 
 
+@pytest.mark.parametrize("apply", [False, True])
+async def test_import_command_uses_worker_and_releases_busy(tmp_path, monkeypatch, apply):
+    from quiet_memo.memory import service as module
+    from quiet_memo.memory.models import Candidate
+
+    class Extractor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def extract(self, text):
+            return ExtractionResult(memories=[Candidate(text="合成用户偏好茶饮", confidence=0.95)])
+
+    monkeypatch.setattr(module, "ImportExtractor", Extractor)
+    path = tmp_path / "synthetic conversation.txt"
+    path.write_text("合成聊天记录", encoding="utf-8")
+    app = build_app(tmp_path, [])
+    async with app.run_test() as pilot:
+        app._command(f'/import "{path}"' + (" --apply" if apply else ""))
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.busy
+        assert bool(app.service.store.entries()) is apply
+        assert not app.query_one("#input", Input).disabled
+
+
+async def test_import_error_releases_busy(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test() as pilot:
+        app._command(f'/import "{tmp_path / "missing.pdf"}"')
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.busy
+        assert any("导入失败" in str(card.render()) for card in app.query(".card"))
+
+
 def build_app(tmp_path, turns, extract_on_exit=False, search=None):
     config = Config(
         vault=tmp_path / "vault",
@@ -349,7 +388,7 @@ async def test_switch_clears_previous_history_page_state(tmp_path):
         app._switch_session(second.id)
         for _ in range(100):
             await pilot.pause()
-            if not app.busy:
+            if not app.busy and not app.query(HistoryMore):
                 break
         assert not app.query(HistoryMore)
         app.query_one(TranscriptView).load_earlier()
@@ -403,7 +442,10 @@ async def test_context_estimation_uses_worker_cache_and_rejects_stale_results(tm
         assert len(calls) == before
         app.sessions.append(app.runtime.current, {"type": "undo", "message_id": "m1"})
         app.update_status()
-        await pilot.pause()
+        for _ in range(50):
+            await pilot.pause()
+            if len(calls) == before + 1 and app._usage_request is None:
+                break
         assert len(calls) == before + 1
 
 
@@ -574,21 +616,22 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
             await pilot.pause()
             # 等模态挂载完成并拿到焦点，再改高亮；否则 on_mount 可能重置 index。
             if isinstance(app.screen, PickScreen) and app.screen.query("#pick-list"):
-                if app.screen.query_one("#pick-list", ListView).has_focus:
+                if app.screen.query_one("#pick-search", Input).has_focus:
                     break
 
         model_picker = app.screen
         listing = model_picker.query_one("#pick-list", ListView)
         labels = [str(item.query_one(Label).render()) for item in listing.children]
-        assert labels[1:4] == [
-            "＋ Add provider…",
-            "Update provider key…",
-            "Remove provider…",
-        ]
-        add_index = labels.index("＋ Add provider…")
-        listing.index = add_index
+        assert labels
+        assert all(not item.value[0].startswith("__") for item in listing.children)
+        assert "Ctrl+P" in str(model_picker.query_one(".pick-hint").render())
+        await pilot.press("ctrl+p")
         await pilot.pause()
-        assert listing.index == add_index
+        assert "供应商管理" in str(app.screen.query_one(".pick-title").render())
+        listing = app.screen.query_one("#pick-list", ListView)
+        assert [item.value for item in listing.children] == ["add", "update", "remove"]
+        listing.index = 0
+        listing.focus()
         await pilot.press("enter")
         # 第一个选择器 dismiss 与下一个 push 不在同一帧，等新屏幕出现再查询。
         for _ in range(100):
@@ -640,7 +683,14 @@ async def test_model_picker_can_remove_provider_key(tmp_path, monkeypatch):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app._model_picked(("__remove_provider__", ""))
+        app._show_model_picker(app._model_entries())
+        await pilot.pause()
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        listing = app.screen.query_one("#pick-list", ListView)
+        listing.index = 2
+        listing.focus()
+        await pilot.press("enter")
         for _ in range(50):
             await pilot.pause()
             if isinstance(app.screen, PickScreen) and "Remove provider" in str(
@@ -673,6 +723,70 @@ async def test_model_picker_can_remove_provider_key(tmp_path, monkeypatch):
         assert "provider removed" in str(app.query(".card")[-1].render())
 
 
+async def test_model_picker_provider_menu_returns_to_models(tmp_path, monkeypatch):
+    from textual.widgets import ListView
+    from quiet_memo.app.chat_widgets import ModelPickerScreen
+
+    monkeypatch.setattr("quiet_memo.app.chat_commands.fetch_provider_models", lambda *args, **kwargs: [])
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._show_model_picker(app._model_entries())
+        await pilot.pause()
+        picker = app.screen
+        picker.query_one("#pick-search", Input).value = "no-matching-model"
+        await pilot.pause()
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert not isinstance(app.screen, ModelPickerScreen)
+        assert [item.value for item in app.screen.query_one("#pick-list", ListView).children] == ["add", "update", "remove"]
+        app._apply_fetched_models(picker, [("late-model", ("deepseek", "late"), False)])
+        assert [item.value for item in app.screen.query_one("#pick-list", ListView).children] == ["add", "update", "remove"]
+        await pilot.press("escape")
+        for _ in range(100):
+            await pilot.pause()
+            if isinstance(app.screen, ModelPickerScreen) and app.screen.query("#pick-search"):
+                break
+        assert isinstance(app.screen, ModelPickerScreen)
+        assert not app.busy
+
+
+@pytest.mark.parametrize("shortcut,sentinel", [("ctrl+r", "__refresh__"), ("ctrl+n", "__custom__")])
+async def test_model_picker_shortcuts_work_from_search(tmp_path, monkeypatch, shortcut, sentinel):
+    selected = []
+    app = build_app(tmp_path, [])
+    monkeypatch.setattr(app, "_model_picked", selected.append)
+    async with app.run_test(size=(120, 40)) as pilot:
+        app._show_model_picker(app._model_entries())
+        await pilot.pause()
+        assert app.screen.query_one("#pick-search", Input).has_focus
+        await pilot.press(shortcut)
+        await pilot.pause()
+        assert selected == [(sentinel, "")]
+
+
+@pytest.mark.parametrize("size", [(80, 24), (120, 40)])
+async def test_model_picker_keeps_shortcut_hint_visible(tmp_path, size):
+    app = build_app(tmp_path, [])
+    entries = [(f"model-{i}", ("deepseek", f"model-{i}"), i == 0) for i in range(50)]
+    async with app.run_test(size=size) as pilot:
+        app._show_model_picker(entries)
+        await pilot.pause()
+        hint = app.screen.query_one(".pick-hint", Static)
+        card = app.screen.query_one("#pick-card")
+        assert hint.region.bottom <= card.content_region.bottom
+        assert hint.region.height > 0
+        assert "Ctrl+P" in str(hint.render())
+        assert card.region.bottom <= app.screen.region.bottom
+
+
+async def test_ctrl_p_outside_model_picker_keeps_command_palette(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test() as pilot:
+        await pilot.press("ctrl+p")
+        await pilot.pause()
+        assert app.screen.__class__.__name__ == "CommandPalette"
+
+
 async def test_model_picker_filters_by_search(tmp_path):
     from textual.widgets import ListView
 
@@ -682,7 +796,7 @@ async def test_model_picker_filters_by_search(tmp_path):
     entries = [
         ("DeepSeek · DeepSeek Flash", ("deepseek", "deepseek-flash"), True),
         ("SiliconFlow · DeepSeek V3", ("siliconflow", "deepseek-ai/DeepSeek-V3"), False),
-        ("Remove provider…", ("__remove_provider__", ""), False),
+        ("Spark · Spark X2.6", ("spark", "spark-x2.6"), False),
     ]
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()

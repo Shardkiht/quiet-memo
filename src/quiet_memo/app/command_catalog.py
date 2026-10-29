@@ -16,6 +16,7 @@ SLASH_COMMANDS = [
     ("rename", "/rename <title>", "Rename session"),
     ("recall", "/recall <query>", "Search memories"),
     ("remember", "/remember <text>", "Save memory"),
+    ("import", "/import <path> [--apply]", "导入文件或目录（默认预览）"),
     ("pending", "/pending", "Review pending"),
     ("topics", "/topics [name]", "Browse topics"),
     ("help", "/help", "Show commands"),

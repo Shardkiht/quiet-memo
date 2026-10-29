@@ -192,7 +192,8 @@ def test_import_without_api_key_reports_hint(tmp_path, monkeypatch):
     assert "DEEPSEEK_API_KEY" in result.output
 
 
-def test_import_dry_run_then_apply(tmp_path, monkeypatch):
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".jsonl"])
+def test_import_dry_run_then_apply(tmp_path, monkeypatch, suffix):
     from quiet_memo.memory import service as service_module
     from quiet_memo.memory.models import Candidate, ExtractionResult
 
@@ -209,7 +210,7 @@ def test_import_dry_run_then_apply(tmp_path, monkeypatch):
     config = tmp_path / "quiet-memo.toml"
     vault = tmp_path / "vault"
     invoke(["init", "--vault", str(vault), "--config", str(config)])
-    source = tmp_path / "notes.md"
+    source = tmp_path / ("notes" + suffix)
     source.write_text("# 档案\n\n- 咖啡偏好清淡风味。\n", encoding="utf-8")
 
     result = invoke(["import", str(source), "--config", str(config)])

@@ -64,7 +64,7 @@ uv run qm
 uv run quietmemo        # Same as above; equivalent alias
 ```
 
-On first use, run `uv run qm setup` to configure the model and API key. Once in a chat, you can also use `/model` at any time to search models and add, update, or remove the API key for a built-in provider.
+On first use, run `uv run qm setup` to configure the model and API key. Use `/model` to search and switch models. Press `Ctrl+P` in that screen to open separate provider management for adding, updating, or removing built-in provider API keys; `Esc` returns to the model list. The model picker also supports `Ctrl+R` to refresh and `Ctrl+N` to enter a custom model name.
 
 `qm setup` writes the config file (default: `quiet-memo.toml`), initializes the vault, and optionally runs a connection test. Keys can also be provided through environment variables, which take precedence over keyring:
 
@@ -168,13 +168,14 @@ In-session commands:
 | `/undo` | Withdraw the latest turn and restore its user message for editing |
 | `/summary` | View the current session summary |
 | `/status` | Session, model, retrieval mode, context, and pending status |
-| `/model` | Search and switch models, and add/update/remove built-in providers in one screen. The list opens immediately from the in-process cache or presets, then refreshes the live list in the background; `/model refresh` skips the old cache without blocking the UI |
+| `/model` | Search and switch models; `Ctrl+P` opens separate provider management, `Ctrl+R` refreshes, and `Ctrl+N` enters a custom model name. Opens from cache or presets, then refreshes in the background; `/model refresh` skips the old cache |
 | `/think` | Switch reasoning effort: default / low / medium / high, only when the model supports it; applies immediately and persists to the config |
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
-| `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (built-in provider keys can be managed directly via `/model`) |
+| `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (manage built-in provider keys with `Ctrl+P` in `/model`) |
 | `/rename <title>` | Rename the session |
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |
+| `/import <path> [--apply]` | Import a file or the current directory; preview by default, reanalyze and write with `--apply`. Without a path, opens an input dialog |
 | `/pending` | Work through pending candidates one by one: approve / reject / edit then write; automatically advances to the next until the queue is empty |
 | `/topics [name]` | Browse memory topics and entry counts; with a name, drills into that topic's entries |
 | `/exit` | Exit |
@@ -233,8 +234,8 @@ uv run qm memorize "I'm looking for an apartment downtown, budget under 4000, no
 # Record directly (no LLM call)
 uv run qm note "I prefer light, tea-like coffee" --topic preferences --title Preferences
 
-# Import existing Markdown (AI restructures into entries under a strict contract,
-# the program adjudicates and writes; dry-run by default, --apply to write)
+# Import text, chat exports, or documents (dry-run still calls the model;
+# --apply writes the extracted memories)
 uv run qm import ~/personal-memory/profile
 uv run qm import ~/personal-memory/profile --apply
 
@@ -258,6 +259,18 @@ uv run qm status
 uv run qm commit --no-push
 uv run qm history
 ```
+
+You can also paste or drag an absolute file path into a chat and ask to summarize it or import the conversation into long-term memory. Quote paths containing spaces. `read_file` (paged analysis) and `import_file` (chunked preview/write) are available only for paths supplied in the current user message. They do not grant arbitrary directory access. Tool steps are bounded: unfinished reads/imports must be reported; include the path again to continue in a subsequent turn. Drag-and-drop path insertion depends on the terminal.
+
+Markdown, TXT, LOG, JSON/JSONL/NDJSON, CSV/TSV, YAML, and XML work directly with UTF-8, UTF-16 with BOM, and GB18030. Text-based PDF, DOCX, XLS/XLSX, PPTX, HTML, EPUB, Outlook MSG, and IPYNB use local MarkItDown conversion. Install:
+
+```bash
+uv sync --extra documents
+# Retain existing extras when rebuilding the editable tool
+uv tool install --force -e '.[local-embed,documents]'
+```
+
+The per-file limit is 20 MiB. Directory import scans the current directory only. Dry-run does not write memories, but sends text to the configured model and may incur charges; `--apply` analyzes again before writing. Sources include the filename and chunk number. Role and timestamp fields are retained, but this is not a client-specific export adapter and chunking may lose cross-chunk meaning. Empty documents and parsing failures are reported; completed writes are not rolled back. Plugins, cloud conversion, OCR, and audio/video transcription are disabled. Convert scans, images, legacy DOC/PPT, and archives first. This adds neither external MCP integration nor file tools to the public MCP server.
 
 ## MCP integration
 
@@ -364,7 +377,7 @@ src/quiet_memo/
 │                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP entry points
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
-│                 session.py, recall.py              # Agent loop, system prompt, compaction, tools, sessions
+│                 session.py, recall.py, file_tools.py # Agent loop, tools, sessions, file analysis
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py, inference.py
 │                                                   # Memory domain and write decisions
@@ -373,7 +386,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM adapter, session/commit summaries
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, dialogs.py, search/    # Config, providers, Git, tokens, terminal dialogs, web search
+                  layout.py, dialogs.py, documents.py, search/ # Config, document conversion, web search
 ```
 
 Dependency direction: `app → agent → memory → retrieval → infra`, `memory/agent → llm → infra`.

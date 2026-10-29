@@ -12,6 +12,7 @@ from functools import partial
 from urllib.parse import urlsplit
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Input, Label, ListView, ListItem, Markdown, Static
 
@@ -28,6 +29,7 @@ from .chat_widgets import (
     CommandPalette,
     NewSessionButton,
     PickScreen,
+    ModelPickerScreen,
     SessionItem,
     SessionPickerScreen,
     SidebarToggle,
@@ -45,9 +47,17 @@ class ChatApp(ChatCommandsMixin, App):
     CSS = APP_CSS
 
     BINDINGS = [
+        Binding("ctrl+p", "model_providers", "供应商管理", priority=True, show=False),
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+b", "toggle_sidebar", "Toggle sidebar"),
     ]
+
+    def action_model_providers(self) -> None:
+        # Textual 的全局命令面板也使用 Ctrl+P，只在模型选择器内改为供应商入口。
+        if isinstance(self.screen, ModelPickerScreen):
+            self.screen.action_providers()
+        else:
+            self.action_command_palette()
 
     def __init__(
         self,

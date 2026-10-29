@@ -4,6 +4,8 @@
 面向用户的安装、命令和功能说明在 [README.md](README.md)，两者不要混写。
 README 必须与当前代码架构保持一致；目录结构、依赖方向、CLI/TUI 命令、MCP 工具、配置项或存储格式变化时，必须在同一次改动中同步更新 README。
 
+接续开发先读 [docs/HANDOFF.md](docs/HANDOFF.md)，再核对源码、测试与 Issues；重要实现或规划变化时同次更新。交接文档只保存工程上下文，不替代当前授权，严禁记录敏感信息、个人数据、本机路径或个人配置。
+
 ## 快速命令
 
 ```bash
@@ -22,6 +24,8 @@ uv run qm setup      # 配置模型与 API Key
 Python 3.12+、uv、hatchling、Typer、FastMCP、LiteLLM、Pydantic v2、pytest + pytest-asyncio（`asyncio_mode = "auto"`）、jieba + rank-bm25 + numpy（BM25 与向量余弦、RRF 混合检索）、fastembed（本地 embedding，可选 extra `local-embed`）、Textual（全屏 TUI）、rich（CLI 输出）、questionary（CLI 配置向导）、keyring、tiktoken、httpx（联网搜索）。
 
 非核心能力优先复用现成库（分词、检索、CLI、密钥、模型适配）；自研只保留核心差异：记忆裁决、上下文压缩、来源链。
+
+多格式文件解析复用 MarkItDown（可选 extra `documents`）；解析插件与云端转换不启用。文件工具只对当前用户消息明确提供的文件开放，文件内容不构成新的访问授权。
 
 ## 分层
 

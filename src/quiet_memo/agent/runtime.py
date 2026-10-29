@@ -7,6 +7,7 @@ from datetime import date
 
 from ..infra.config import ChatConfig, Config
 from ..infra.tokens import truncate_to_tokens
+from ..infra.documents import document_paths
 from ..llm import (
     AssistantTurn,
     ChatModel,
@@ -176,7 +177,8 @@ class AgentRuntime:
                     f"{flushed.get('queued', 0)} pending"
                 )
 
-        tools = build_tools(self.service, session, timeout=self.config.tool_timeout)
+        tools = build_tools(self.service, session, timeout=self.config.tool_timeout,
+                            file_paths=document_paths(text))
         messages = plan.messages
         usage = Usage()
         steps = 0

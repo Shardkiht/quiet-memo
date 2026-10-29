@@ -14,6 +14,7 @@ from ..infra.config import (
     write_example_config,
 )
 from ..infra.gitops import GitError
+from ..infra.documents import DocumentError, SUPPORTED_SUFFIXES, read_document
 from ..memory.extractor import ExtractorError, split_chunks
 from ..memory.service import MemoryService, get_service
 from .session_ui import print_sessions
@@ -181,28 +182,37 @@ def note(
 
 @app.command("import")
 def import_memories(
-    path: Path = typer.Argument(..., help="要导入的 Markdown 文件或目录", exists=True),
+    path: Path = typer.Argument(..., help="要导入的文本、聊天导出或文档文件/目录", exists=True),
     apply: bool = typer.Option(False, "--apply", help="实际写入；默认只打印计划"),
     config: Path | None = CONFIG_OPTION,
     vault: Path | None = VAULT_OPTION,
 ) -> None:
-    """导入已有 Markdown：AI 整理成条目，程序裁决写入；默认 dry-run。"""
-    files = sorted(path.glob("*.md")) if path.is_dir() else [path]
+    """导入文本或文档：AI 整理成条目，程序裁决写入；默认 dry-run（仍调用模型）。"""
+    files = sorted(
+        file for file in path.iterdir()
+        if file.is_file() and file.suffix.lower() in SUPPORTED_SUFFIXES
+    ) if path.is_dir() else [path]
     if not files:
-        fail("没有找到 Markdown 文件。")
+        fail("没有找到支持导入的文件；目录只扫描当前层。")
         return
     service = _service(config, vault)
     totals = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0}
     failed_chunks = 0
     total_chunks = 0
+    failed_files = 0
     for file in files:
-        chunks = split_chunks(file.read_text(encoding="utf-8"))
+        try:
+            chunks = split_chunks(read_document(file))
+        except DocumentError as exc:
+            failed_files += 1
+            console.print(f"文件解析失败：{file.name}：{exc}", markup=False)
+            continue
         file_failed = 0
-        for chunk in chunks:
+        for chunk_index, chunk in enumerate(chunks, 1):
             total_chunks += 1
             try:
                 result = service.import_text(
-                    chunk, source=f"import:{file.name}", dry_run=not apply
+                    chunk, source=f"import:{file.name}#chunk:{chunk_index}", dry_run=not apply
                 )
             except ExtractorError as exc:
                 file_failed += 1
@@ -214,8 +224,8 @@ def import_memories(
             totals["blocked"] += len(result.blocked)
         failed_chunks += file_failed
         note = f"，失败 {file_failed} 块" if file_failed else ""
-        console.print(f"[dim]{file.name}：{len(chunks)} 块{note}[/dim]")
-    if total_chunks and failed_chunks == total_chunks:
+        console.print(f"{file.name}：{len(chunks)} 块{note}", markup=False)
+    if not total_chunks or failed_chunks == total_chunks:
         fail("所有块抽取失败，未写入任何内容。")
         return
     mode = "已写入" if apply else "计划写入（dry-run，确认无误后加 --apply 落盘）"
@@ -225,6 +235,9 @@ def import_memories(
     )
     if apply and totals["queued"]:
         console.print("运行 qm pending 查看待确认条目。")
+    if failed_files or failed_chunks:
+        console.print(f"部分导入失败：{failed_files} 个文件、{failed_chunks} 个文本块；已处理部分不会回滚。")
+        raise typer.Exit(code=1)
 
 
 @app.command()

@@ -64,7 +64,7 @@ uv run qm
 uv run quietmemo        # 同上，等价别名
 ```
 
-首次使用先运行 `uv run qm setup` 配置模型和 API Key；进入对话后也可以在任何时候用 `/model` 搜索模型，并为内置厂商添加、更新或移除 API Key。
+首次使用先运行 `uv run qm setup` 配置模型和 API Key；进入对话后用 `/model` 搜索和切换模型，在该界面按 `Ctrl+P` 才打开供应商管理，可添加、更新或移除内置厂商的 API Key，`Esc` 返回模型列表。模型界面还支持 `Ctrl+R` 刷新、`Ctrl+N` 输入自定义模型名。
 
 `qm setup` 会写入配置文件（默认 `quiet-memo.toml`），初始化记忆库，并可选做一次连接测试。Key 也可以用环境变量提供，环境变量优先于 keyring：
 
@@ -169,13 +169,14 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | `/undo` | 撤销最后一轮提问及后续回复，回填原消息重新编辑 |
 | `/summary` | 查看当前会话摘要 |
 | `/status` | 会话、模型、检索模式、上下文和待确认状态 |
-| `/model` | 在一个界面内搜索、切换模型，并添加/更新/删除内置供应商；模型列表先显示进程内缓存或预设并立即打开，再后台刷新真实列表；`/model refresh` 跳过旧缓存，仍不阻塞界面 |
+| `/model` | 搜索切换模型；`Ctrl+P` 打开独立供应商管理，`Ctrl+R` 刷新，`Ctrl+N` 输入自定义模型名。列表先用缓存或预设打开，再后台刷新；`/model refresh` 跳过旧缓存 |
 | `/think` | 切换思考强度：默认 / low / medium / high，仅模型支持时可选，实时生效并写回配置 |
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
-| `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 增删可直接在 `/model` 管理） |
+| `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 增删在 `/model` 按 `Ctrl+P` 管理） |
 | `/rename <title>` | 重命名会话 |
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |
+| `/import <path> [--apply]` | 导入文件或当前层目录；默认预览，`--apply` 重新分析并写入。不带路径时弹出输入框 |
 | `/pending` | 逐条处理待确认候选：确认写入 / 拒绝 / 改写后写入，队列清空前自动进入下一条 |
 | `/topics [name]` | 浏览记忆主题与条目数，带 name 下钻某主题的条目列表 |
 | `/exit` | 退出 |
@@ -234,7 +235,7 @@ uv run qm memorize "我最近在找市区的房子，预算 4000 以内，不接
 # 直接记录（不调用 LLM）
 uv run qm note "喝咖啡偏好清淡、像茶的风味" --topic preferences --title 偏好
 
-# 导入已有 Markdown（AI 按契约整理成条目，程序裁决写入；默认 dry-run，--apply 落盘）
+# 导入文本、聊天导出或文档（默认 dry-run，仍调用模型；--apply 落盘）
 uv run qm import ~/personal-memory/profile
 uv run qm import ~/personal-memory/profile --apply
 
@@ -258,6 +259,18 @@ uv run qm status
 uv run qm commit --no-push
 uv run qm history
 ```
+
+也可以在会话中粘贴或拖入文件的绝对路径，配一句“总结这份文件”或“把这份聊天记录导入长期记忆”。带空格的路径请加双引号。Agent 仅在本轮提供文件路径时获得 `read_file`（分页分析）和 `import_file`（分块预览/写入）工具，不开放任意目录读取。工具步数有限，文件未读完或未导完时会提示，后续消息需重新附上路径继续。文件拖放是否转成路径取决于终端。
+
+直接支持 Markdown、TXT、LOG、JSON/JSONL/NDJSON、CSV/TSV、YAML、XML，兼容 UTF-8、带 BOM 的 UTF-16、GB18030。PDF（文字层）、DOCX、XLS/XLSX、PPTX、HTML、EPUB、Outlook MSG、IPYNB 通过本地 MarkItDown 解析，安装：
+
+```bash
+uv sync --extra documents
+# 重建 editable 工具时保留原来的 extra
+uv tool install --force -e '.[local-embed,documents]'
+```
+
+单文件上限 20 MiB。目录只扫描当前层。默认 dry-run 不写记忆，但仍发送文本给配置的模型并可能收费；`--apply` 重新分析后写入。来源保留文件名及块编号。保留角色与时间字段，但不是各客户端专用导出适配器，分块可能丢失跨段语义。解析失败或空文档会提示，部分写入不回滚。未启用解析插件、云端转换、OCR、音视频转写；扫描件、图片、旧 DOC/PPT、压缩包需先转换。没有新增外部 MCP 接入或对外文件 MCP 工具。
 
 ## 接入 MCP
 
@@ -362,7 +375,7 @@ src/quiet_memo/
 │                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
-│                 session.py, recall.py              # Agent 循环、系统提示词、压缩、工具、会话
+│                 session.py, recall.py, file_tools.py # Agent 循环、工具、会话与文件分析
 ├── memory/       service.py, store.py, models.py, queue.py,
 │                 policy.py, detect.py, extractor.py, audit.py, inference.py
 │                                                   # 记忆领域与写入裁决
@@ -371,7 +384,7 @@ src/quiet_memo/
 ├── llm/          client.py, summarizer.py, commit_summary.py
 │                                                   # LiteLLM 适配、会话/提交摘要
 └── infra/        config.py, providers.py, gitops.py, tokens.py,
-                  layout.py, dialogs.py, search/    # 配置、供应商、Git、token、终端、联网搜索
+                  layout.py, dialogs.py, documents.py, search/ # 配置、文档转换、联网搜索
 ```
 
 依赖方向：`app → agent → memory → retrieval → infra`，`memory/agent → llm → infra`。

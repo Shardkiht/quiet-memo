@@ -103,5 +103,8 @@ APP_CSS = """
     #pick-list { height: auto; max-height: 18; }
     #pick-list > ListItem { height: auto; }
     #pick-list > ListItem.-highlight { background: #292b32; }
+    /* 模型列表独立滚动，为小窗口的搜索框和快捷键提示保留空间。 */
+    ModelPickerScreen #pick-card { height: 80%; max-height: 90%; max-width: 95%; }
+    ModelPickerScreen #pick-list { height: 1fr; min-height: 1; }
     .pick-hint { color: #83848c; margin-top: 1; }
     """
