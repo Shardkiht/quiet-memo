@@ -62,6 +62,20 @@ def build_runtime(tmp_path, model, candidates=None, *, extract_on_exit=False, ma
     return runtime, service
 
 
+def test_corrupt_profile_does_not_block_chat_or_fact_recall(tmp_path):
+    model = FakeChatModel([AssistantTurn(content="收到")])
+    runtime, service = build_runtime(tmp_path, model)
+    service.note("合成偏好：喜欢安静阅读", topic="preferences")
+    service.inferences.path.write_text("{broken\n", encoding="utf-8")
+    events = []
+    reply = runtime.ask("安静阅读", on_event=events.append)
+    assert reply.content == "收到"
+    assert any("画像读取失败" in event for event in events)
+    assert any("画像读取失败" in event for event in reply.events)
+    assert "合成偏好" in str(model.calls[0][0])
+    assert service.inferences.path.read_text(encoding="utf-8") == "{broken\n"
+
+
 def test_start_defers_session_creation(tmp_path):
     runtime, service = build_runtime(
         tmp_path, FakeChatModel([AssistantTurn(content="收到")])
@@ -187,7 +201,7 @@ def test_memory_tools_are_marked_mutating(tmp_path):
     runtime, service = build_runtime(tmp_path, FakeChatModel([]))
     tools = build_tools(service, runtime.ensure_session())
     assert {name for name, spec in tools._tools.items() if spec.mutating} == {
-        "memorize", "correct", "forget",
+        "memorize", "correct", "forget", "evolve",
     }
 
 

@@ -147,7 +147,7 @@ Web search is enabled by default but requires a local open-websearch daemon; see
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: click a session to resume; after clicking the list you can also browse with arrow keys and press Enter, while delete and rename live in `/sessions`; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model, context usage as a progress line with used/total numbers, and the pending count; retrieval mode and shortcut hints live in the empty-session welcome, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
-- The model can call `recall / read_topic / memorize / correct / forget / review_pending`. `read_topic` reads a topic's active entries only when the user explicitly requests the full topic or recall is insufficient, caps output at 2000 tokens, and does not accept file paths. The model calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
+- The model can call `recall / read_topic / memorize / correct / evolve / forget / review_pending`. `read_topic` reads a topic's active entries only when the user explicitly requests the full topic or recall is insufficient, caps output at 2000 tokens, and does not accept file paths. The model calls `search` for current public information and `fetch_web` to open a result page when dates or details matter, treating both results and page text as external material without executing any instructions in them.
 - No session is created when entering chat; `sessions/<id>.jsonl` is created after the first message.
 - Resumed sessions initially display the existing summary and the latest 10 unsummarized message records. Click “加载更早的记录” (load earlier records) to page through older messages after the summary boundary; the original history is retained. Successful resume does not show a notification; failures still show an error. Each reply uses a single Markdown-rendering widget to reduce mounting and cleanup overhead for long replies. Select reply text with the mouse and press Ctrl+C to copy it.
 - Context usage after resuming or undoing is estimated and cached in the background. The status shows “计算中” (calculating) until ready; changes to the session, messages, or persona trigger a new estimate, and stale results cannot overwrite the current session.
@@ -177,6 +177,8 @@ In-session commands:
 | `/remember <text>` | Extract and persist directly |
 | `/import <path> [--apply]` | Import a file or the current directory; preview by default, reanalyze and write with `--apply`. Without a path, opens an input dialog |
 | `/inferences` | Inspect, confirm, reject or correct separate inferences |
+| `/profile [refresh [requests]]` | View a profile; refresh explicitly calls the model |
+| `/dream [requests\|status\|cancel]` | Start, inspect or cancel background reflection; one request by default |
 | `/pending` | Work through pending candidates one by one: approve / reject / edit then write; automatically advances to the next until the queue is empty |
 | `/topics [name]` | Browse memory topics and entry counts; with a name, drills into that topic's entries |
 | `/exit` | Exit |
@@ -190,7 +192,7 @@ flowchart TD
     U["User message"] --> Q["Query building / follow-ups carry context"]
     Q --> R["Hybrid retrieval / BM25 + vector RRF"]
     R --> C["Agent loop / LLM + tools"]
-    C -->|"recall / read_topic / memorize / correct / forget"| C
+    C -->|"recall / read_topic / memorize / correct / evolve / forget"| C
     C --> A["Reply"]
     C -->|"user says 'remember'"| W["Write adjudication / confidence / conflict / secrets"]
     X["Exit extraction / pre-compaction flush / startup catch-up"] --> W
@@ -247,6 +249,12 @@ uv run qm topics
 # Search / review pending / approve or reject
 uv run qm recall "downtown"
 uv run qm recall "exhibition" --from 2024 --to 2024-06 --location "Synthetic Gallery"
+uv run qm profile
+uv run qm profile --refresh --requests 1
+uv run qm dream --requests 1
+uv run qm evolve <id> "New synthetic state" --from 2024-06-01
+uv run qm recall "state" --as-of 2024-05-01
+uv run qm recall "state" --view history
 uv run qm inferences
 uv run qm inferences <id> --action confirm
 uv run qm pending
@@ -295,7 +303,7 @@ MCP client configuration:
 }
 ```
 
-Exposed tools: `memorize`, `note`, `recall`, `read_topic`, `review_pending`, `approve`, `reject`, `list_topics`, `status`; `search` is added when web search is enabled. `read_topic` shares the Agent tool's topic validation, active-entry filtering, and 2000-token limit.
+Exposed tools: `memorize`, `note`, `recall`, `read_topic`, `review_pending`, `approve`, `reject`, `list_topics`, `status`, `evolve`, `profile`; `search` is added when web search is enabled. `read_topic` shares the Agent tool's topic validation, active-entry filtering, and 2000-token limit.
 
 ## Web search
 
@@ -358,11 +366,11 @@ Extraction and import support an optional trailing `context` JSON tag. Unsupport
 | `location` / `location_kind` | Location and its type: `event` or `residence`; both must be supplied together |
 | `emotion` / `emotion_source` / `emotion_at` | Explicit emotional wording, with source `explicit`; `event` means the feeling at the time, `expression` means the feeling when discussing it now and is the default |
 
-Fact dates accept only `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, preserving precision without inventing month/day values or converting time zones. Device location is never collected; tone-based guesses, sarcasm, and ambiguous emotions are not stored as emotional facts. Entry text retains these qualifications. Event dates, locations and explicit emotions can filter recall; unfiltered retrieval keeps its existing behavior. Credential checks cover context as well as text. Ordinary approval preserves context; edited approval and manual correction discard potentially stale context, while the original pending candidate remains auditable.
+Fact dates accept only `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, preserving precision without inventing month/day values or converting time zones. Device location is never collected; tone-based guesses, sarcasm, and ambiguous emotions are not stored as emotional facts. Entry text retains these qualifications. Event dates, locations and explicit emotions can filter recall; default retrieval uses currently valid facts. Credential checks cover context as well as text. Ordinary approval preserves context; edited approval and manual correction discard potentially stale context, while the original pending candidate remains auditable.
 
-The backend `MemoryService.propose_inference(text, source_ids, kind)` appends hypotheses separately to `.quiet-memo/inferences.jsonl`, using kind `profile` or `emotion` and initial status `hypothesis`. Evidence must reference active fact entries and is deduplicated. Repeating the same kind, normalized text, and evidence set returns the existing record without increasing confidence or appending another record. Inference IDs and deleted or superseded facts cannot support new hypotheses.
+The backend `MemoryService.propose_inference(text, source_ids, kind)` appends hypotheses separately to `.quiet-memo/inferences.jsonl`, using kind `profile`, `emotion` or `reflection` and initial status `hypothesis`. Evidence must reference active fact entries and is deduplicated. Repeating the same kind, normalized text, and evidence set returns the existing record without increasing confidence or appending another record. Inference IDs and deleted or superseded facts cannot support new hypotheses.
 
-`qm inferences` and TUI `/inferences` support listing, confirmation, rejection and correction. Confirmed inferences remain separate from facts. Source changes invalidate dependent hypotheses, and review rechecks evidence. State changes append to the log; corruption stops writes and preserves original bytes. `qm inferences --recover-tail` explicitly recovers a truncated final line by appending a recovery marker; middle corruption remains an error. Inferences are neither generated automatically nor injected into chat or fact retrieval.
+`qm inferences` and TUI `/inferences` support listing, confirmation, rejection and correction. Confirmed inferences remain separate from facts. Source changes invalidate dependent hypotheses, and review rechecks evidence. State changes append to the log; corruption stops writes and preserves original bytes. `qm inferences --recover-tail` explicitly recovers a truncated final line by appending a recovery marker; middle corruption remains an error. Inferences never enter fact retrieval. Only confirmed profile inferences with evidence related to the current recall enter chat context, capped at 300 tokens.
 
 Editing a candidate in `/pending` validates the final text and writes one memory directly, without first admitting and then correcting the original. Conflicting candidates still replace the old entry through `supersedes`. The original candidate remains in `resolved.jsonl`, while the audit record stores the edited text as `text_override`. Rejected blank or detected credential input leaves the candidate and old entry unchanged.
 
@@ -378,12 +386,12 @@ Credential detection considers assignment syntax and separators. It permits Chin
 src/quiet_memo/
 ├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
 │                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
-│                 actions.py, ui.py, session_ui.py
+│                 actions.py, ui.py, session_ui.py, chat_reflection.py
 │                                                   # CLI / Textual TUI / FastMCP entry points
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py, file_tools.py # Agent loop, tools, sessions, file analysis
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py, reflection.py
 │                                                   # Memory domain and write decisions
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever interface + BM25/vector/hybrid
@@ -462,9 +470,9 @@ The full backlog lives in [GitHub Issues](https://github.com/Shardkiht/quiet-mem
 | --- | --- | --- |
 | Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Fields, storage, timezone-aware message anchors and relative-date rules are implemented; inferred emotion remains planned |
 | Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Separate storage, evidence deduplication, CLI/TUI review and source invalidation are implemented; review UX remains extensible |
-| Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Event-date, location and explicit-emotion filters are implemented; historical/current views and temporal evolution remain planned |
-| High | [Dream memory / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | Incremental background reflection, reviewable hypotheses, and recoverable background jobs |
-| High | [Dynamic user profiles](https://github.com/Shardkiht/quiet-memo/issues/9) | Evidence-linked, evolving personal preferences and recent states with user corrections |
+| Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Context filters, current/historical views and explicit evolution are implemented; advanced temporal reranking remains planned |
+| High | [Dream memory / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | Manual background reflection, request budgets, cancellation and recovery are implemented; automatic scheduling remains planned |
+| High | [Dynamic user profiles](https://github.com/Shardkiht/quiet-memo/issues/9) | Rebuildable fact/inference profiles, explicit refresh and relevant confirmed context are implemented; longitudinal semantic evaluation remains planned |
 | Very high / long-term | [Proactive recall across AI clients](https://github.com/Shardkiht/quiet-memo/issues/13) | Surface relevant memories without explicit prompts where client integrations permit |
 | Ongoing | [Memory quality and regression evaluation](https://github.com/Shardkiht/quiet-memo/issues/14) | Synthetic tests for extraction/conflicts, temporal change, emotional inference, and implicit recall |
 
@@ -482,6 +490,21 @@ Use `qm inferences` to inspect inferences, `qm inferences <id> --action confirm`
 
 New messages record timezone offsets. Exit, catch-up and pre-compaction extraction retain per-message time anchors. Legacy timestamps without offsets remain unknown; extraction time never substitutes for the original date. Relative dates use the source calendar and retain year/month precision. Imports rely only on reliable timestamps in the material.
 
-Use `qm recall "exhibition" --from 2024 --to 2024-06 --location "Synthetic Gallery"`; `--emotion` filters explicitly expressed emotions. Agent and MCP recall accept date_from/date_to/location/emotion. Date ranges overlap at the stored precision; missing metadata does not match explicit filters. Write timestamps are never used as event dates. Unfiltered retrieval retains its existing behavior; filtered results retain relevance ordering.
+Use `qm recall "exhibition" --from 2024 --to 2024-06 --location "Synthetic Gallery"`; `--emotion` filters explicitly expressed emotions. Agent and MCP recall accept date_from/date_to/location/emotion. Date ranges overlap at the stored precision; missing metadata does not match explicit filters. Write timestamps are never used as event dates. Default retrieval uses currently valid facts; filtered results retain relevance ordering.
 
 MCP `memorize` accepts optional `observed_at`, an original message timestamp with a timezone offset. Missing anchors never default to the invocation date for historical material.
+
+
+### Temporal evolution, profiles and background reflection
+
+`qm evolve <id> "New state" --from YYYY-MM-DD` records an actual state transition; the Agent and MCP also expose `evolve(entry_id, text, effective_from)`. Unlike correcting an error with `correct`, it writes a successor with `supersedes` and `change_kind=evolution`, preserving the predecessor as superseded. The date must be explicit, later than the old start date and not in the future; ask for clarification when unknown.
+
+Normal recall and topic reads exclude expired and future facts while retaining active undated legacy entries. `recall --as-of YYYY-MM-DD` queries a specific date; `--view history` shows traceable evolution. Agent/MCP parameters are `as_of` and `view`. Historical queries use keyword retrieval without replacing vector caches. Facts without a known start cannot be asserted at a historical date. Corrections, deletions and ambiguous successor chains never resurrect old content as facts; original records and audit history remain. Explicitly disjoint validity periods no longer conflict; unknown or overlapping periods retain existing adjudication.
+
+`qm profile`, `/profile` and MCP `profile` read a profile without model requests. The view rebuilds from preferences/goals/constraints/habits/schedule facts and separate profile inferences, showing source IDs and distinguishing facts, hypotheses and confirmed inferences. Use existing correction/forget operations for facts and `/inferences` for hypotheses. Even confirmed profiles are not objective facts: only those related to the current recalled evidence enter limited auxiliary context. Unconfirmed hypotheses are never injected.
+
+`qm profile --refresh --requests 1` or `/profile refresh 1` proposes profile inferences; `qm dream --requests 1` or `/dream 1` reflects on currently valid facts. Nothing starts automatically. Explicit TUI jobs run in the background while chat and session switching remain available. `/dream status` checks the shared task and `/dream cancel` requests cancellation of either mode. Already sent requests may still be billed; publication stops after they return. Previously saved candidates and all sessions remain intact.
+
+A run defaults to one model request, configurable from 0 to 20, with retries and fallback models disabled for this task. Each request times out within 60 seconds and requires a configured context window of at least 2048 tokens. Only new or changed facts are processed, with limited previously processed evidence as context. Run the same command after restart to resume; budget 0 can publish validated cached results without requests. Dreaming uses distilled facts, not raw session scans, and does not enumerate every possible cross-fact relationship.
+
+Progress appends to `.quiet-memo/reflection-jobs.jsonl`, recording batch hashes, validated candidates and completion. A truncated final line is preserved with an appended recovery marker; middle corruption stops processing. Candidates enter only the inference log, never overwrite Markdown facts. New inferences carry evidence fingerprints and become invalid after source expiry, correction, deletion or manual edits. Legacy inferences without fingerprints can only check source IDs and validity, not reconstruct prior text edits. Task exclusion is scoped to one service instance; do not start reflection against one vault from multiple processes simultaneously.

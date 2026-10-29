@@ -23,6 +23,7 @@ from ..infra.tokens import format_tokens
 from ..llm import ChatModelError
 from ..memory.service import MemoryService
 from .chat_commands import ChatCommandsMixin
+from .chat_reflection import ChatReflectionMixin
 from .chat_input import BarInput
 from .chat_theme import APP_CSS
 from .chat_widgets import (
@@ -41,7 +42,7 @@ from .session_ui import visible_sessions
 ASSISTANT_NAME = "qmo"
 
 
-class ChatApp(ChatCommandsMixin, App):
+class ChatApp(ChatReflectionMixin, ChatCommandsMixin, App):
     TITLE = "quiet-memo — Personal Memory"
 
     CSS = APP_CSS

@@ -89,11 +89,45 @@ def main() -> int:
             error = run_case(case, Path(directory) / str(index))
             if error:
                 failures.append((case.name, error))
+        metrics = run_contextual_eval(Path(directory) / "contextual")
     print(f"合成解析与裁决回归：{len(CASES) - len(failures)}/{len(CASES)} 通过")
     for name, error in failures:
         print(f"失败：{name}：{error}")
     print("固定模型输出；不调用真实模型，不衡量自然语言语义抽取效果。")
+    print(json.dumps(metrics, ensure_ascii=False))
     return 1 if failures else 0
+
+
+def run_contextual_eval(vault: Path) -> dict:
+    """小型合成对照，比较不带上下文的关键词检索与明确时间/地点/情绪条件。"""
+    from quiet_memo.memory.models import MemoryContext
+
+    service = MemoryService(Config(vault=vault, retrieval=RetrievalConfig(method="keyword")))
+    old = service.store.append("preferences", "合成偏好早期状态", context=MemoryContext(valid_from="2020-01-01"))
+    new = service.evolve(old.id, "合成偏好后期状态", "2024-01-01")
+    target = service.store.append("events", "合成展览活动", context=MemoryContext(
+        event_time="2024-06", location="合成展馆甲", location_kind="event",
+        emotion="期待", emotion_source="explicit"))
+    service.store.append("events", "合成展览活动", context=MemoryContext(
+        event_time="2025-06", location="合成展馆乙", location_kind="event",
+        emotion="遗憾", emotion_source="explicit"))
+    cases = [
+        ("合成偏好", {"as_of": "2022-01-01"}, old.id),
+        ("合成偏好", {}, new.id),
+        ("合成展览", {"date_from": "2024", "date_to": "2024"}, target.id),
+        ("合成展览", {"location": "合成展馆甲"}, target.id),
+        ("合成展览", {"emotion": "期待"}, target.id),
+    ]
+    result = {"cases": len(cases)}
+    for name in ("baseline", "contextual"):
+        recall, reciprocal = 0.0, 0.0
+        for query, filters, expected in cases:
+            hits = service.retriever.search(query, 5) if name == "baseline" else service.recall(query, 5, **filters)
+            ids = [hit.id for hit in hits]
+            recall += float(bool(ids) and ids[0] == expected)
+            reciprocal += 1 / (ids.index(expected) + 1) if expected in ids else 0
+        result[name] = {"Recall@1": recall / len(cases), "MRR@5": reciprocal / len(cases)}
+    return result
 
 
 if __name__ == "__main__":

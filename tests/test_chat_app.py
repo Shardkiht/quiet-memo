@@ -78,6 +78,51 @@ async def test_inference_review_error_releases_input(tmp_path, monkeypatch):
         assert not app.query_one("#input", Input).disabled
 
 
+async def test_dream_background_allows_session_switch_and_cancellation(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from quiet_memo.memory.models import ReflectionProposal
+
+    app = build_app(tmp_path, [])
+    source = app.service.note("合成回顾来源", topic="preferences")
+    started, release = threading.Event(), threading.Event()
+    def model(mode, entries):
+        started.set()
+        assert release.wait(10)
+        return [ReflectionProposal(text="可能偏好合成活动", source_ids=[source.id])]
+    monkeypatch.setattr(app.service.reflection, "_model", model)
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        app._command("/dream 1")
+        try:
+            assert await asyncio.to_thread(started.wait, 5)
+            assert not app.busy
+            assert not app.query_one("#input", Input).disabled
+            app._command("/new")
+            async with asyncio.timeout(5):
+                while app.busy:
+                    await pilot.pause()
+            app._command("/dream cancel")
+        finally:
+            release.set()
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        assert not app._reflection_pending
+        assert not app.service.inferences.all()
+
+
+async def test_profile_view_does_not_invoke_model(tmp_path, monkeypatch):
+    import asyncio
+
+    app = build_app(tmp_path, [])
+    app.service.note("合成偏好", topic="preferences")
+    monkeypatch.setattr(app.service.reflection, "_model", lambda *_: pytest.fail("查看不应调用模型"))
+    async with app.run_test() as pilot:
+        app._command("/profile")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
+        assert not app.busy
+
+
 @pytest.mark.parametrize("apply", [False, True])
 async def test_import_command_uses_worker_and_releases_busy(tmp_path, monkeypatch, apply):
     from quiet_memo.memory import service as module

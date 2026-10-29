@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+import hashlib
 
-from .models import Inference
+from .models import Entry, Inference
+
+
+def source_fingerprint(entry: Entry) -> str:
+    payload = json.dumps(entry.model_dump(), sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class InferenceStore:

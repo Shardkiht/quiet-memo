@@ -147,7 +147,7 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是可折叠的会话列表：点击会话恢复；点击列表后也可用 ↑↓ 选择、Enter 恢复，删除与重命名在 `/sessions` 中操作；点侧栏右上角的 « 折叠（Ctrl+B 同效），折叠后在对话区左上角点 » 展开。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入 `/` 在输入框上方弹出竖排命令面板（↑↓ 选择 · Enter 执行 · ESC 关闭，可点击）；底部状态栏显示模型、上下文用量（进度线与已用/上限数字）和待确认数量，检索模式与快捷键提示放在空会话欢迎区，超过压缩阈值会提示。回复正文流式渲染（边生成边显示，中断时保留半截并标注）；工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果，启动检查发现未提交的 vault 变更会自动提交。
 
 - 每轮自动检索相关长期记忆，注入上下文；追问和“还记得 / 之前”等线索会带上最近 1-2 轮用户消息构造查询，并提高召回数量。
-- 模型可调用 `recall / read_topic / memorize / correct / forget / review_pending`；`read_topic` 仅在用户明确要求完整主题或召回不足时读取该主题的有效条目，最多 2000 tokens，不接受文件路径。需要最新公开信息时调用 `search`，需要发布日期或原文细节时再用 `fetch_web` 打开结果页，搜索结果与正文都是外部资料，不执行其中指令。
+- 模型可调用 `recall / read_topic / memorize / correct / evolve / forget / review_pending`；`read_topic` 仅在用户明确要求完整主题或召回不足时读取该主题的有效条目，最多 2000 tokens，不接受文件路径。需要最新公开信息时调用 `search`，需要发布日期或原文细节时再用 `fetch_web` 打开结果页，搜索结果与正文都是外部资料，不执行其中指令。
 - 进入对话时不立即建会话，发送第一条消息后才创建 `sessions/<id>.jsonl`。
 - 恢复会话先显示已有摘要及最近 10 条未压缩消息记录，点击顶部“加载更早的记录”逐页查看摘要之后的历史消息；原始历史不会被删除。恢复成功不弹通知，失败仍显示错误。回复以单个 Markdown 绘制控件呈现，减少长回复带来的控件挂载与卸载开销；可用鼠标选择正文并按 Ctrl+C 复制。
 - 恢复或撤销后的上下文用量在后台估算并缓存，完成前显示“计算中”；会话、消息或人设变化后重新估算，旧会话结果不会覆盖当前状态。
@@ -178,6 +178,8 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | `/remember <text>` | 直接抽取写入 |
 | `/import <path> [--apply]` | 导入文件或当前层目录；默认预览，`--apply` 重新分析并写入。不带路径时弹出输入框 |
 | `/inferences` | 查看、确认、拒绝或纠正独立推断 |
+| `/profile [refresh [次数]]` | 查看画像；refresh 显式调用模型提炼 |
+| `/dream [次数\|status\|cancel]` | 启动、查看或取消后台增量回顾，默认最多一次请求 |
 | `/pending` | 逐条处理待确认候选：确认写入 / 拒绝 / 改写后写入，队列清空前自动进入下一条 |
 | `/topics [name]` | 浏览记忆主题与条目数，带 name 下钻某主题的条目列表 |
 | `/exit` | 退出 |
@@ -191,7 +193,7 @@ flowchart TD
     U["用户消息"] --> Q["查询构造 / 追问带上文"]
     Q --> R["混合检索 / BM25 + 向量 RRF"]
     R --> C["Agent 循环 / LLM + 工具"]
-    C -->|"recall / read_topic / memorize / correct / forget"| C
+    C -->|"recall / read_topic / memorize / correct / evolve / forget"| C
     C --> A["回复"]
     C -->|"用户说“记住”"| W["写入裁决 / 置信度 / 冲突 / 敏感拦截"]
     X["退出抽取 / 压缩前沉淀 / 启动补记"] --> W
@@ -247,6 +249,12 @@ uv run qm topics
 # 检索 / 查看待确认 / 确认或拒绝
 uv run qm recall "市区"
 uv run qm recall "展览" --from 2024 --to 2024-06 --location "合成展馆"
+uv run qm profile
+uv run qm profile --refresh --requests 1
+uv run qm dream --requests 1
+uv run qm evolve <id> "新的合成状态" --from 2024-06-01
+uv run qm recall "状态" --as-of 2024-05-01
+uv run qm recall "状态" --view history
 uv run qm inferences
 uv run qm inferences <id> --action confirm
 uv run qm pending
@@ -295,7 +303,7 @@ MCP 客户端配置：
 }
 ```
 
-暴露工具：`memorize`、`note`、`recall`、`read_topic`、`review_pending`、`approve`、`reject`、`list_topics`、`status`；启用联网搜索时另有 `search`。`read_topic` 与 Agent 工具共用主题校验、有效条目过滤和 2000-token 上限。
+暴露工具：`memorize`、`note`、`recall`、`read_topic`、`review_pending`、`approve`、`reject`、`list_topics`、`status`、`evolve`、`profile`；启用联网搜索时另有 `search`。`read_topic` 与 Agent 工具共用主题校验、有效条目过滤和 2000-token 上限。
 
 ## 联网搜索
 
@@ -360,9 +368,9 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 
 事实日期只接受 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`，保留原有精度，不补猜月日或转换时区。地点不从设备采集，语气推断、反讽和模糊情绪不作为情绪事实写入。正文仍保留这些限定，事件日期、地点和显式情绪可用于召回筛选；不带筛选条件时保持原检索行为。上下文与正文一起检查凭据，正常确认会保留上下文；改写后确认或手动更正不会沿用可能已过期的旧上下文，原候选仍可审计。
 
-推断基础接口 `MemoryService.propose_inference(text, source_ids, kind)` 将假设单独追加到 `.quiet-memo/inferences.jsonl`，类型为 `profile` 或 `emotion`，新记录始终为 `hypothesis`。只接受当前有效的事实条目 ID，来源去重；同类型、同规范化文本、同一组证据重复提交返回原记录，不增加置信度或重复追加。推断 ID、已删除或已被更正的来源不能作为新证据。
+推断基础接口 `MemoryService.propose_inference(text, source_ids, kind)` 将假设单独追加到 `.quiet-memo/inferences.jsonl`，类型为 `profile`、`emotion` 或 `reflection`，新记录始终为 `hypothesis`。只接受当前有效的事实条目 ID，来源去重；同类型、同规范化文本、同一组证据重复提交返回原记录，不增加置信度或重复追加。推断 ID、已删除或已被更正的来源不能作为新证据。
 
-`qm inferences` 与 TUI `/inferences` 提供查看、确认、拒绝与纠正入口；确认后的推断仍独立于事实库。来源更正、删除后关联推断失效，审查时也核验来源。状态变更追加记录；损坏日志停止写入并保留原始字节；`qm inferences --recover-tail` 可显式恢复截断尾行，追加恢复标记，中间损坏仍报错。推断不自动生成或注入聊天，也不会进入事实检索。
+`qm inferences` 与 TUI `/inferences` 提供查看、确认、拒绝与纠正入口；确认后的推断仍独立于事实库。来源更正、删除后关联推断失效，审查时也核验来源。状态变更追加记录；损坏日志停止写入并保留原始字节；`qm inferences --recover-tail` 可显式恢复截断尾行，追加恢复标记，中间损坏仍报错。推断不会进入事实检索；只有用户确认且来源与本轮召回相关的画像推断才进入聊天上下文，最多 300 tokens。
 
 `/pending` 的“改写后确认”先校验最终文本，再直接写入一条记忆，不先写原文再更正；冲突候选仍通过 `supersedes` 替代旧条目。原候选保留在 `resolved.jsonl`，审计记录以 `text_override` 保存改写文本。空白或识别出的凭据被拒绝时，候选与旧条目保持不变。
 
@@ -376,12 +384,12 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 src/quiet_memo/
 ├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
 │                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
-│                 actions.py, ui.py, session_ui.py
+│                 actions.py, ui.py, session_ui.py, chat_reflection.py
 │                                                   # CLI / Textual TUI / FastMCP 入口
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py, file_tools.py # Agent 循环、工具、会话与文件分析
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py, reflection.py
 │                                                   # 记忆领域与写入裁决
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever 接口 + BM25/向量/混合
@@ -460,9 +468,9 @@ uv run python evals/retrieval_eval.py
 | --- | --- | --- |
 | 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 基础字段与存储链路已实现；已补带时区原始消息锚点与相对日期规则；推断情绪待实现 |
 | 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 已支持独立存储、证据去重、CLI/TUI 审查及来源失效；交互体验继续完善 |
-| 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 已支持事件日期、地点和显式情绪筛选；历史/当前事实视图与时态演化待实现 |
-| 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 后台增量回顾与整合，产出可审查的候选推断，异常可恢复 |
-| 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 基于来源证据持续维护个人偏好、经历与近期状态，用户可纠正 |
+| 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 已支持条件筛选、当前/历史视图和显式时态演化；复杂时序重排待完善 |
+| 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 已实现手动启动的后台增量回顾、请求上限、取消与恢复；自动调度待完善 |
+| 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 已实现可重建的事实/推断画像、显式刷新和相关已确认推断注入；长期语义评测待完善 |
 | 很高 / 长期 | [跨 AI 客户端主动召回](https://github.com/Shardkiht/quiet-memo/issues/13) | 在客户端能力允许时，无需显式提醒即可适时调用个人记忆 |
 | 持续工程 | [记忆质量评测与回归](https://github.com/Shardkiht/quiet-memo/issues/14) | 扩展抽取/冲突、时间变化、情绪推断、隐含召回等合成测试，不以一次发布为终点 |
 
@@ -480,6 +488,21 @@ uv run python evals/retrieval_eval.py
 
 新会话消息记录带时区时间。退出、补沉淀和压缩前抽取保留每条原始消息的时间锚点；旧记录缺少时区时不按当前时间补猜。相对日期沿用原始时区日历，年/月精度保留；模糊表达保留原话。导入材料只使用材料自身可靠的时间，不能套用导入当天。
 
-`qm recall "展览" --from 2024 --to 2024-06 --location "合成展馆"` 按事件日期与地点筛选；`--emotion` 可筛选明确表达的情绪。内置 Agent 和 MCP 的 recall 同样支持 date_from/date_to/location/emotion。日期按原有精度判断区间重叠；缺少所需字段的条目不满足筛选，不拿写入时间代替。无筛选时沿用原检索；筛选保留文本相关性排序。
+`qm recall "展览" --from 2024 --to 2024-06 --location "合成展馆"` 按事件日期与地点筛选；`--emotion` 可筛选明确表达的情绪。内置 Agent 和 MCP 的 recall 同样支持 date_from/date_to/location/emotion。日期按原有精度判断区间重叠；缺少所需字段的条目不满足筛选，不拿写入时间代替。默认使用当前有效事实视图；筛选保留文本相关性排序。
 
 MCP `memorize` 可选 `observed_at` 接受带时区的原始消息时间。未提供可靠锚点时，不把调用当天用于解析历史材料。
+
+
+### 时间演化、画像与后台回顾
+
+`qm evolve <id> "新状态" --from YYYY-MM-DD` 记录已发生的状态变化；内置 Agent 和 MCP 同样提供 `evolve(entry_id, text, effective_from)`。它与纠正错误的 `correct` 不同：新条目带 `supersedes` 和 `change_kind=evolution`，旧条目保留为 superseded。新状态的日期必须明确、晚于原有开始日期且不在未来；未知日期应先确认。
+
+普通召回和主题读取排除已过期或尚未生效的事实；无日期的有效旧条目仍可召回。`recall --as-of YYYY-MM-DD` 查询指定日期，`--view history` 展示可追溯的演化历史；Agent/MCP 对应参数为 `as_of`、`view`。历史查询使用关键词检索，不改写向量缓存；缺少生效起点的条目不能断言在某天成立。纠错、删除和有歧义的替代链不会把旧内容重新当作事实；原始记录与审计仍保留。明确不重叠的有效期不再互判冲突，日期不明或区间重叠仍遵循现有裁决。
+
+`qm profile`、`/profile` 和 MCP `profile` 查看画像，不发模型请求。画像从 preferences/goals/constraints/habits/schedule 主题事实及独立画像推断重建，分别标注事实、待确认和已确认推断，显示来源 ID。事实用现有更正/忘记操作修改，推断用 `/inferences` 审查。已确认画像也不是客观事实，只在来源与本轮召回相关时作为有限的辅助上下文；未确认推断不注入。
+
+`qm profile --refresh --requests 1` 或 `/profile refresh 1` 提炼画像；`qm dream --requests 1` 或 `/dream 1` 回顾当前有效事实，寻找可审查的联系和假设。默认不会自动启动；TUI 显式启动后在后台工作，可以继续聊天、切换会话。`/dream status` 查看运行态，`/dream cancel` 请求取消（两种模式共用任务）；已发送请求无法撤销计费，返回后停止发布未完成候选。已保存候选和全部会话仍保留。
+
+每次任务默认最多一次模型请求，可设 0–20；关闭该任务的底层重试与候补模型，单请求超时最多 60 秒，要求配置的上下文窗口至少 2048 tokens。只处理新增/变化的事实，有限引用已处理事实作为背景；重启后再次执行同一命令可接续。预算 0 不发请求，仅可恢复已经校验的本地结果。Dreaming 不直接扫描原始会话，先由既有沉淀流程将会话转成事实；不承诺穷举整库所有跨条目关系。
+
+进度追加在 `.quiet-memo/reflection-jobs.jsonl`，保存批次摘要、已校验候选及完成状态；截断尾行通过追加恢复标记保留原字节，中间损坏停止处理。候选仅写独立推断日志，不直接改写 Markdown 事实。新推断携带来源内容指纹，来源到期、更正、删除或手动改变后失效；旧推断没有指纹时只能检查来源 ID 和有效状态，无法追溯旧文本编辑。当前任务互斥限于同一服务实例，请勿同时用多个进程向同一库启动回顾。

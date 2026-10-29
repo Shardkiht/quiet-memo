@@ -85,7 +85,7 @@ class ExtractionResult(BaseModel):
     memories: list[Candidate] = Field(default_factory=list)
 
 
-InferenceKind = Literal["profile", "emotion"]
+InferenceKind = Literal["profile", "emotion", "reflection"]
 InferenceStatus = Literal["hypothesis", "confirmed", "rejected", "superseded"]
 
 
@@ -101,6 +101,16 @@ class Inference(BaseModel):
     created_at: str
     updated_at: str
     status: InferenceStatus = "hypothesis"
+    source_fingerprints: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_fingerprints(self) -> Inference:
+        if self.source_fingerprints:
+            if set(self.source_fingerprints) != set(self.source_ids) or any(
+                not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.source_fingerprints.values()
+            ):
+                raise ValueError("推断证据指纹须覆盖全部来源并使用有效摘要。")
+        return self
 
     @field_validator("source_ids")
     @classmethod
@@ -108,6 +118,38 @@ class Inference(BaseModel):
         if any(not value.strip() for value in values):
             raise ValueError("推断来源 ID 不能为空")
         return sorted({value.strip() for value in values})
+
+
+class ReflectionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=600)
+    source_ids: list[str] = Field(min_length=1, max_length=12)
+
+    @field_validator("text")
+    @classmethod
+    def nonempty_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("回顾候选不能为空。")
+        return value.strip()
+
+    @field_validator("source_ids")
+    @classmethod
+    def unique_sources(cls, values: list[str]) -> list[str]:
+        return Inference.unique_sources(values)
+
+
+class ReflectionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    proposals: list[ReflectionProposal] = Field(default_factory=list, max_length=12)
+
+
+class ProfileItem(BaseModel):
+    id: str
+    text: str
+    kind: Literal["fact", "inference"]
+    source_ids: list[str]
+    status: str
+    updated_at: str
 
 
 class PendingItem(BaseModel):

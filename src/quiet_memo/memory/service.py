@@ -24,7 +24,8 @@ from ..retrieval import (
 from .audit import AuditLog
 from .detect import contains_secret, find_conflicts
 from .extractor import ImportExtractor, LLMExtractor
-from .inference import InferenceStore
+from .inference import InferenceStore, source_fingerprint
+from .reflection import ReflectionEngine
 from .models import Candidate, Entry, Inference, InferenceKind, PendingItem
 from .policy import decide
 from .queue import PendingQueue
@@ -170,6 +171,7 @@ class MemoryService:
         self.config_path = config_path
         # 后台补沉淀与前台对话可能并发写 vault：所有变更操作在这把锁内串行。
         self.write_lock = threading.Lock()
+        self.reflection = ReflectionEngine(self)
 
     def init_vault(self) -> dict:
         self.store.ensure()
@@ -277,16 +279,22 @@ class MemoryService:
         known_ids = {entry.id for entry in all_entries}
         active_entries = [entry for entry in all_entries if entry.status == STATUS_ACTIVE]
         known_texts = {normalize_text(entry.text) for entry in active_entries}
+        from .temporal import disjoint_periods
+
         for candidate in candidates:
             if contains_secret(candidate.text) or (
                 candidate.context is not None and contains_secret(candidate.context.model_dump_json())
             ):
                 blocked.append(candidate.text)
                 continue
-            if normalize_text(candidate.text) in known_texts:
+            if normalize_text(candidate.text) in known_texts and any(
+                normalize_text(entry.text) == normalize_text(candidate.text)
+                and not disjoint_periods(candidate.context, entry.context) for entry in active_entries
+            ):
                 duplicates.append(candidate.text)
                 continue
-            conflicts = find_conflicts(candidate, active_entries)
+            conflicts = find_conflicts(candidate, [entry for entry in active_entries
+                if not disjoint_periods(candidate.context, entry.context)])
             if conflicts:
                 item = self._queue_candidate(
                     candidate,
@@ -299,6 +307,8 @@ class MemoryService:
                 )
                 queued.append(item)
                 continue
+            if candidate.kind == "update" and find_conflicts(candidate, active_entries):
+                candidate = candidate.model_copy(update={"kind": "add"})
             decision = decide(candidate, self.config.confidence_threshold)
             if decision.admit:
                 if dry_run:
@@ -386,6 +396,12 @@ class MemoryService:
     def propose_inference(
         self, text: str, source_ids: list[str], kind: InferenceKind = "profile"
     ) -> Inference:
+        with self.write_lock:
+            return self._propose_inference_locked(text, source_ids, kind)
+
+    def _propose_inference_locked(
+        self, text: str, source_ids: list[str], kind: InferenceKind = "profile"
+    ) -> Inference:
         """登记假设，证据只接受当前有效的事实 ID；不自动确认或注入聊天。"""
         text = text.strip()
         if not text:
@@ -397,15 +413,20 @@ class MemoryService:
             id="", text=text, kind=kind, source_ids=source_ids,
             created_at=stamp, updated_at=stamp,
         )
-        with self.write_lock:
-            active_ids = {entry.id for entry in self.store.entries()}
-            if not set(item.source_ids) <= active_ids:
-                raise ValueError("推断证据必须是当前有效的事实条目，不能使用推断、已删除或已更正的来源。")
-            identity = json.dumps(
-                [item.kind, normalize_text(item.text), item.source_ids], ensure_ascii=False
-            )
-            item.id = "inf-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-            return self.inferences.add(item)
+        active = {entry.id: entry for entry in self.current_facts()}
+        if not set(item.source_ids) <= active.keys():
+            raise ValueError("推断证据必须是当前有效的事实条目，不能使用推断、已删除或已更正的来源。")
+        item.source_fingerprints = {source: source_fingerprint(active[source]) for source in item.source_ids}
+        for record in self.inferences.all():
+            if (record.kind == item.kind and normalize_text(record.text) == normalize_text(item.text)
+                and record.source_ids == item.source_ids
+                and (not record.source_fingerprints or record.source_fingerprints == item.source_fingerprints)):
+                return record
+        identity = json.dumps(
+            [item.kind, normalize_text(item.text), item.source_ids, item.source_fingerprints], ensure_ascii=False
+        )
+        item.id = "inf-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return self.inferences.add(item)
 
     def correct(self, entry_id: str, text: str, reason: str = "") -> Entry:
         with self.write_lock:
@@ -453,10 +474,12 @@ class MemoryService:
         records = self.inferences.all()
         if not records:
             return records
-        active = {entry.id for entry in self.store.entries()}
+        active = {entry.id: source_fingerprint(entry) for entry in self.current_facts()}
         changed: list[Inference] = []
         for index, item in enumerate(records):
-            if item.status in ("hypothesis", "confirmed") and not set(item.source_ids) <= active:
+            changed_sources = not set(item.source_ids) <= active.keys() or any(
+                active.get(source) != fingerprint for source, fingerprint in item.source_fingerprints.items())
+            if item.status in ("hypothesis", "confirmed") and changed_sources:
                 item = item.model_copy(update={
                     "status": "superseded",
                     "updated_at": datetime.now().astimezone().isoformat(timespec="microseconds"),
@@ -497,7 +520,7 @@ class MemoryService:
                     raise ValueError("更正内容为空或包含凭据。")
                 if normalize_text(content) == normalize_text(old.text):
                     return old
-                identity = json.dumps([old.kind, normalize_text(content), old.source_ids], ensure_ascii=False)
+                identity = json.dumps([old.kind, normalize_text(content), old.source_ids, old.source_fingerprints], ensure_ascii=False)
                 new_id = "inf-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
                 if any(item.id == new_id for item in records):
                     raise ValueError("相同推断已有记录，请查看已有推断。")
@@ -511,18 +534,34 @@ class MemoryService:
 
     def recall(self, query: str, limit: int = 10, *, date_from: str | None = None,
                date_to: str | None = None, location: str | None = None,
-               emotion: str | None = None) -> list[SearchHit]:
-        from .temporal import matches_context, validate_range
+               emotion: str | None = None, as_of: str | None = None,
+               view: str = "current") -> list[SearchHit]:
+        from .temporal import TemporalStore, matches_context, select_facts, validate_range
 
         validate_range(date_from, date_to)
-        if not any((date_from, date_to, location, emotion)):
-            return self.retriever.search(query, limit)
-        entries = {entry.id: entry for entry in self.store.entries()}
+        if view not in {"current", "history"}:
+            raise ValueError("检索视图须为 current 或 history。")
+        all_entries = self.store.entries(include_inactive=True)
+        selected = select_facts(all_entries, as_of=as_of, history=view == "history")
+        entries = {entry.id: entry for entry in selected}
+        retriever = KeywordRetriever(TemporalStore(self.config.vault, selected)) if as_of or view == "history" else self.retriever
         # 必须先筛选再截断，不能只筛掉前 limit 条而漏掉后面的有效结果。
-        hits = self.retriever.search(query, max(len(entries), limit))
-        return [hit for hit in hits if hit.id in entries and matches_context(
-            entries[hit.id].context, date_from, date_to, location, emotion
-        )][:max(0, limit)]
+        hits = retriever.search(query, max(len(all_entries), limit))
+        filters = any((date_from, date_to, location, emotion))
+        return [hit.model_copy(update={"status": entries[hit.id].status,
+            "context": entries[hit.id].context.model_dump(exclude_none=True) if entries[hit.id].context else None})
+            for hit in hits if hit.id in entries and (not filters or matches_context(
+                entries[hit.id].context, date_from, date_to, location, emotion))][:max(0, limit)]
+
+    def current_facts(self) -> list[Entry]:
+        from .temporal import select_facts
+
+        return select_facts(self.store.entries(include_inactive=True))
+
+    def evolve(self, entry_id: str, text: str, effective_from: str) -> Entry:
+        from .temporal import evolve_fact
+
+        return evolve_fact(self, entry_id, text, effective_from)
 
     def read_topic(self, topic: str, max_tokens: int = 2000) -> dict:
         wanted = topic.strip().casefold()
@@ -536,7 +575,7 @@ class MemoryService:
         )
         if info is None:
             raise KeyError(f"主题不存在：{topic.strip()}")
-        entries = self.store.entries(topic=info.topic)
+        entries = [entry for entry in self.current_facts() if entry.topic == info.topic]
         content = "\n".join(f"- {entry.text}" for entry in entries)
         truncated_content = truncate_to_tokens(content, max_tokens)
         return {
@@ -566,7 +605,11 @@ class MemoryService:
             and contains_secret(item.context.model_dump_json())
         ):
             raise ValueError("检测到密钥或敏感信息，已拦截写入。")
-        if self.store.has_text(text):
+        from .temporal import disjoint_periods
+
+        if any(normalize_text(entry.text) == normalize_text(text)
+               and not disjoint_periods(item.context if text_override is None else None, entry.context)
+               for entry in self.store.entries()):
             raise ValueError("相同内容已存在。")
         supersedes = item.conflict_with
         if supersedes:
@@ -621,7 +664,7 @@ class MemoryService:
         return [topic.model_dump() for topic in self.store.topics()]
 
     def topic_entries(self, topic: str) -> list[Entry]:
-        return self.store.entries(topic=topic)
+        return [entry for entry in self.current_facts() if entry.topic == topic]
 
     def history(self, limit: int = 10) -> list[dict]:
         return self.repo.history(limit)

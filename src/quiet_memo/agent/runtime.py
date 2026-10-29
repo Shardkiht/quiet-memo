@@ -148,7 +148,8 @@ class AgentRuntime:
             {"type": "message", "id": message_id, "role": "user", "content": text},
         )
 
-        memory_context = self._auto_recall(text)
+        recall_events: list[str] = []
+        memory_context = self._auto_recall(text, recall_events.append)
         plan = self.context.prepare(
             session,
             self._system_prompt(),
@@ -165,7 +166,7 @@ class AgentRuntime:
             if on_event is not None:
                 on_event(event)
 
-        for event in plan.events:
+        for event in recall_events + plan.events:
             emit(event)
         if plan.flushed:
             flushed = plan.flushed
@@ -411,7 +412,7 @@ class AgentRuntime:
         # 联网结果常只给到月/日；给出当前日期，模型才能判断“最新”是否成立。
         return f"{prompt}\n\n当前日期：{date.today().isoformat()}"
 
-    def _auto_recall(self, text: str) -> str:
+    def _auto_recall(self, text: str, on_event: Callable[[str], None] | None = None) -> str:
         if self.config.auto_recall <= 0:
             return ""
         recall = self.recall_queries.build(text, self.current.user_texts()[:-1])
@@ -419,7 +420,15 @@ class AgentRuntime:
         if recall.cue:
             limit = max(limit, 8)
         hits = self.service.recall(recall.text, limit)
-        return "\n".join(f"- [{hit.topic}] ({hit.timestamp}) {hit.text}" for hit in hits)
+        text = "\n".join(f"- [{hit.topic}] ({hit.timestamp}) {hit.text}" for hit in hits)
+        try:
+            profile = self.service.reflection.context({hit.id for hit in hits})
+        except (ValueError, OSError):
+            # 独立推断日志故障不能阻断事实召回与聊天，也不把损坏内容送入模型。
+            profile = ""
+            if on_event is not None:
+                on_event("画像读取失败，本轮仅使用事实记忆；请检查推断日志。")
+        return text + ("\n\n" + profile if profile else "")
 
     def _flush_memories(self, texts: list[str]) -> dict:
         joined = "\n---\n".join(texts)

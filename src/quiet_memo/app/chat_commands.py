@@ -85,6 +85,8 @@ class ChatCommandsMixin:
             self._open_pending()
         elif command == "/inferences":
             self._run_inference_review()
+        elif command in ("/profile", "/dream"):
+            self._reflection_command(command[1:], argument)
         elif command == "/topics":
             self._show_topics(argument.strip() or None)
         else:

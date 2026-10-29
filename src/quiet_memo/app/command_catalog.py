@@ -19,6 +19,8 @@ SLASH_COMMANDS = [
     ("import", "/import <path> [--apply]", "导入文件或目录（默认预览）"),
     ("pending", "/pending", "Review pending"),
     ("inferences", "/inferences", "查看与审查推断"),
+    ("profile", "/profile [refresh [n]]", "查看画像或后台增量提炼"),
+    ("dream", "/dream [n|cancel|status]", "后台回顾、取消或查看状态"),
     ("topics", "/topics [name]", "Browse topics"),
     ("help", "/help", "Show commands"),
     ("exit", "/exit", "Quit"),

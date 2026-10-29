@@ -51,10 +51,11 @@ def build_server(
     @mcp.tool
     def recall(query: str, limit: int = 10, date_from: str | None = None,
                date_to: str | None = None, location: str | None = None,
-               emotion: str | None = None) -> list[dict]:
+               emotion: str | None = None, as_of: str | None = None,
+               view: str = "current") -> list[dict]:
         """检索本地记忆。query 用自然问句并附常见同义词或字段名，如“我叫什么名字 姓名 名字”。"""
         return [hit.model_dump() for hit in svc.recall(query, limit, date_from=date_from,
-            date_to=date_to, location=location, emotion=emotion)]
+            date_to=date_to, location=location, emotion=emotion, as_of=as_of, view=view)]
 
     @mcp.tool
     def read_topic(topic: str) -> dict:
@@ -63,6 +64,16 @@ def build_server(
             return svc.read_topic(topic)
         except KeyError as exc:
             raise ValueError(str(exc)) from exc
+
+    @mcp.tool
+    def evolve(entry_id: str, text: str, effective_from: str) -> dict:
+        """用户明确确认旧状态过去成立且已变化时记录演化；日期须可靠且为 YYYY-MM-DD，不得推测。"""
+        return svc.evolve(entry_id, text, effective_from).model_dump()
+
+    @mcp.tool
+    def profile() -> list[dict]:
+        """查看当前画像，明确区分事实与推断；只读视图，不触发模型请求。"""
+        return [item.model_dump() for item in svc.reflection.profile()]
 
     @mcp.tool
     def review_pending() -> list[dict]:

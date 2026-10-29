@@ -150,7 +150,7 @@ def build_tools(
     def recall(arguments: dict) -> ToolOutcome:
         query = str(arguments.get("query", "")).strip()
         limit = max(1, min(int(arguments.get("limit", 8)), 20))
-        filters = {key: arguments[key] for key in ("date_from", "date_to", "location", "emotion") if arguments.get(key)}
+        filters = {key: arguments[key] for key in ("date_from", "date_to", "location", "emotion", "as_of", "view") if arguments.get(key)}
         hits = service.recall(query, limit, **filters)
         results = [
             {
@@ -159,6 +159,8 @@ def build_tools(
                 "text": hit.text,
                 "timestamp": hit.timestamp,
                 "score": hit.score,
+                "status": hit.status,
+                "context": hit.context,
             }
             for hit in hits
         ]
@@ -270,6 +272,12 @@ def build_tools(
             data=payload,
         )
 
+    def evolve(arguments: dict) -> ToolOutcome:
+        entry = service.evolve(str(arguments.get("entry_id", "")), str(arguments.get("text", "")),
+                               str(arguments.get("effective_from", "")))
+        payload = entry.model_dump()
+        return ToolOutcome(True, json.dumps(payload, ensure_ascii=False), "已记录事实时间变化", data=payload)
+
     def review_pending(_: dict) -> ToolOutcome:
         items = service.pending()
         payload = [
@@ -308,6 +316,8 @@ def build_tools(
                     "date_to": {"type": "string", "description": "事件截止日期，包含边界"},
                     "location": {"type": "string", "description": "明确记载的地点，子串匹配"},
                     "emotion": {"type": "string", "description": "用户明确表达的情绪，子串匹配"},
+                    "as_of": {"type": "string", "description": "查询某日有效的状态，须为 YYYY-MM-DD"},
+                    "view": {"type": "string", "enum": ["current", "history"], "description": "默认当前有效事实；用户询问历史变化时使用 history"},
                 },
                 "required": ["query"],
             },
@@ -369,6 +379,15 @@ def build_tools(
             mutating=True,
         )
     )
+    registry.register(ToolSpec(
+        name="evolve",
+        description="仅当用户明确说明旧状态过去成立、现在已变化且变化日期可靠时调用，保留历史；原先记错使用 correct，日期不明先询问。",
+        parameters={"type": "object", "properties": {
+            "entry_id": {"type": "string", "description": "原有效状态的事实 ID"},
+            "text": {"type": "string", "description": "变化后的完整事实"},
+            "effective_from": {"type": "string", "description": "明确的变化日期 YYYY-MM-DD，不得猜测"},
+        }, "required": ["entry_id", "text", "effective_from"], "additionalProperties": False},
+        handler=evolve, timeout=timeout, mutating=True))
     registry.register(
         ToolSpec(
             name="forget",

@@ -14,6 +14,8 @@ class SearchHit(BaseModel):
     topic: str
     timestamp: str = ""
     score: float = 0.0
+    status: str = "active"
+    context: dict[str, str] | None = None
 
 
 class Retriever(Protocol):

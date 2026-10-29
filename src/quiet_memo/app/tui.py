@@ -30,6 +30,7 @@ def run_chat(service: MemoryService, resume: str | None = None) -> None:
     try:
         app.run()
     finally:
+        service.reflection.cancel()
         # 界面退出后回到普通终端，再执行退出抽取并汇报结果。
         stats = runtime.close()
         _print_exit_stats(runtime, stats)

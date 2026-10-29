@@ -21,7 +21,7 @@ COMMENT_LINE_RE = re.compile(
 SLUG_RE = re.compile(r"[^\w\u4e00-\u9fff-]+")
 TAG_AT_END_RE = re.compile(r"\s+`([A-Za-z_][\w-]*)=([^`]*)`$")
 KNOWN_TAG_KEYS = frozenset(
-    {"id", "status", "supersedes", "source", "confidence", "note", "session", "message", "context"}
+    {"id", "status", "supersedes", "source", "confidence", "note", "session", "message", "context", "change_kind"}
 )
 ESCAPED_TAG_PREFIX = "~qm-escaped~"
 

@@ -303,10 +303,10 @@ class CommandRow(Static):
     def __init__(self, command: str, usage: str, description: str) -> None:
         self.command = command
         usage_width = max(len(item[1]) for item in SLASH_COMMANDS)
-        # 用法里的 [refresh] 等方括号会被当成 Rich 标记吞掉，须转义后再补空格
-        super().__init__(
-            f"[cmd-usage]{escape(f'{usage:<{usage_width}}')}[/] [cmd-desc]{escape(description)}[/]"
-        )
+        # 直接组合文本样式，嵌套的可选参数方括号也不经过 markup 解析。
+        super().__init__(Content.assemble(
+            (f"{usage:<{usage_width}}", "cmd-usage"), " ", (description, "cmd-desc"),
+        ))
         self.add_class("cmd-row")
 
     def on_click(self) -> None:

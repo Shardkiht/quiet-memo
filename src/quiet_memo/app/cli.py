@@ -248,17 +248,76 @@ def recall(
     date_to: str | None = typer.Option(None, "--to", help="事件截止日期"),
     location: str | None = typer.Option(None, "--location", help="明确记载的地点"),
     emotion: str | None = typer.Option(None, "--emotion", help="明确表达的情绪"),
+    as_of: str | None = typer.Option(None, "--as-of", help="历史状态时点 YYYY-MM-DD"),
+    view: str = typer.Option("current", "--view", help="current 当前有效 / history 历史演化"),
     config: Path | None = CONFIG_OPTION,
     vault: Path | None = VAULT_OPTION,
 ) -> None:
     """检索记忆。"""
     try:
         hits = _service(config, vault).recall(query, limit, date_from=date_from,
-            date_to=date_to, location=location, emotion=emotion)
+            date_to=date_to, location=location, emotion=emotion, as_of=as_of, view=view)
     except ValueError as exc:
         fail(str(exc))
         return
     print_hits(query, hits)
+
+
+@app.command("evolve")
+def evolve(
+    entry_id: str = typer.Argument(...),
+    text: str = typer.Argument(..., help="变化后的事实"),
+    effective_from: str = typer.Option(..., "--from", help="变化日期 YYYY-MM-DD"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """记录已发生的状态变化，保留历史；原先记错请使用 correct。"""
+    try:
+        entry = _service(config, vault).evolve(entry_id, text, effective_from)
+        console.print(f"已记录时间变化：{entry.id}")
+    except (ValueError, KeyError) as exc:
+        fail(str(exc))
+
+
+@app.command("profile")
+def profile(
+    refresh: bool = typer.Option(False, "--refresh", help="调用模型增量生成待审查画像推断"),
+    requests: int = typer.Option(1, "--requests", min=0, max=20, help="本次模型请求上限"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """查看来源可追溯的画像；默认不调用模型。"""
+    service = _service(config, vault)
+    if refresh:
+        _reflect(service, "profile", requests)
+    for item in service.reflection.profile():
+        console.print(item.model_dump_json(), markup=False)
+
+
+def _reflect(service: MemoryService, mode: str, requests: int) -> None:
+    from dataclasses import asdict
+    import json
+
+    try:
+        result = service.reflection.run(mode, requests)
+        console.print(json.dumps(asdict(result), ensure_ascii=False), markup=False)
+        if result.error:
+            raise typer.Exit(1)
+    except KeyboardInterrupt:
+        service.reflection.cancel()
+        fail("回顾已取消；已完成进度保留。")
+    except ValueError as exc:
+        fail(str(exc))
+
+
+@app.command("dream")
+def dream(
+    requests: int = typer.Option(1, "--requests", min=0, max=20, help="本次模型请求上限"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """增量回顾有效事实，生成待审查假设；默认最多一次模型请求。"""
+    _reflect(_service(config, vault), "dream", requests)
 
 
 @app.command("inferences")
