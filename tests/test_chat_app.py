@@ -1304,18 +1304,13 @@ async def test_session_picker_focus_bar_follows_selection(tmp_path):
 async def test_startup_commits_dirty_vault_without_crashed_sessions(tmp_path):
     # 回归：没有漏沉淀会话时，启动检查仍应提交未保存的 vault 变更。
     import asyncio
-    import time
 
     app = build_app(tmp_path, [])
     app.service.note("启动前未提交的变更", topic="misc")
     async with app.run_test(size=(120, 40)) as pilot:
-        # 后台 git 提交耗时受机器负载影响，不能只等固定帧数。
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            await pilot.pause()
-            if not app.service.repo.has_changes():
-                break
-            await asyncio.sleep(0.02)
+        # 先等待启动 worker 完成，再验证落盘结果，避免 Git 用时随负载波动。
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
         assert app.busy is False
         assert not app.service.repo.has_changes()
 
@@ -1417,6 +1412,8 @@ async def test_new_session_click_queues_while_busy(tmp_path):
 
 async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
     # 回归：启动检查发现异常终止的会话时，补记并显示卡片；无欠账时保持沉默。
+    import asyncio
+
     app = build_app(tmp_path, [AssistantTurn(content="好")], extract_on_exit=True)
     crashed = app.sessions.create()
     app.sessions.append(
@@ -1424,10 +1421,8 @@ async def test_startup_catchup_shows_card_for_crashed_session(tmp_path):
         {"type": "message", "id": new_message_id(), "role": "user", "content": "中断前说的话"},
     )
     async with app.run_test(size=(120, 40)) as pilot:
-        for _ in range(300):
-            await pilot.pause()
-            if any("Consolidated 1" in str(widget.render()) for widget in app.query(".card")):
-                break
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
         assert app.busy is False
         assert app.query_one("#input", Input).disabled is False
         cards = [str(widget.render()) for widget in app.query(".card")]

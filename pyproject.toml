@@ -1,6 +1,6 @@
 [project]
 name = "quiet-memo"
-version = "0.3.1.1"
+version = "0.3.2"
 description = "Quiet-first personal memory: silent writes to local Markdown, powered by Git and MCP"
 readme = "README.md"
 requires-python = ">=3.12"
