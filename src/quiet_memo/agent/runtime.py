@@ -267,7 +267,7 @@ class AgentRuntime:
         self._closed = True
         stats = dict(empty)
         # 游标感知：只抽取上次成功沉淀之后的新内容，反复切换不重复抽取。
-        user_texts = session.user_texts_after_distilled()
+        user_texts = session.distillation_texts()
         if not distill:
             # 切换会话走快速路径：只做记账，沉淀延后（标记供补沉淀拾取）。
             if user_texts:
@@ -319,7 +319,7 @@ class AgentRuntime:
                 # 后台补记期间用户可能切进这个会话；活跃会话不在后台追加记录。
                 continue
             result["scanned"] += 1
-            texts = session.user_texts_after_distilled()
+            texts = session.distillation_texts()
             if not texts:
                 # 空会话没有可抽取内容，直接标记收尾，避免每次启动都重复扫描。
                 self.sessions.append(session, {"type": "consolidated"})

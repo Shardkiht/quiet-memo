@@ -230,7 +230,7 @@ def test_later_successful_compaction_does_not_cover_an_earlier_failed_flush(tmp_
 
     assert plan.compacted
     assert len(attempts) >= 2
-    pending = store.load(session.id).user_texts_after_distilled()
+    pending = store.load(session.id).distillation_texts()
     assert all(text in pending for text in failed_texts)
     assert all(text not in pending for text in attempts[-1])
 

@@ -7,7 +7,7 @@ from typing import Callable
 from ..infra.config import ChatConfig
 from ..infra.tokens import estimate_messages_tokens, estimate_tokens
 from ..llm import Summarizer
-from .session import Session, SessionStore, new_message_id, transcript
+from .session import Session, SessionStore, new_message_id, transcript, dated_message
 
 SUMMARY_MAX_CHARS = 1200
 
@@ -202,7 +202,7 @@ class ContextManager:
             distilled_ids: list[str] = []
             if user_records and self.flush:
                 try:
-                    flushed = self.flush([record["content"] for record in user_records])
+                    flushed = self.flush([dated_message(record) for record in user_records])
                 except Exception as exc:
                     flushed = {"error": str(exc)}
                 if flushed.get("error"):

@@ -83,12 +83,65 @@ class ChatCommandsMixin:
                 self._run_import(argument)
         elif command == "/pending":
             self._open_pending()
+        elif command == "/inferences":
+            self._run_inference_review()
         elif command == "/topics":
             self._show_topics(argument.strip() or None)
         else:
             self.add_card(f"Unknown command: {command}. Type /help for help.")
 
     # ---------- 待确认交互处理（issue #1） ----------
+
+    def _run_inference_review(self, item_id: str | None = None,
+                              action: str | None = None, text: str | None = None) -> None:
+        self._set_busy(True)
+        self.run_worker(partial(self._inference_work, item_id, action, text),
+                        thread=True, group="inference", exit_on_error=False)
+
+    def _inference_work(self, item_id: str | None, action: str | None, text: str | None) -> None:
+        try:
+            if action is not None:
+                self.service.review_inference(item_id or "", action, text)
+            items = self.service.list_inferences()
+        except Exception as exc:
+            self.call_from_thread(self._finish_error, f"推断操作失败：{exc}")
+            return
+        self.call_from_thread(self._show_inferences, items)
+
+    def _show_inferences(self, items: list) -> None:
+        self._set_busy(False)
+        if self._pending_new or self._pending_switch:
+            self._drain_pending_intent()
+            return
+        labels = {"hypothesis": "待确认", "confirmed": "已确认推断",
+                  "rejected": "已拒绝", "superseded": "已失效"}
+        if not items:
+            self.add_card("暂无推断。")
+        else:
+            self.push_screen(PickScreen("推断记录（独立于事实）", [
+                (escape(f"[{labels[item.status]}] {self._truncate(item.text, 50)}"), item)
+                for item in items
+            ], self._inference_picked))
+        self._drain_pending_intent()
+
+    def _inference_picked(self, item) -> None:
+        if item is None:
+            return
+        self.add_card(escape(f"推断：{item.text}\n状态：{item.status}\n来源：{', '.join(item.source_ids)}"))
+        if item.status not in ("hypothesis", "confirmed"):
+            return
+        self.push_screen(PickScreen("审查推断（确认不转成事实）", [
+            ("确认", "confirm"), ("拒绝", "reject"), ("更正为新假设", "correct")
+        ], lambda action: self._inference_action(item, action)))
+
+    def _inference_action(self, item, action: str | None) -> None:
+        if action is None:
+            return
+        if action == "correct":
+            self.push_screen(TextInputScreen("更正后的假设", default=item.text,
+                on_result=lambda text: self._run_inference_review(item.id, action, text) if text else None))
+        else:
+            self._run_inference_review(item.id, action)
 
     @staticmethod
     def _truncate(text: str, width: int) -> str:

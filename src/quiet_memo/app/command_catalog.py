@@ -18,6 +18,7 @@ SLASH_COMMANDS = [
     ("remember", "/remember <text>", "Save memory"),
     ("import", "/import <path> [--apply]", "导入文件或目录（默认预览）"),
     ("pending", "/pending", "Review pending"),
+    ("inferences", "/inferences", "查看与审查推断"),
     ("topics", "/topics [name]", "Browse topics"),
     ("help", "/help", "Show commands"),
     ("exit", "/exit", "Quit"),

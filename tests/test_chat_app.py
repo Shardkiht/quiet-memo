@@ -39,6 +39,45 @@ class FakeSummarizer:
         return "会话摘要"
 
 
+async def test_inference_review_uses_worker_and_keeps_facts_separate(tmp_path):
+    import asyncio
+    from quiet_memo.app.chat_widgets import PickScreen
+
+    app = build_app(tmp_path, [])
+    source = app.service.note("合成阅读偏好")
+    item = app.service.propose_inference("可能喜欢安静活动", [source.id])
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        app._command("/inferences")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
+        assert isinstance(app.screen, PickScreen)
+        assert not app.busy
+        await pilot.press("escape")
+        app._run_inference_review(item.id, "confirm")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
+        assert app.service.list_inferences()[0].status == "confirmed"
+        assert len(app.service.store.entries()) == 1
+        assert not app.busy
+
+
+async def test_inference_review_error_releases_input(tmp_path, monkeypatch):
+    import asyncio
+
+    app = build_app(tmp_path, [])
+    def fail():
+        raise ValueError("合成损坏日志")
+    monkeypatch.setattr(app.service, "list_inferences", fail)
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        app._command("/inferences")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        await pilot.pause()
+        assert not app.busy
+        assert not app.query_one("#input", Input).disabled
+
+
 @pytest.mark.parametrize("apply", [False, True])
 async def test_import_command_uses_worker_and_releases_busy(tmp_path, monkeypatch, apply):
     from quiet_memo.memory import service as module
@@ -788,6 +827,7 @@ async def test_ctrl_p_outside_model_picker_keeps_command_palette(tmp_path):
 
 
 async def test_model_picker_filters_by_search(tmp_path):
+    import asyncio
     from textual.widgets import ListView
 
     from quiet_memo.app.chat_widgets import PickScreen
@@ -808,7 +848,10 @@ async def test_model_picker_filters_by_search(tmp_path):
         assert search.has_focus
 
         search.value = "silicon"
-        await pilot.pause()
+        # ListView 的移除与挂载异步完成，不能假设一帧后已经得到最终列表。
+        async with asyncio.timeout(5):
+            while [item.label for item in picker.query("#pick-list OptionItem")] != ["SiliconFlow · DeepSeek V3"]:
+                await pilot.pause()
 
         items = list(picker.query("#pick-list OptionItem"))
         assert [item.label for item in items] == ["SiliconFlow · DeepSeek V3"]

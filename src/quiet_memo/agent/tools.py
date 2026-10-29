@@ -150,7 +150,8 @@ def build_tools(
     def recall(arguments: dict) -> ToolOutcome:
         query = str(arguments.get("query", "")).strip()
         limit = max(1, min(int(arguments.get("limit", 8)), 20))
-        hits = service.recall(query, limit)
+        filters = {key: arguments[key] for key in ("date_from", "date_to", "location", "emotion") if arguments.get(key)}
+        hits = service.recall(query, limit, **filters)
         results = [
             {
                 "id": hit.id,
@@ -197,11 +198,24 @@ def build_tools(
                 content=json.dumps({"error": "text 为空"}, ensure_ascii=False),
                 display="Memory write failed: empty text",
             )
+        # 只有工具原文与本轮用户原文一致时才附带该消息的时间；改写/混合材料不套用当前日期。
+        latest = session.messages[-1] if session.messages else {}
+        timing = {}
+        if text == latest.get("content"):
+            from datetime import datetime
+
+            try:
+                stamp = datetime.fromisoformat(latest.get("at", ""))
+                if stamp.utcoffset() is not None:
+                    timing["observed_at"] = stamp.isoformat()
+            except (TypeError, ValueError):
+                pass
         result = service.memorize(
             text,
             source=f"session:{session.id}",
             session_id=session.id,
             message_id=session.last_user_message_id(),
+            **timing,
         )
         payload = {
             "admitted": [
@@ -290,6 +304,10 @@ def build_tools(
                         "description": "检索词：自然问句 + 同义词/字段名，如“我叫什么名字 姓名 名字 称呼”",
                     },
                     "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+                    "date_from": {"type": "string", "description": "事件起始日期 YYYY / YYYY-MM / YYYY-MM-DD；仅有可靠时间依据时填写"},
+                    "date_to": {"type": "string", "description": "事件截止日期，包含边界"},
+                    "location": {"type": "string", "description": "明确记载的地点，子串匹配"},
+                    "emotion": {"type": "string", "description": "用户明确表达的情绪，子串匹配"},
                 },
                 "required": ["query"],
             },

@@ -176,6 +176,7 @@ In-session commands:
 | `/recall <query>` | Search memories directly |
 | `/remember <text>` | Extract and persist directly |
 | `/import <path> [--apply]` | Import a file or the current directory; preview by default, reanalyze and write with `--apply`. Without a path, opens an input dialog |
+| `/inferences` | Inspect, confirm, reject or correct separate inferences |
 | `/pending` | Work through pending candidates one by one: approve / reject / edit then write; automatically advances to the next until the queue is empty |
 | `/topics [name]` | Browse memory topics and entry counts; with a name, drills into that topic's entries |
 | `/exit` | Exit |
@@ -245,6 +246,9 @@ uv run qm topics
 
 # Search / review pending / approve or reject
 uv run qm recall "downtown"
+uv run qm recall "exhibition" --from 2024 --to 2024-06 --location "Synthetic Gallery"
+uv run qm inferences
+uv run qm inferences <id> --action confirm
 uv run qm pending
 uv run qm approve p-20261022-140312-a1b2
 uv run qm reject p-20261022-140312-c3d4
@@ -354,11 +358,11 @@ Extraction and import support an optional trailing `context` JSON tag. Unsupport
 | `location` / `location_kind` | Location and its type: `event` or `residence`; both must be supplied together |
 | `emotion` / `emotion_source` / `emotion_at` | Explicit emotional wording, with source `explicit`; `event` means the feeling at the time, `expression` means the feeling when discussing it now and is the default |
 
-Fact dates accept only `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, preserving precision without inventing month/day values or converting time zones. Device location is never collected; tone-based guesses, sarcasm, and ambiguous emotions are not stored as emotional facts. Entry text retains these qualifications. Context does not yet filter or rerank retrieval. Credential checks cover context as well as text. Ordinary approval preserves context; edited approval and manual correction discard potentially stale context, while the original pending candidate remains auditable.
+Fact dates accept only `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`, preserving precision without inventing month/day values or converting time zones. Device location is never collected; tone-based guesses, sarcasm, and ambiguous emotions are not stored as emotional facts. Entry text retains these qualifications. Event dates, locations and explicit emotions can filter recall; unfiltered retrieval keeps its existing behavior. Credential checks cover context as well as text. Ordinary approval preserves context; edited approval and manual correction discard potentially stale context, while the original pending candidate remains auditable.
 
 The backend `MemoryService.propose_inference(text, source_ids, kind)` appends hypotheses separately to `.quiet-memo/inferences.jsonl`, using kind `profile` or `emotion` and initial status `hypothesis`. Evidence must reference active fact entries and is deduplicated. Repeating the same kind, normalized text, and evidence set returns the existing record without increasing confidence or appending another record. Inference IDs and deleted or superseded facts cannot support new hypotheses.
 
-This is a backend foundation with no CLI/TUI/MCP inference entry points or automatic generation, confirmation, or chat injection. The model reserves `confirmed / rejected / superseded` states; user review, invalidation of existing hypotheses after source changes, and damaged-log recovery remain planned. Hypotheses are excluded from fact retrieval.
+`qm inferences` and TUI `/inferences` support listing, confirmation, rejection and correction. Confirmed inferences remain separate from facts. Source changes invalidate dependent hypotheses, and review rechecks evidence. State changes append to the log; corruption stops writes and preserves original bytes. `qm inferences --recover-tail` explicitly recovers a truncated final line by appending a recovery marker; middle corruption remains an error. Inferences are neither generated automatically nor injected into chat or fact retrieval.
 
 Editing a candidate in `/pending` validates the final text and writes one memory directly, without first admitting and then correcting the original. Conflicting candidates still replace the old entry through `supersedes`. The original candidate remains in `resolved.jsonl`, while the audit record stores the edited text as `text_override`. Rejected blank or detected credential input leaves the candidate and old entry unchanged.
 
@@ -379,7 +383,7 @@ src/quiet_memo/
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py, file_tools.py # Agent loop, tools, sessions, file analysis
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py, inference.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py
 │                                                   # Memory domain and write decisions
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever interface + BM25/vector/hybrid
@@ -456,9 +460,9 @@ The full backlog lives in [GitHub Issues](https://github.com/Shardkiht/quiet-mem
 
 | Difficulty | Direction | Scope |
 | --- | --- | --- |
-| Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Basic fields and storage are implemented; original time anchors, relative-date resolution, and inferred emotion remain planned |
-| Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Separate storage and evidence deduplication are implemented; confirmation, rejection, correction, and source invalidation remain planned |
-| Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Distinguish historical change from contradiction; use time, location, and emotion to supplement hybrid retrieval |
+| Low–medium-low | [Memory context: time, place, emotion](https://github.com/Shardkiht/quiet-memo/issues/10) | Fields, storage, timezone-aware message anchors and relative-date rules are implemented; inferred emotion remains planned |
+| Low–medium | [Separate inference records and user review](https://github.com/Shardkiht/quiet-memo/issues/11) | Separate storage, evidence deduplication, CLI/TUI review and source invalidation are implemented; review UX remains extensible |
+| Medium–medium-high | [Temporal evolution and contextual recall](https://github.com/Shardkiht/quiet-memo/issues/12) | Event-date, location and explicit-emotion filters are implemented; historical/current views and temporal evolution remain planned |
 | High | [Dream memory / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | Incremental background reflection, reviewable hypotheses, and recoverable background jobs |
 | High | [Dynamic user profiles](https://github.com/Shardkiht/quiet-memo/issues/9) | Evidence-linked, evolving personal preferences and recent states with user corrections |
 | Very high / long-term | [Proactive recall across AI clients](https://github.com/Shardkiht/quiet-memo/issues/13) | Surface relevant memories without explicit prompts where client integrations permit |
@@ -471,3 +475,13 @@ Other backlog items:
 - A `qm consolidate` subcommand for manual or scheduled vault-wide catch-up (startup catch-up and auto-commit already exist)
 
 The table distinguishes implemented foundations from remaining plans; refer to the other README sections for supported behavior and limitations.
+
+## Inference review and contextual retrieval
+
+Use `qm inferences` to inspect inferences, `qm inferences <id> --action confirm` to confirm them or `--action reject` to reject them, or `--action correct --text "revised hypothesis"` to create a replacement hypothesis. Confirmation keeps an inference separate from facts. Correcting or deleting source facts invalidates dependent inferences; reads also check sources. State snapshots append to `.quiet-memo/inferences.jsonl`; a correction records both states in one event. Corrupt logs fail explicitly and preserve original bytes. Use `qm inferences --recover-tail` to append a recovery marker for a damaged final line; middle corruption cannot be skipped.
+
+New messages record timezone offsets. Exit, catch-up and pre-compaction extraction retain per-message time anchors. Legacy timestamps without offsets remain unknown; extraction time never substitutes for the original date. Relative dates use the source calendar and retain year/month precision. Imports rely only on reliable timestamps in the material.
+
+Use `qm recall "exhibition" --from 2024 --to 2024-06 --location "Synthetic Gallery"`; `--emotion` filters explicitly expressed emotions. Agent and MCP recall accept date_from/date_to/location/emotion. Date ranges overlap at the stored precision; missing metadata does not match explicit filters. Write timestamps are never used as event dates. Unfiltered retrieval retains its existing behavior; filtered results retain relevance ordering.
+
+MCP `memorize` accepts optional `observed_at`, an original message timestamp with a timezone offset. Missing anchors never default to the invocation date for historical material.

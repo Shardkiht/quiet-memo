@@ -38,9 +38,9 @@ def build_server(
     )
 
     @mcp.tool
-    def memorize(text: str, source: str = "chat") -> dict:
+    def memorize(text: str, source: str = "chat", observed_at: str | None = None) -> dict:
         """从一段对话中抽取用户本人的事实、偏好或计划并静默写入。低置信/冲突/敏感项返回在 queued 中，不直接打断用户。"""
-        return svc.memorize(text, source).to_dict()
+        return svc.memorize(text, source, observed_at=observed_at).to_dict()
 
     @mcp.tool
     def note(text: str, topic: str = "uncategorized", title: str | None = None) -> dict:
@@ -49,9 +49,12 @@ def build_server(
         return entry.model_dump()
 
     @mcp.tool
-    def recall(query: str, limit: int = 10) -> list[dict]:
+    def recall(query: str, limit: int = 10, date_from: str | None = None,
+               date_to: str | None = None, location: str | None = None,
+               emotion: str | None = None) -> list[dict]:
         """检索本地记忆。query 用自然问句并附常见同义词或字段名，如“我叫什么名字 姓名 名字”。"""
-        return [hit.model_dump() for hit in svc.recall(query, limit)]
+        return [hit.model_dump() for hit in svc.recall(query, limit, date_from=date_from,
+            date_to=date_to, location=location, emotion=emotion)]
 
     @mcp.tool
     def read_topic(topic: str) -> dict:

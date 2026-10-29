@@ -857,7 +857,10 @@ def test_close_distills_all_chunks_instead_of_truncating(tmp_path):
     runtime.resume(session.id)
     runtime.close()
 
-    joined = "\n---\n".join(contents)
+    joined = "\n---\n".join(
+        f"[原始消息时间：{record['at']}]\n{record['content']}"
+        for record in session.messages
+    )
     assert len(extractor.texts) >= 2
     assert "".join(extractor.texts) == joined
     types = [record["type"] for record in runtime.sessions.load(session.id).records]
@@ -1173,7 +1176,10 @@ def test_failed_compaction_flush_keeps_budget_and_recovers_all_chunks(tmp_path, 
         runtime.start()
         assert runtime.consolidate_pending()["consolidated"] == 1
 
-    assert "".join(extractor.inputs) == "\n---\n".join(contents + ["继续"])
+    assert "".join(extractor.inputs) == "\n---\n".join(
+        f"[原始消息时间：{record['at']}]\n{record['content']}"
+        for record in loaded.messages
+    )
     assert not runtime.sessions.load(session.id).needs_consolidation()
     extractor.inputs.clear()
     runtime.start()

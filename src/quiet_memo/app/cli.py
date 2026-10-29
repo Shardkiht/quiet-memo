@@ -244,12 +244,50 @@ def import_memories(
 def recall(
     query: str = typer.Argument(..., help="检索关键词"),
     limit: int = typer.Option(10, "--limit", "-n", help="最多返回条数"),
+    date_from: str | None = typer.Option(None, "--from", help="事件起始日期：年、年月或年月日"),
+    date_to: str | None = typer.Option(None, "--to", help="事件截止日期"),
+    location: str | None = typer.Option(None, "--location", help="明确记载的地点"),
+    emotion: str | None = typer.Option(None, "--emotion", help="明确表达的情绪"),
     config: Path | None = CONFIG_OPTION,
     vault: Path | None = VAULT_OPTION,
 ) -> None:
     """检索记忆。"""
-    hits = _service(config, vault).recall(query, limit)
+    try:
+        hits = _service(config, vault).recall(query, limit, date_from=date_from,
+            date_to=date_to, location=location, emotion=emotion)
+    except ValueError as exc:
+        fail(str(exc))
+        return
     print_hits(query, hits)
+
+
+@app.command("inferences")
+def inferences(
+    inference_id: str | None = typer.Argument(None),
+    action: str | None = typer.Option(None, "--action", help="confirm / reject / correct"),
+    text: str | None = typer.Option(None, "--text", help="更正后的假设内容"),
+    recover_tail: bool = typer.Option(False, "--recover-tail", help="显式恢复损坏尾行，保留原始字节"),
+    config: Path | None = CONFIG_OPTION,
+    vault: Path | None = VAULT_OPTION,
+) -> None:
+    """查看或审查推断；确认不会自动写入事实记忆。"""
+    service = _service(config, vault)
+    try:
+        if recover_tail:
+            if action or inference_id or text:
+                raise ValueError("恢复尾行不能与审查操作同时使用。")
+            recovered = service.recover_inference_tail()
+            console.print("已追加尾行恢复标记。" if recovered else "无需恢复。")
+        if action:
+            if not inference_id:
+                raise ValueError("操作时必须提供推断 ID。")
+            items = [service.review_inference(inference_id, action, text)]
+        else:
+            items = [item for item in service.list_inferences() if not inference_id or item.id == inference_id]
+        for item in items:
+            console.print(item.model_dump_json(), markup=False)
+    except (KeyError, ValueError) as exc:
+        fail(str(exc))
 
 
 @app.command()

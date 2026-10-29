@@ -177,6 +177,7 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | `/recall <query>` | 直接检索记忆 |
 | `/remember <text>` | 直接抽取写入 |
 | `/import <path> [--apply]` | 导入文件或当前层目录；默认预览，`--apply` 重新分析并写入。不带路径时弹出输入框 |
+| `/inferences` | 查看、确认、拒绝或纠正独立推断 |
 | `/pending` | 逐条处理待确认候选：确认写入 / 拒绝 / 改写后写入，队列清空前自动进入下一条 |
 | `/topics [name]` | 浏览记忆主题与条目数，带 name 下钻某主题的条目列表 |
 | `/exit` | 退出 |
@@ -245,6 +246,9 @@ uv run qm topics
 
 # 检索 / 查看待确认 / 确认或拒绝
 uv run qm recall "市区"
+uv run qm recall "展览" --from 2024 --to 2024-06 --location "合成展馆"
+uv run qm inferences
+uv run qm inferences <id> --action confirm
 uv run qm pending
 uv run qm approve p-20261022-140312-a1b2
 uv run qm reject p-20261022-140312-c3d4
@@ -354,11 +358,11 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 | `location` / `location_kind` | 地点与类型：`event`（事件地点）或 `residence`（居住地），须成对提供 |
 | `emotion` / `emotion_source` / `emotion_at` | 明确表达的情绪原话，来源仅 `explicit`；`event` 表示当时，`expression` 表示如今谈起的感受，缺省为后者 |
 
-事实日期只接受 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`，保留原有精度，不补猜月日或转换时区。地点不从设备采集，语气推断、反讽和模糊情绪不作为情绪事实写入。正文仍保留这些限定，上下文目前不参与检索过滤或重排。上下文与正文一起检查凭据，正常确认会保留上下文；改写后确认或手动更正不会沿用可能已过期的旧上下文，原候选仍可审计。
+事实日期只接受 `YYYY`、`YYYY-MM`、`YYYY-MM-DD`，保留原有精度，不补猜月日或转换时区。地点不从设备采集，语气推断、反讽和模糊情绪不作为情绪事实写入。正文仍保留这些限定，事件日期、地点和显式情绪可用于召回筛选；不带筛选条件时保持原检索行为。上下文与正文一起检查凭据，正常确认会保留上下文；改写后确认或手动更正不会沿用可能已过期的旧上下文，原候选仍可审计。
 
 推断基础接口 `MemoryService.propose_inference(text, source_ids, kind)` 将假设单独追加到 `.quiet-memo/inferences.jsonl`，类型为 `profile` 或 `emotion`，新记录始终为 `hypothesis`。只接受当前有效的事实条目 ID，来源去重；同类型、同规范化文本、同一组证据重复提交返回原记录，不增加置信度或重复追加。推断 ID、已删除或已被更正的来源不能作为新证据。
 
-这是后端基础能力，尚无 CLI/TUI/MCP 推断入口，不自动生成、确认或注入聊天。模型声明保留 `confirmed / rejected / superseded` 状态，但用户确认流程、已有推断的来源失效处理与损坏日志恢复尚待实现；推断不会进入事实检索。
+`qm inferences` 与 TUI `/inferences` 提供查看、确认、拒绝与纠正入口；确认后的推断仍独立于事实库。来源更正、删除后关联推断失效，审查时也核验来源。状态变更追加记录；损坏日志停止写入并保留原始字节；`qm inferences --recover-tail` 可显式恢复截断尾行，追加恢复标记，中间损坏仍报错。推断不自动生成或注入聊天，也不会进入事实检索。
 
 `/pending` 的“改写后确认”先校验最终文本，再直接写入一条记忆，不先写原文再更正；冲突候选仍通过 `supersedes` 替代旧条目。原候选保留在 `resolved.jsonl`，审计记录以 `text_override` 保存改写文本。空白或识别出的凭据被拒绝时，候选与旧条目保持不变。
 
@@ -377,7 +381,7 @@ src/quiet_memo/
 ├── agent/        runtime.py, prompts.py, context.py, tools.py,
 │                 session.py, recall.py, file_tools.py # Agent 循环、工具、会话与文件分析
 ├── memory/       service.py, store.py, models.py, queue.py,
-│                 policy.py, detect.py, extractor.py, audit.py, inference.py
+│                 policy.py, detect.py, extractor.py, audit.py, inference.py, temporal.py
 │                                                   # 记忆领域与写入裁决
 ├── retrieval/    base.py, keyword.py, vector.py, hybrid.py
 │                                                   # Retriever 接口 + BM25/向量/混合
@@ -454,9 +458,9 @@ uv run python evals/retrieval_eval.py
 
 | 难度 | 方向 | 规划 |
 | --- | --- | --- |
-| 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 基础字段与存储链路已实现；待补原始时间锚点、相对时间解析及推断情绪 |
-| 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 独立存储与证据去重已实现；待补用户确认、拒绝、纠正及来源失效处理 |
-| 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 区分历史变化与真正冲突；用时间、地点、情绪辅助现有混合检索 |
+| 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 基础字段与存储链路已实现；已补带时区原始消息锚点与相对日期规则；推断情绪待实现 |
+| 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 已支持独立存储、证据去重、CLI/TUI 审查及来源失效；交互体验继续完善 |
+| 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 已支持事件日期、地点和显式情绪筛选；历史/当前事实视图与时态演化待实现 |
 | 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 后台增量回顾与整合，产出可审查的候选推断，异常可恢复 |
 | 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 基于来源证据持续维护个人偏好、经历与近期状态，用户可纠正 |
 | 很高 / 长期 | [跨 AI 客户端主动召回](https://github.com/Shardkiht/quiet-memo/issues/13) | 在客户端能力允许时，无需显式提醒即可适时调用个人记忆 |
@@ -469,3 +473,13 @@ uv run python evals/retrieval_eval.py
 - `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记与自动提交已实现）
 
 表中已标明基础实现与剩余规划；当前支持的行为和边界以 README 其他章节为准。
+
+## 推断审查与上下文检索
+
+`qm inferences` 查看独立推断；`qm inferences <id> --action confirm` 确认，`--action reject` 拒绝，`--action correct --text "新的假设"` 更正。确认仍保留在推断库，不自动转成事实；更正产生新假设。来源更正、删除或失效后，关联推断失效。状态快照追加到 `.quiet-memo/inferences.jsonl`，更正的旧/新状态在同一事件内保存；损坏日志报错并保留原始字节；用 `qm inferences --recover-tail` 显式恢复截断尾行，追加 recovery 标记后可继续审查。中间损坏不能跳过。
+
+新会话消息记录带时区时间。退出、补沉淀和压缩前抽取保留每条原始消息的时间锚点；旧记录缺少时区时不按当前时间补猜。相对日期沿用原始时区日历，年/月精度保留；模糊表达保留原话。导入材料只使用材料自身可靠的时间，不能套用导入当天。
+
+`qm recall "展览" --from 2024 --to 2024-06 --location "合成展馆"` 按事件日期与地点筛选；`--emotion` 可筛选明确表达的情绪。内置 Agent 和 MCP 的 recall 同样支持 date_from/date_to/location/emotion。日期按原有精度判断区间重叠；缺少所需字段的条目不满足筛选，不拿写入时间代替。无筛选时沿用原检索；筛选保留文本相关性排序。
+
+MCP `memorize` 可选 `observed_at` 接受带时区的原始消息时间。未提供可靠锚点时，不把调用当天用于解析历史材料。

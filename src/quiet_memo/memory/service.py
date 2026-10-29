@@ -209,11 +209,27 @@ class MemoryService:
         source: str = "chat",
         session_id: str | None = None,
         message_id: str | None = None,
+        observed_at: str | None = None,
     ) -> MemorizeResult:
-        text = text.strip()
-        if not text:
+        # 分块边界可能落在空白处；保留输入字节对应的文本，避免拼接后粘连单词。
+        if not text.strip():
             raise ValueError("对话内容为空。")
-        extraction = self.extractor.extract(text, self.store.recent_context())
+        context = self.store.recent_context()
+        if observed_at:
+            stamp = datetime.fromisoformat(observed_at)
+            if stamp.utcoffset() is None:
+                raise ValueError("原始消息时间必须包含时区。")
+            context += f"\n原始消息时间锚点：{stamp.isoformat()}；只用于这条原始消息，不能用于引用的历史材料。"
+        extraction = self.extractor.extract(text, context)
+        if observed_at:
+            from .temporal import resolve_relative
+
+            for candidate in extraction.memories:
+                metadata = candidate.context
+                if metadata and metadata.time_text and not metadata.event_time:
+                    resolved = resolve_relative(metadata.time_text, observed_at)
+                    if resolved:
+                        metadata.event_time = resolved
         return self._adjudicate(extraction.memories, source, session_id, message_id)
 
     def import_text(
@@ -393,6 +409,7 @@ class MemoryService:
 
     def correct(self, entry_id: str, text: str, reason: str = "") -> Entry:
         with self.write_lock:
+            self.inferences.all()
             old = self.store.find(entry_id)
             if old is None:
                 raise KeyError(f"记忆不存在：{entry_id}")
@@ -416,10 +433,12 @@ class MemoryService:
                 old_text=old.text,
                 new_text=entry.text,
             )
+            self._invalidate_inferences()
             return entry
 
     def forget(self, entry_id: str, reason: str = "") -> Entry:
         with self.write_lock:
+            self.inferences.all()
             old = self.store.find(entry_id)
             if old is None:
                 raise KeyError(f"记忆不存在：{entry_id}")
@@ -427,10 +446,83 @@ class MemoryService:
                 raise ValueError(f"记忆当前状态为 {old.status}，无需删除。")
             self.store.set_status(entry_id, STATUS_DELETED)
             self.audit.write("forget", entry=entry_id, reason=reason, text=old.text)
+            self._invalidate_inferences()
             return old.model_copy(update={"status": STATUS_DELETED})
 
-    def recall(self, query: str, limit: int = 10) -> list[SearchHit]:
-        return self.retriever.search(query, limit)
+    def _invalidate_inferences(self) -> list[Inference]:
+        records = self.inferences.all()
+        if not records:
+            return records
+        active = {entry.id for entry in self.store.entries()}
+        changed: list[Inference] = []
+        for index, item in enumerate(records):
+            if item.status in ("hypothesis", "confirmed") and not set(item.source_ids) <= active:
+                item = item.model_copy(update={
+                    "status": "superseded",
+                    "updated_at": datetime.now().astimezone().isoformat(timespec="microseconds"),
+                })
+                changed.append(item)
+                records[index] = item
+        if changed:
+            self.inferences.record(*changed)
+        return records
+
+    def list_inferences(self) -> list[Inference]:
+        """读取时核验来源，覆盖手动编辑和恢复历史库的场景。"""
+        with self.write_lock:
+            return self._invalidate_inferences()
+
+    def recover_inference_tail(self) -> bool:
+        with self.write_lock:
+            return self.inferences.recover_tail()
+
+    def review_inference(self, inference_id: str, action: str, text: str | None = None) -> Inference:
+        """用户审查独立推断；确认不自动转成事实，更正产生新假设。"""
+        if action not in ("confirm", "reject", "correct"):
+            raise ValueError("操作须为 confirm、reject 或 correct。")
+        with self.write_lock:
+            records = self._invalidate_inferences()
+            old = next((item for item in records if item.id == inference_id), None)
+            if old is None:
+                raise KeyError("推断不存在。")
+            target = "confirmed" if action == "confirm" else "rejected"
+            if action != "correct" and old.status == target:
+                return old
+            if old.status not in ("hypothesis", "confirmed"):
+                raise ValueError("该推断已拒绝或失效，不能重新启用。")
+            stamp = datetime.now().astimezone().isoformat(timespec="microseconds")
+            if action == "correct":
+                content = (text or "").strip()
+                if not content or contains_secret(content):
+                    raise ValueError("更正内容为空或包含凭据。")
+                if normalize_text(content) == normalize_text(old.text):
+                    return old
+                identity = json.dumps([old.kind, normalize_text(content), old.source_ids], ensure_ascii=False)
+                new_id = "inf-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+                if any(item.id == new_id for item in records):
+                    raise ValueError("相同推断已有记录，请查看已有推断。")
+                replacement = old.model_copy(update={"id": new_id, "text": content,
+                    "status": "hypothesis", "created_at": stamp, "updated_at": stamp})
+                self.inferences.record(old.model_copy(update={"status": "superseded", "updated_at": stamp}), replacement)
+                return replacement
+            updated = old.model_copy(update={"status": target, "updated_at": stamp})
+            self.inferences.record(updated)
+            return updated
+
+    def recall(self, query: str, limit: int = 10, *, date_from: str | None = None,
+               date_to: str | None = None, location: str | None = None,
+               emotion: str | None = None) -> list[SearchHit]:
+        from .temporal import matches_context, validate_range
+
+        validate_range(date_from, date_to)
+        if not any((date_from, date_to, location, emotion)):
+            return self.retriever.search(query, limit)
+        entries = {entry.id: entry for entry in self.store.entries()}
+        # 必须先筛选再截断，不能只筛掉前 limit 条而漏掉后面的有效结果。
+        hits = self.retriever.search(query, max(len(entries), limit))
+        return [hit for hit in hits if hit.id in entries and matches_context(
+            entries[hit.id].context, date_from, date_to, location, emotion
+        )][:max(0, limit)]
 
     def read_topic(self, topic: str, max_tokens: int = 2000) -> dict:
         wanted = topic.strip().casefold()

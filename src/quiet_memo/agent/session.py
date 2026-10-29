@@ -15,7 +15,7 @@ SESSION_ID_RE = re.compile(r"^s-\d{8}-\d{6}-[0-9a-f]{4}$")
 
 
 def now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def new_message_id() -> str:
@@ -164,6 +164,9 @@ class Session:
 
     def user_texts_after_distilled(self) -> list[str]:
         return [record["content"] for record in self.undistilled_messages()]
+
+    def distillation_texts(self) -> list[str]:
+        return [dated_message(record) for record in self.undistilled_messages()]
 
     def estimated_tokens(self) -> int:
         return sum(
@@ -371,6 +374,17 @@ class SessionStore:
         if not SESSION_ID_RE.match(session_id):
             raise KeyError(f"非法会话 ID：{session_id}")
         return self.root / f"{session_id}.jsonl"
+
+
+def dated_message(record: dict) -> str:
+    raw = record.get("at")
+    try:
+        stamp = datetime.fromisoformat(raw) if isinstance(raw, str) else None
+    except ValueError:
+        stamp = None
+    if stamp is None or stamp.utcoffset() is None:
+        return record.get("content", "")
+    return f"[原始消息时间：{stamp.isoformat()}]\n{record.get('content', '')}"
 
 
 def record_label(record: dict) -> str:
