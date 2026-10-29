@@ -284,3 +284,15 @@ def test_missing_proposals_is_not_a_successful_empty_batch():
     from quiet_memo.memory.models import ReflectionResponse
     with pytest.raises(ValidationError):
         ReflectionResponse.model_validate({})
+
+
+def test_timeout_is_identified_without_logging_exception_payload(service):
+    service.note("合成事实")
+    def timeout(*args):
+        raise TimeoutError("private-payload-placeholder")
+    result = service.reflection.run(model=timeout)
+    assert "超时" in result.error
+    log = service.reflection.path.read_text(encoding="utf-8")
+    assert '"error_kind": "timeout"' in log
+    assert "private-payload-placeholder" not in log
+    assert result.remaining == 1

@@ -112,7 +112,7 @@ class ReflectionEngine:
 
     def _record(self, key: str, status: str, proposals: list[ReflectionProposal] | None = None,
                 mode: str | None = None, sources: list[str] | None = None,
-                inputs: list[str] | None = None) -> None:
+                inputs: list[str] | None = None, error_kind: str | None = None) -> None:
         _, damaged_tail = self._events()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -126,6 +126,8 @@ class ReflectionEngine:
                 marker = {"status": "recovery", "ignored_line": damaged_tail, "at": stamp}
                 handle.write((json.dumps(marker) + "\n").encode())
             event = {"key": key, "status": status, "at": stamp}
+            if error_kind is not None:
+                event["error_kind"] = error_kind
             if proposals is not None:
                 event["proposals"] = [proposal.model_dump() for proposal in proposals]
             if mode is not None:
@@ -258,9 +260,13 @@ class ReflectionEngine:
                             break
                         self._record(key, "completed", mode=mode, sources=source_signatures)
                     result.remaining -= 1
-                except Exception:
-                    self._record(key, "failed")
-                    result.error = "回顾失败；已保留进度，重新运行可继续。"
+                except Exception as exc:
+                    # 只记录类别，不保存供应商异常原文，避免泄露请求正文或凭据。
+                    timed_out = isinstance(exc, TimeoutError) or type(exc).__name__ in {"Timeout", "APITimeoutError", "ReadTimeout", "ConnectTimeout"}
+                    kind = "timeout" if timed_out else "validation" if isinstance(exc, ValueError) else "storage" if isinstance(exc, OSError) else "request"
+                    self._record(key, "failed", error_kind=kind)
+                    reason = {"timeout": "模型请求超时", "validation": "模型结果校验失败", "storage": "本地读写失败", "request": "模型请求或处理失败"}[kind]
+                    result.error = f"{reason}；已保留进度，重新运行可继续。"
                     break
             return result
         finally:
