@@ -170,7 +170,8 @@ class MemoryService:
         # 热更新（切模型/上下文）写回配置的路径：记住加载来源，避免写错文件或被读回旧值。
         self.config_path = config_path
         # 后台补沉淀与前台对话可能并发写 vault：所有变更操作在这把锁内串行。
-        self.write_lock = threading.Lock()
+        # 组合写入流程可安全复用公开服务方法，调用方不再绕过接口调用私有实现。
+        self.write_lock = threading.RLock()
         self.reflection = ReflectionEngine(self)
 
     def init_vault(self) -> dict:
@@ -559,9 +560,32 @@ class MemoryService:
         return select_facts(self.store.entries(include_inactive=True))
 
     def evolve(self, entry_id: str, text: str, effective_from: str) -> Entry:
-        from .temporal import evolve_fact
+        """用户明确确认的状态变化；保留旧事实，区别于纠正错误。"""
+        from datetime import date
+        from .models import MemoryContext
+        from .temporal import date_bounds
 
-        return evolve_fact(self, entry_id, text, effective_from)
+        start = date.fromisoformat(effective_from)
+        if len(effective_from) != 10 or start.isoformat() != effective_from or start > date.today():
+            raise ValueError("变化日期须为已发生的 YYYY-MM-DD；未来计划请另记为计划。")
+        if not text.strip() or contains_secret(text):
+            raise ValueError("新状态为空或包含凭据。")
+        with self.write_lock:
+            self.inferences.all()
+            old = self.store.find(entry_id)
+            if old is None or old.status != "active":
+                raise ValueError("只能为当前有效条目记录时间变化。")
+            if old.context and old.context.valid_from and start <= date_bounds(old.context.valid_from)[0]:
+                raise ValueError("变化日期必须晚于原状态的开始日期。")
+            if any(entry.text == text.strip() for entry in self.current_facts()):
+                raise ValueError("相同内容已存在。")
+            entry = self.store.append(old.topic, text.strip(), source="user-evolution",
+                supersedes=old.id, extra={"change_kind": "evolution"},
+                context=MemoryContext(valid_from=effective_from))
+            self.store.set_status(old.id, "superseded")
+            self.audit.write("evolve", old_entry=old.id, new_entry=entry.id, effective_from=effective_from)
+            self._invalidate_inferences()
+            return entry
 
     def read_topic(self, topic: str, max_tokens: int = 2000) -> dict:
         wanted = topic.strip().casefold()

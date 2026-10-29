@@ -58,10 +58,11 @@ class PendingQueue:
         target = next((item for item in items if item.id == item_id), None)
         if target is None:
             return None
-        self._save([item for item in items if item is not target])
         self.dir.mkdir(parents=True, exist_ok=True)
         record = target.model_dump()
         record.update(status=status, resolved_at=datetime.now().isoformat(timespec="seconds"))
         with self.resolved_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # 先保留处理记录；日志写入失败时不能把候选从唯一待确认列表移除。
+        self._save([item for item in items if item is not target])
         return target

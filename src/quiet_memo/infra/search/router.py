@@ -114,7 +114,7 @@ class SearchRouter:
                         engine=engine,
                         lang=query.lang,
                         freshness=query.freshness,
-                        engines=query.engines,
+                        engines=engines,
                     )
                 )
             except ProviderError as exc:

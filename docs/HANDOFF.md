@@ -129,3 +129,9 @@ Spark 真实接口合成数据冒烟：流式回复、带时间/地点的记忆�
 - 中英文 README、命令表、MCP 列表、结构树与 AGENTS 同步更新。Issues 在功能分支验收/合入及剩余范围完成前保持开放。
 
 最终提交前验证：全量 `uv run --frozen --offline --extra documents pytest -q` 为 591 passed（238.48 秒）；使用夹具隔离和测试专用管道事件循环。首轮 589 passed / 1 failed 暴露命令面板嵌套方括号转义问题，已改为直接组合 Content 文本与样式，并在完整复测中通过。画像日志故障不再阻断事实召回与聊天，错误可见。合成上下文评测：baseline Recall@1=0.2、MRR@5=0.5，contextual 均为 1.0；仅 5 个固定合成用例。变更文件的本机路径/凭据模式扫描无命中，git diff --check 通过。全部记录保留在本地忽略目录。此次仅本地 Windows 验证，尚无该提交的跨平台 CI 结论。
+
+## 全项目审查后续
+
+远程分支已由用户改名为 `feature-memory-evolution`，推送必须明确指定目标。审查覆盖 app/agent/memory/retrieval/llm/infra 的主要调用与异常路径；修复候选日志失败导致丢失、损坏向量缓存导致检索异常、缓存清理异常外溢、搜索默认引擎未传递、回顾缺失 proposals 被误判成功。时间写入收回 MemoryService；回顾改用公开服务方法，服务使用可重入写锁保持组合操作一致性。没有新增依赖或读取个人库。
+
+本轮完整回归：594 passed，430.50 秒；git diff --check 通过。仅隔离合成测试，零真实模型请求。测试记录保留；本轮未验证跨平台 CI。

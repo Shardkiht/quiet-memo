@@ -4,14 +4,9 @@ import calendar
 from datetime import date, datetime, timedelta
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from .models import Entry, MemoryContext
 from .store import MemoryStore
-
-if TYPE_CHECKING:
-    from .service import MemoryService
-
 
 def date_bounds(value: str) -> tuple[date, date]:
     """按原始精度解释日期范围，不把未知月日伪造成事实。"""
@@ -147,31 +142,6 @@ def select_facts(entries: list[Entry], *, as_of: str | None = None,
     return result
 
 
-def evolve_fact(service: MemoryService, entry_id: str, text: str, effective_from: str) -> Entry:
-    """用户明确确认的状态变化；保留旧事实，区别于纠正错误。"""
-    from .detect import contains_secret
-
-    start = date.fromisoformat(effective_from)
-    if len(effective_from) != 10 or start.isoformat() != effective_from or start > date.today():
-        raise ValueError("变化日期须为已发生的 YYYY-MM-DD；未来计划请另记为计划。")
-    if not text.strip() or contains_secret(text):
-        raise ValueError("新状态为空或包含凭据。")
-    with service.write_lock:
-        service.inferences.all()
-        old = service.store.find(entry_id)
-        if old is None or old.status != "active":
-            raise ValueError("只能为当前有效条目记录时间变化。")
-        if old.context and old.context.valid_from and start <= date_bounds(old.context.valid_from)[0]:
-            raise ValueError("变化日期必须晚于原状态的开始日期。")
-        if any(entry.text == text.strip() for entry in service.current_facts()):
-            raise ValueError("相同内容已存在。")
-        entry = service.store.append(old.topic, text.strip(), source="user-evolution",
-            supersedes=old.id, extra={"change_kind": "evolution"},
-            context=MemoryContext(valid_from=effective_from))
-        service.store.set_status(old.id, "superseded")
-        service.audit.write("evolve", old_entry=old.id, new_entry=entry.id, effective_from=effective_from)
-        service._invalidate_inferences()
-        return entry
 
 
 class TemporalStore(MemoryStore):

@@ -74,3 +74,12 @@ def test_resolve_only_removes_the_targeted_duplicate(tmp_path):
 
     # 历史数据若出现同 ID，只处理目标那一条，不能把另一条一并抹掉。
     assert len(queue.all()) == 1
+
+
+def test_resolve_log_failure_keeps_candidate(tmp_path):
+    queue = PendingQueue(tmp_path)
+    queue.add(make_item())
+    queue.resolved_path.mkdir()
+    with pytest.raises(OSError):
+        queue.resolve("p-1", "rejected")
+    assert queue.get("p-1") is not None

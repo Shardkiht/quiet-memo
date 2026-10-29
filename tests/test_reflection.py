@@ -277,3 +277,10 @@ async def test_mcp_profile_and_temporal_evolution(service):
         assert [item["id"] for item in profile.data] == [new_id]
         history = await client.call_tool("recall", {"query": "合成偏好", "as_of": "2022-01-01"})
         assert [item["id"] for item in history.data] == [old.id]
+
+
+def test_missing_proposals_is_not_a_successful_empty_batch():
+    from pydantic import ValidationError
+    from quiet_memo.memory.models import ReflectionResponse
+    with pytest.raises(ValidationError):
+        ReflectionResponse.model_validate({})

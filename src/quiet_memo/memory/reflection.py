@@ -58,7 +58,7 @@ class ReflectionEngine:
         """画像为可重建视图；事实和推断分别标识，不另建事实库。"""
         with self.service.write_lock:
             facts = {item.id: item for item in self.service.current_facts()}
-            inferences = self.service._invalidate_inferences()
+            inferences = self.service.list_inferences()
             result = [ProfileItem(id=item.id, text=item.text, kind="fact", source_ids=[item.id],
                                   status="active", updated_at=item.timestamp)
                       for item in facts.values() if item.topic in PROFILE_TOPICS]
@@ -243,12 +243,12 @@ class ReflectionEngine:
                             self._record(key, "stale")
                             result.error = "回顾期间来源发生变化，请重新运行。"
                             break
-                        known = {item.id for item in self.service.inferences.all()}
+                        known = {item.id for item in self.service.list_inferences()}
                         for proposal in proposals:
                             if self._cancel.is_set():
                                 result.cancelled = True
                                 break
-                            item = self.service._propose_inference_locked(
+                            item = self.service.propose_inference(
                                 proposal.text, proposal.source_ids, "profile" if mode == "profile" else "reflection")
                             if item.id not in known:
                                 result.proposed += 1

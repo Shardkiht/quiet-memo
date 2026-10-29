@@ -140,7 +140,7 @@ class ReflectionProposal(BaseModel):
 
 class ReflectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    proposals: list[ReflectionProposal] = Field(default_factory=list, max_length=12)
+    proposals: list[ReflectionProposal] = Field(max_length=12)
 
 
 class ProfileItem(BaseModel):

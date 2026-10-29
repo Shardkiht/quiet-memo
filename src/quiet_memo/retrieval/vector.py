@@ -185,7 +185,11 @@ class VectorRetriever:
                 hashes = data["hashes"].tolist()
                 matrix = np.asarray(data["vectors"], dtype=np.float32)
             if (
-                matrix.ndim != 2
+                not isinstance(ids, list)
+                or not isinstance(hashes, list)
+                or any(not isinstance(value, str) for value in ids + hashes)
+                or len(set(ids)) != len(ids)
+                or matrix.ndim != 2
                 or matrix.shape[1] == 0
                 or len(ids) != len(hashes)
                 or len(ids) != matrix.shape[0]
@@ -213,4 +217,7 @@ class VectorRetriever:
             os.replace(tmp, self.cache_path)
         except OSError:
             # 写盘失败不影响本次检索；下次进程启动会重新计算缺失向量。
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass

@@ -301,3 +301,12 @@ def test_sync_dedupes_duplicate_entry_ids(tmp_path):
     assert len(retriever._entries) == 1
     hits = retriever.search("房子", 3)
     assert len({hit.id for hit in hits}) == len(hits)
+
+
+def test_malformed_cache_ids_rebuild_instead_of_crashing(tmp_path):
+    store = seeded_store(tmp_path)
+    retriever = VectorRetriever(store, FakeEmbedder(GROUPS))
+    retriever.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(retriever.cache_path, model=np.array("fake"), ids=np.array([["bad"]]),
+             hashes=np.array(["bad"]), vectors=np.ones((1, 3)))
+    assert retriever.search("房子")
