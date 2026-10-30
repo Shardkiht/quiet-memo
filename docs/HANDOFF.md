@@ -102,3 +102,9 @@ Spark 真实接口合成数据冒烟：流式回复、带时间/地点的记忆�
 - Dreaming、画像和跨客户端主动召回继续按各自 Issue 推进。
 
 用户要求：本轮基础功能验证通过并提交后，另开 feature 分支集中完成较难的后续功能，供用户评估后合入；不得自动合并该 feature 分支。
+
+## TUI 命令精简
+
+按用户要求同步 main 和 evolution：仅保留 /sessions 会话入口，移除 /resume、/recall、/remember 的面板与分发及闲置处理函数。自然语言记忆仍通过 Agent recall/memorize 工具，CLI 管理入口保留。导入完成回调改为按用途命名；中英文 README 同步。
+
+命令精简验证：main 全量 537 passed（375.37 秒）；首轮临时目录缺失导致的准备错误已修复并完整复测。 测试记录保留，git diff --check 通过。

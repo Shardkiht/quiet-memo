@@ -164,7 +164,6 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | --- | --- |
 | `/new` | 结束当前会话，进入新会话（发送首条消息后创建） |
 | `/sessions` | 打开居中会话选择器：输入即过滤、Enter 恢复、Ctrl+R 重命名、Del 删除（带确认）、ESC 取消 |
-| `/resume [id\|query]` | 恢复会话；无参数跳到会话列表，带 id/关键词则直接匹配恢复 |
 | `/compact` | 立即压缩上下文 |
 | `/undo` | 撤销最后一轮提问及后续回复，回填原消息重新编辑 |
 | `/summary` | 查看当前会话摘要 |
@@ -174,8 +173,6 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | `/context` | 切换上下文长度：档位按当前模型上限生成，也可自定义，下一轮即生效 |
 | `/setup` | 提示完整配置向导需在终端运行 `qm setup`（内置厂商的 Key 增删在 `/model` 按 `Ctrl+P` 管理） |
 | `/rename <title>` | 重命名会话 |
-| `/recall <query>` | 直接检索记忆 |
-| `/remember <text>` | 直接抽取写入 |
 | `/import <path> [--apply]` | 导入文件或当前层目录；默认预览，`--apply` 重新分析并写入。不带路径时弹出输入框 |
 | `/pending` | 逐条处理待确认候选：确认写入 / 拒绝 / 改写后写入，队列清空前自动进入下一条 |
 | `/topics [name]` | 浏览记忆主题与条目数，带 name 下钻某主题的条目列表 |
@@ -469,3 +466,5 @@ uv run python evals/retrieval_eval.py
 - `qm consolidate` 子命令：手动或系统计划任务触发整库补沉淀（启动时自动补记与自动提交已实现）
 
 表中已标明基础实现与剩余规划；当前支持的行为和边界以 README 其他章节为准。
+
+会话浏览、搜索与恢复统一使用 `/sessions`。聊天中直接说“你记得……吗”或“记住……”，由 Agent 调用 recall / memorize；不提供对应的 TUI 斜杠命令。命令行管理入口保持可用。

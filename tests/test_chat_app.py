@@ -2031,3 +2031,17 @@ async def test_session_picker_rename_current_updates_runtime(tmp_path):
             if isinstance(app.screen, SessionPickerScreen):
                 break
         assert app.runtime.current.title() == "当前新标题"
+
+
+async def test_removed_shortcuts_are_not_available(tmp_path, monkeypatch):
+    app = build_app(tmp_path, [])
+    assert not {"resume", "recall", "remember"}.intersection(item[0] for item in SLASH_COMMANDS)
+    cards = []
+    monkeypatch.setattr(app, "add_card", lambda message, *args: cards.append(message))
+    for command in ("/resume", "/recall 合成查询", "/remember 合成事实"):
+        app._command(command)
+        assert "Unknown command" in cards[-1]
+    opened = []
+    monkeypatch.setattr(app, "open_session_picker", lambda: opened.append(True))
+    app._command("/sessions")
+    assert opened == [True]

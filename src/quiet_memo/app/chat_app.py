@@ -226,7 +226,7 @@ class ChatApp(ChatCommandsMixin, App):
             is_current = item.row["id"] == current_id
             item.set_class(is_current, "current")
             found = found or is_current
-        # /resume 可能指向尚未出现在当前列表里的会话，这时才退回全量刷新。
+        # 目标会话可能尚未出现在当前列表里，这时才退回全量刷新。
         if current_id and not found:
             self.refresh_sessions()
 
