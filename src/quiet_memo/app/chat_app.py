@@ -112,6 +112,7 @@ class ChatApp(ChatReflectionMixin, ChatCommandsMixin, App):
         self.query_one("#input", Input).focus()
         self._run_catchup()
         self._warm_search()
+        self._start_auto_reflection()
 
     def _warm_search(self) -> None:
         search = self.service.config.search
@@ -145,12 +146,14 @@ class ChatApp(ChatReflectionMixin, ChatCommandsMixin, App):
         self.call_from_thread(self._after_catchup, result, auto_commit)
 
     def _after_catchup_error(self, message: str) -> None:
+        self._reflection_ready = True
         # 后台补记失败只提示，不动 busy：此时用户可能正在提问或切换会话。
         self.add_card(f"Startup catch-up failed: {message}")
         self.refresh_pending()
         self.update_status()
 
     def _after_catchup(self, result: dict, auto_commit: str | None) -> None:
+        self._reflection_ready = True
         if auto_commit:
             self.notify(f"Auto-committed uncommitted vault changes: {auto_commit}")
             self.refresh_sessions()
@@ -573,6 +576,7 @@ class ChatApp(ChatReflectionMixin, ChatCommandsMixin, App):
         self.query_one("#status", Static).update(text)
 
     def _set_busy(self, busy: bool) -> None:
+        self._reflection_activity()
         self.busy = busy
         widget = self.query_one("#input", Input)
         widget.disabled = busy
@@ -582,6 +586,7 @@ class ChatApp(ChatReflectionMixin, ChatCommandsMixin, App):
     # ---------- 输入与回合 ----------
 
     def on_input_changed(self, event: Input.Changed) -> None:
+        self._reflection_activity()
         palette = self.query_one("#cmd-palette", CommandPalette)
         value = event.value
         if value.startswith("/") and " " not in value:

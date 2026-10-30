@@ -78,6 +78,10 @@ class ChatConfig:
     auto_recall: int = 3
     recall_rewrite: bool = True
     recall_context_turns: int = 2
+    auto_reflect: bool = True
+    reflect_idle_seconds: float = 60.0
+    reflect_interval_seconds: float = 300.0
+    reflect_request_budget: int = 20
     extract_on_exit: bool = True
 
 
@@ -215,12 +219,13 @@ def _validate_config(data: dict) -> None:
     for name in (
         "llm.timeout", "chat.context_window", "chat.max_tool_steps", "chat.tool_timeout",
         "search.timeout", "search.max_results", "search.fetch_timeout",
+        "chat.reflect_idle_seconds", "chat.reflect_interval_seconds",
     ):
         _validate_range(data, name, positive=True)
     for name in (
         "llm.num_retries", "llm.temperature", "chat.reserve_output_tokens",
         "chat.keep_recent_tokens", "chat.auto_recall", "chat.recall_context_turns",
-        "search.cache_ttl",
+        "search.cache_ttl", "chat.reflect_request_budget",
     ):
         _validate_range(data, name)
     for name in ("confidence_threshold", "chat.compact_threshold"):
@@ -268,6 +273,10 @@ def load_config(path: Path | str | None = None) -> Config:
         auto_recall=int(chat_raw.get("auto_recall", 3)),
         recall_rewrite=bool(chat_raw.get("recall_rewrite", True)),
         recall_context_turns=int(chat_raw.get("recall_context_turns", 2)),
+        auto_reflect=bool(chat_raw.get("auto_reflect", True)),
+        reflect_idle_seconds=float(chat_raw.get("reflect_idle_seconds", 60.0)),
+        reflect_interval_seconds=float(chat_raw.get("reflect_interval_seconds", 300.0)),
+        reflect_request_budget=int(chat_raw.get("reflect_request_budget", 20)),
         extract_on_exit=bool(chat_raw.get("extract_on_exit", True)),
     )
     retrieval_raw = data.get("retrieval", {})
@@ -343,6 +352,10 @@ tool_timeout = 60.0
 auto_recall = 3
 recall_rewrite = true
 recall_context_turns = 2
+auto_reflect = true
+reflect_idle_seconds = 60.0
+reflect_interval_seconds = 300.0
+reflect_request_budget = 20
 extract_on_exit = true
 
 [retrieval]

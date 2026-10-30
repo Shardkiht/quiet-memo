@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from functools import partial
 
 from rich.markup import escape
@@ -9,8 +10,63 @@ from rich.markup import escape
 class ChatReflectionMixin:
     """回顾 worker 不占聊天 busy；取消令牌在主线程创建，覆盖尚未启动的任务。"""
 
+    def _start_auto_reflection(self) -> None:
+        self._reflection_last_activity = time.monotonic()
+        self._reflection_next = 0.0
+        self._reflection_remaining = self.service.config.chat.reflect_request_budget
+        self._reflection_mode = "dream"
+        self._reflection_paused = False
+        self.set_interval(5, self._auto_reflection_tick)
+
+    def _reflection_activity(self) -> None:
+        self._reflection_last_activity = time.monotonic()
+
+    def _auto_reflection_tick(self) -> None:
+        config = self.service.config.chat
+        now = time.monotonic()
+        if (not config.auto_reflect or self._reflection_paused or not getattr(self, "_reflection_ready", False)
+            or self.busy or getattr(self, "_reflection_pending", False) or self._reflection_remaining <= 0
+            or now < self._reflection_next or now - self._reflection_last_activity < config.reflect_idle_seconds):
+            return
+        from textual.widgets import Input
+        if self.query_one("#input", Input).value.strip() or len(self.screen_stack) > 1:
+            return
+        self._reflection_next = now + config.reflect_interval_seconds
+        self._reflection_pending = True
+        self._reflection_cancel = threading.Event()
+        mode = self._reflection_mode
+        self._reflection_mode = "profile" if mode == "dream" else "dream"
+        # 每轮只发一次；缺少新材料时引擎不调用模型，也不消耗预算。
+        self.run_worker(partial(self._auto_reflection_work, mode, self._reflection_cancel),
+                        thread=True, group="reflection", exit_on_error=False)
+
+    def _auto_reflection_work(self, mode: str, token: threading.Event) -> None:
+        try:
+            result = self.service.reflection.run(mode, 1, cancel_event=token)
+            self.call_from_thread(self._after_auto_reflection, result, None)
+        except Exception:
+            self.call_from_thread(self._after_auto_reflection, None, "自动回顾失败，已保留进度。")
+
+    def _after_auto_reflection(self, result, error: str | None) -> None:
+        self._reflection_pending = False
+        self._reflection_next = time.monotonic() + self.service.config.chat.reflect_interval_seconds
+        if result is not None:
+            self._reflection_remaining -= result.requests
+            error = result.error
+            if result.proposed:
+                self.notify(f"后台回顾新增 {result.proposed} 条推断，可用 /inferences 审查。")
+        else:
+            self._reflection_remaining -= 1
+        if error:
+            self.notify(error)
+
     def _reflection_command(self, mode: str, argument: str) -> None:
+        if argument == "resume":
+            self._reflection_paused = False
+            self.add_card("自动回顾已恢复，空闲后继续。")
+            return
         if argument == "cancel":
+            self._reflection_paused = True
             token = getattr(self, "_reflection_cancel", None)
             if token is not None:
                 token.set()
@@ -18,7 +74,9 @@ class ChatReflectionMixin:
             self.add_card("已请求取消；正在发送的模型请求返回后停止，不再提交该轮候选。")
             return
         if argument == "status":
-            self.add_card("回顾任务运行中。" if getattr(self, "_reflection_pending", False) else "没有正在运行的回顾任务。")
+            running = "运行中" if getattr(self, "_reflection_pending", False) else "空闲"
+            enabled = self.service.config.chat.auto_reflect and not getattr(self, "_reflection_paused", False)
+            self.add_card(f"回顾{running}；自动回顾{'启用' if enabled else '暂停/关闭'}；本次启动剩余请求预算 {getattr(self, '_reflection_remaining', 0)}。")
             return
         if mode == "profile" and not argument:
             self.run_worker(self._profile_work, thread=True, group="profile-view", exit_on_error=False)

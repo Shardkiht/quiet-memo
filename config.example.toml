@@ -31,6 +31,10 @@ timeout = 60.0
 # Spark 由供应商控制采样参数，不发送 temperature / reasoning_effort。
 
 [chat]
+auto_reflect = true
+reflect_idle_seconds = 60.0
+reflect_interval_seconds = 300.0
+reflect_request_budget = 20
 # 自动召回时参考最近几轮用户消息
 recall_context_turns = 2
 # 允许用 LLM 把追问改写成检索 query（需要 API Key）

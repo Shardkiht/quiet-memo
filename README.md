@@ -91,6 +91,10 @@ temperature = 0.1
 timeout = 60.0
 
 [chat]
+auto_reflect = true
+reflect_idle_seconds = 60.0
+reflect_interval_seconds = 300.0
+reflect_request_budget = 20
 context_window = 32000
 reserve_output_tokens = 1500
 keep_recent_tokens = 6000
@@ -179,7 +183,7 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 | `/import <path> [--apply]` | 导入文件或当前层目录；默认预览，`--apply` 重新分析并写入。不带路径时弹出输入框 |
 | `/inferences` | 查看、确认、拒绝或纠正独立推断 |
 | `/profile [refresh [次数]]` | 查看画像；refresh 显式调用模型提炼 |
-| `/dream [次数\|status\|cancel]` | 启动、查看或取消后台增量回顾，默认最多一次请求 |
+| `/dream [次数\|status\|cancel\|resume]` | 启动、查看或取消后台增量回顾，默认最多一次请求 |
 | `/pending` | 逐条处理待确认候选：确认写入 / 拒绝 / 改写后写入，队列清空前自动进入下一条 |
 | `/topics [name]` | 浏览记忆主题与条目数，带 name 下钻某主题的条目列表 |
 | `/exit` | 退出 |
@@ -469,8 +473,8 @@ uv run python evals/retrieval_eval.py
 | 低～中低 | [记忆上下文：时间、地点、情绪](https://github.com/Shardkiht/quiet-memo/issues/10) | 基础字段与存储链路已实现；已补带时区原始消息锚点与相对日期规则；推断情绪待实现 |
 | 低～中 | [推断独立存储与用户确认](https://github.com/Shardkiht/quiet-memo/issues/11) | 已支持独立存储、证据去重、CLI/TUI 审查及来源失效；交互体验继续完善 |
 | 中～中高 | [事实时间演化与多维召回](https://github.com/Shardkiht/quiet-memo/issues/12) | 已支持条件筛选、当前/历史视图和显式时态演化；复杂时序重排待完善 |
-| 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 已实现手动启动的后台增量回顾、请求上限、取消与恢复；自动调度待完善 |
-| 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 已实现可重建的事实/推断画像、显式刷新和相关已确认推断注入；长期语义评测待完善 |
+| 高 | [梦境记忆 / Dreaming](https://github.com/Shardkiht/quiet-memo/issues/8) | 已实现 TUI 空闲自动回顾、请求上限、暂停与恢复 |
+| 高 | [动态用户画像](https://github.com/Shardkiht/quiet-memo/issues/9) | 已实现可重建的事实/推断画像、空闲刷新和相关已确认推断注入；长期语义评测待完善 |
 | 很高 / 长期 | [跨 AI 客户端主动召回](https://github.com/Shardkiht/quiet-memo/issues/13) | 在客户端能力允许时，无需显式提醒即可适时调用个人记忆 |
 | 持续工程 | [记忆质量评测与回归](https://github.com/Shardkiht/quiet-memo/issues/14) | 扩展抽取/冲突、时间变化、情绪推断、隐含召回等合成测试，不以一次发布为终点 |
 
@@ -501,7 +505,7 @@ MCP `memorize` 可选 `observed_at` 接受带时区的原始消息时间。未�
 
 `qm profile`、`/profile` 和 MCP `profile` 查看画像，不发模型请求。画像从 preferences/goals/constraints/habits/schedule 主题事实及独立画像推断重建，分别标注事实、待确认和已确认推断，显示来源 ID。事实用现有更正/忘记操作修改，推断用 `/inferences` 审查。已确认画像也不是客观事实，只在来源与本轮召回相关时作为有限的辅助上下文；未确认推断不注入。
 
-`qm profile --refresh --requests 1` 或 `/profile refresh 1` 提炼画像；`qm dream --requests 1` 或 `/dream 1` 回顾当前有效事实，寻找可审查的联系和假设。默认不会自动启动；TUI 显式启动后在后台工作，可以继续聊天、切换会话。`/dream status` 查看运行态，`/dream cancel` 请求取消（两种模式共用任务）；已发送请求无法撤销计费，返回后停止发布未完成候选。已保存候选和全部会话仍保留。
+`qm profile --refresh --requests 1` 或 `/profile refresh 1` 提炼画像；`qm dream --requests 1` 或 `/dream 1` 回顾当前有效事实，寻找可审查的联系和假设。TUI 默认在空闲时自动启动；回顾在后台工作，可以继续聊天、切换会话。`/dream status` 查看运行态，`/dream cancel` 请求取消（两种模式共用任务）；已发送请求无法撤销计费，返回后停止发布未完成候选。已保存候选和全部会话仍保留。
 
 每次任务默认最多一次模型请求，可设 0–20；关闭该任务的底层重试与候补模型，单请求超时最多 60 秒，要求配置的上下文窗口至少 2048 tokens。只处理新增/变化的事实，有限引用已处理事实作为背景；重启后再次执行同一命令可接续。预算 0 不发请求，仅可恢复已经校验的本地结果。Dreaming 不直接扫描原始会话，先由既有沉淀流程将会话转成事实；不承诺穷举整库所有跨条目关系。
 
@@ -510,3 +514,5 @@ MCP `memorize` 可选 `observed_at` 接受带时区的原始消息时间。未�
 代码职责：时间演化写入由记忆服务统一编排，时间模块仅负责日期与视图计算；后台回顾通过公开服务接口访问推断。待确认项先追加处理日志再移出队列，写入失败保留候选；极端失败重试可能留下重复处理日志。损坏的向量缓存按未命中重建，回顾响应缺少 proposals 字段按失败处理并保留进度。
 
 回顾失败会区分模型请求超时、结果校验失败和本地读写失败；任务日志仅保存错误类别，不记录供应商异常原文。超时请求不标记批次完成，再次执行可以接续。
+
+TUI 启动补记结束后，空闲 60 秒自动回顾，Dreaming 与画像轮流执行；每轮最多一次请求，轮次间隔 300 秒，每次 TUI 启动共享 20 次自动请求预算。输入草稿、弹窗或聊天忙碌时不启动新任务，无新材料不请求。`/dream cancel` 暂停本次运行的自动调度并取消当前任务，`/dream resume` 恢复，`/dream status` 显示状态和剩余预算；配置 `[chat] auto_reflect=false` 可持久关闭。退出 TUI 后不运行；手动命令仍可立即触发，不占自动预算。

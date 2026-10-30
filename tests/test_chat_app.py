@@ -2119,3 +2119,49 @@ async def test_session_picker_rename_current_updates_runtime(tmp_path):
             if isinstance(app.screen, SessionPickerScreen):
                 break
         assert app.runtime.current.title() == "当前新标题"
+
+
+async def test_automatic_reflection_idle_budget_and_pause(tmp_path, monkeypatch):
+    import asyncio
+    from quiet_memo.memory.reflection import ReflectionResult
+    app = build_app(tmp_path, [])
+    calls = []
+    def run(mode, budget, cancel_event=None):
+        calls.append((mode, budget))
+        return ReflectionResult(mode, requests=1)
+    monkeypatch.setattr(app.service.reflection, "run", run)
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        app._reflection_remaining = 1
+        app._reflection_last_activity = 0
+        app.busy = True
+        app._auto_reflection_tick()
+        assert calls == []
+        app.busy = False
+        app._reflection_command("dream", "cancel")
+        app._auto_reflection_tick()
+        assert calls == []
+        app._reflection_command("dream", "resume")
+        app._auto_reflection_tick()
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        assert calls == [("dream", 1)]
+        assert app._reflection_remaining == 0
+        app._reflection_next = 0
+        app._auto_reflection_tick()
+        assert len(calls) == 1
+
+
+async def test_automatic_reflection_disabled_or_draft_does_not_start(tmp_path, monkeypatch):
+    import asyncio
+    app = build_app(tmp_path, [])
+    monkeypatch.setattr(app.service.reflection, "run", lambda *a, **k: pytest.fail("不得请求"))
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=30)
+        app.service.config.chat.auto_reflect = False
+        app._reflection_last_activity = 0
+        app._auto_reflection_tick()
+        app.service.config.chat.auto_reflect = True
+        app.query_one("#input", Input).value = "尚未发送的草稿"
+        app._reflection_last_activity = 0
+        app._auto_reflection_tick()
+        assert not getattr(app, "_reflection_pending", False)
