@@ -296,3 +296,24 @@ def test_timeout_is_identified_without_logging_exception_payload(service):
     assert '"error_kind": "timeout"' in log
     assert "private-payload-placeholder" not in log
     assert result.remaining == 1
+
+
+def test_profile_can_derive_from_custom_topics_without_listing_unrelated_facts(service):
+    source = service.note("合成用户阅读时喜欢安静", topic="custom-reading")
+    unrelated = service.note("合成设备有两个按钮", topic="custom-device")
+    seen = []
+    def model(mode, entries):
+        seen.extend(e.id for e in entries)
+        return [ReflectionProposal(text="可能偏好安静阅读", source_ids=[source.id])]
+    result = service.reflection.run("profile", model=model)
+    assert result.proposed == 1 and set(seen) == {source.id, unrelated.id}
+    items = service.reflection.profile()
+    assert {item.id for item in items if item.kind == "fact"} == {source.id}
+    assert not service.reflection.context({source.id})
+    service.review_inference(next(i.id for i in items if i.kind == "inference"), "reject")
+    assert service.reflection.profile() == []
+
+
+def test_profile_supports_chinese_topic_facts(service):
+    source = service.note("合成偏好", topic="偏好")
+    assert source.id in {item.id for item in service.reflection.profile()}
