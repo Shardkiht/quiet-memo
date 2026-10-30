@@ -439,13 +439,23 @@ It covers extraction-output parsing, conflicts, date precision, locations, expli
 uv run python evals/retrieval_eval.py
 ```
 
-| Retrieval | Recall@3 | Recall@5 | MRR@10 |
-| --- | --- | --- | --- |
-| keyword | 67% | 67% | 0.667 |
-| vector | 89% | 89% | 0.815 |
-| hybrid | **89%** | **89%** | 0.815 |
+2026-10-30 rerun, synthetic vault with 456 entries / 27 cases:
 
-On a real 797-entry personal vault (anonymized, aggregate metrics only), after fixing a vector-matrix misalignment caused by duplicate entry IDs from bulk import, hybrid's MRR@10 rose from 0.569 to 0.745 — the best of the three. Methodology, fix details, and known weaknesses are in [evals/README.md](evals/README.md).
+| Retrieval | Hit@3 | Hit@5 | MRR@10 |
+| --- | --- | --- | --- |
+| keyword | 74.1% | 74.1% | 0.722 |
+| vector | 92.6% | 92.6% | 0.913 |
+| hybrid | **92.6%** | **92.6%** | **0.913** |
+
+Real vault with 882 active facts / 24 model-generated questions:
+
+| Retrieval | Hit@3 | Hit@5 | MRR@10 |
+| --- | --- | --- | --- |
+| keyword | 95.8% | 95.8% | 0.889 |
+| vector | 91.7% | 95.8% | 0.814 |
+| hybrid | 91.7% | 95.8% | 0.842 |
+
+The real query set was generated from randomly sampled facts, not hand-labeled ground truth. Historical 797-entry results, methodology, timings, and known weaknesses are in [evals/README.md](evals/README.md).
 
 ## Roadmap
 
