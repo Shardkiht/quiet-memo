@@ -2165,3 +2165,17 @@ async def test_automatic_reflection_disabled_or_draft_does_not_start(tmp_path, m
         app._reflection_last_activity = 0
         app._auto_reflection_tick()
         assert not getattr(app, "_reflection_pending", False)
+
+
+async def test_removed_shortcuts_are_not_available(tmp_path, monkeypatch):
+    app = build_app(tmp_path, [])
+    assert not {"resume", "recall", "remember"}.intersection(item[0] for item in SLASH_COMMANDS)
+    cards = []
+    monkeypatch.setattr(app, "add_card", lambda message, *args: cards.append(message))
+    for command in ("/resume", "/recall 合成查询", "/remember 合成事实"):
+        app._command(command)
+        assert "Unknown command" in cards[-1]
+    opened = []
+    monkeypatch.setattr(app, "open_session_picker", lambda: opened.append(True))
+    app._command("/sessions")
+    assert opened == [True]

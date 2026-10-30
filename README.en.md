@@ -167,7 +167,6 @@ In-session commands:
 | --- | --- |
 | `/new` | End the current session and start a new one (created after the first message) |
 | `/sessions` | Open the centered session picker: type to filter, Enter to resume, Ctrl+R to rename, Del to delete (with confirmation), ESC to cancel |
-| `/resume [id\|query]` | Resume a session; without arguments jumps to the session list, an id/keyword resumes the match directly |
 | `/compact` | Compact the context immediately |
 | `/undo` | Withdraw the latest turn and restore its user message for editing |
 | `/summary` | View the current session summary |
@@ -177,8 +176,6 @@ In-session commands:
 | `/context` | Switch the context window: presets generated from the current model's limit, custom value allowed; effective on the next turn |
 | `/setup` | Reminds you that the full setup wizard runs `qm setup` in a terminal (manage built-in provider keys with `Ctrl+P` in `/model`) |
 | `/rename <title>` | Rename the session |
-| `/recall <query>` | Search memories directly |
-| `/remember <text>` | Extract and persist directly |
 | `/import <path> [--apply]` | Import a file or the current directory; preview by default, reanalyze and write with `--apply`. Without a path, opens an input dialog |
 | `/inferences` | Inspect, confirm, reject or correct separate inferences |
 | `/profile [refresh [requests]]` | View a profile; refresh explicitly calls the model |
@@ -518,3 +515,5 @@ Implementation boundaries: the memory service owns temporal writes; temporal hel
 Reflection failures distinguish request timeouts, output validation and local storage errors. The journal stores only the error category, never raw provider exception text. A timed-out batch remains pending and can resume on a subsequent run.
 
 After startup catch-up, the TUI automatically alternates Dreaming and profile refresh after 60 seconds idle. Each round allows one request, with 300 seconds between rounds and a shared 20-request budget per TUI launch. Draft input, modal screens and busy chat defer new jobs; unchanged facts require no request. `/dream cancel` pauses automatic scheduling and cancels the current job; `/dream resume` resumes; `/dream status` shows the remaining budget. Set `[chat] auto_reflect=false` to disable persistently. No scheduler runs after TUI exit; manual jobs use their own budget.
+
+Use `/sessions` to browse, search and resume sessions. Ask naturally to recall or remember information; the Agent uses recall / memorize tools. These memory actions have no TUI slash commands; CLI management commands remain available.

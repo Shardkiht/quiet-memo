@@ -4,7 +4,6 @@ from __future__ import annotations
 SLASH_COMMANDS = [
     ("new", "/new", "New session"),
     ("sessions", "/sessions", "Browse sessions"),
-    ("resume", "/resume [id|query]", "Resume a session"),
     ("compact", "/compact", "Compact context"),
     ("undo", "/undo", "Undo and edit last message"),
     ("summary", "/summary", "Show summary"),
@@ -14,8 +13,6 @@ SLASH_COMMANDS = [
     ("context", "/context", "Context window"),
     ("setup", "/setup", "Run setup in terminal"),
     ("rename", "/rename <title>", "Rename session"),
-    ("recall", "/recall <query>", "Search memories"),
-    ("remember", "/remember <text>", "Save memory"),
     ("import", "/import <path> [--apply]", "导入文件或目录（默认预览）"),
     ("pending", "/pending", "Review pending"),
     ("inferences", "/inferences", "查看与审查推断"),

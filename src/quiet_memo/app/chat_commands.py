@@ -40,11 +40,8 @@ class ChatCommandsMixin:
             self.add_card("在 /model 按 Ctrl+P 管理内置供应商；完整配置（自定义接口、记忆库）请在终端运行 qm setup。")
         elif command == "/new":
             self._new_session()
-        elif command in ("/sessions", "/resume"):
-            if argument and command == "/resume":
-                self._resume_by_query(argument)
-            else:
-                self.open_session_picker()
+        elif command == "/sessions":
+            self.open_session_picker()
         elif command == "/compact":
             self._run_compact()
         elif command == "/undo":
@@ -66,16 +63,6 @@ class ChatCommandsMixin:
                 self.add_card(f"Renamed to: {argument}")
             else:
                 self._open_rename_prompt()
-        elif command == "/recall":
-            if not argument:
-                self.add_card("Usage: /recall <query>")
-            else:
-                self._run_recall(argument)
-        elif command == "/remember":
-            if not argument:
-                self.add_card("Usage: /remember <text>")
-            else:
-                self._run_remember(argument)
         elif command == "/import":
             if not argument:
                 self.push_screen(TextInputScreen("导入文件或目录路径（默认预览；末尾加 --apply 写入）", on_result=lambda value: self._run_import(value) if value else None))
@@ -311,23 +298,6 @@ class ChatCommandsMixin:
         else:
             self.query_one("#input", Input).focus()
 
-    def _resume_by_query(self, query: str) -> None:
-        if self.busy:
-            return
-        rows = visible_sessions(self.sessions.list(100))
-        needle = query.lower()
-        matched = next(
-            (row for row in rows if row["id"] == query or needle in row["title"].lower()),
-            None,
-        )
-        if matched is None:
-            self.notify("No matching session.")
-            return
-        if self.runtime.has_session and matched["id"] == self.runtime.current.id:
-            self.notify("Already the current session.")
-            return
-        self._switch_session(matched["id"])
-
     def _show_status(self) -> None:
         if not self.runtime.has_session:
             self.add_card("The session is not created yet; it appears after your first message.")
@@ -383,26 +353,7 @@ class ChatCommandsMixin:
         self._set_busy(False)
         self._drain_pending_intent()
 
-    def _run_recall(self, query: str) -> None:
-        self._set_busy(True)
-        self.run_worker(
-            partial(self._recall_work, query), group="ask", thread=True,
-            exclusive=True, exit_on_error=False,
-        )
-
-    def _recall_work(self, query: str) -> None:
-        try:
-            hits = self.service.recall(query, 10)
-            message = (
-                "\n".join(f"[{hit.topic}] {hit.score:.2f} · {hit.text}" for hit in hits)
-                if hits else "No matching memories."
-            )
-        except Exception as exc:
-            self.call_from_thread(self._finish_error, f"Recall failed: {exc}")
-            return
-        self.call_from_thread(self._after_recall, message)
-
-    def _after_recall(self, message: str) -> None:
+    def _after_import(self, message: str) -> None:
         self.add_card(message)
         self.update_status()
         self._set_busy(False)
@@ -447,36 +398,7 @@ class ChatCommandsMixin:
         except Exception as exc:
             self.call_from_thread(self._finish_error, f"导入失败：{exc}")
             return
-        self.call_from_thread(self._after_recall, "导入结束。" if apply else "预览结束；确认后用 /import <路径> --apply 重新分析并写入。")
-
-    def _run_remember(self, text: str) -> None:
-        self._set_busy(True)
-        self.run_worker(
-            partial(self._remember_work, text),
-            group="ask",
-            thread=True,
-            exclusive=True,
-            exit_on_error=False,
-        )
-
-    def _remember_work(self, text: str) -> None:
-        source = f"session:{self.runtime.current.id}:manual" if self.runtime.has_session else "manual"
-        try:
-            result = self.service.memorize(text, source=source)
-            message = (
-                f"Wrote {len(result.admitted)}, pending {len(result.queued)}, "
-                f"duplicates {len(result.duplicates)}, blocked {len(result.blocked)}"
-            )
-        except Exception as exc:
-            message = f"Write failed: {exc}"
-        self.call_from_thread(self._after_remember, message)
-
-    def _after_remember(self, message: str) -> None:
-        self.add_card(message)
-        self.refresh_pending()
-        self.update_status()
-        self._set_busy(False)
-        self._drain_pending_intent()
+        self.call_from_thread(self._after_import, "导入结束。" if apply else "预览结束；确认后用 /import <路径> --apply 重新分析并写入。")
 
     # ---------- 设置类选择器（逻辑在 actions.py） ----------
 
