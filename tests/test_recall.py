@@ -92,3 +92,15 @@ def test_rewrite_falls_back_to_combined_text(monkeypatch):
 
     assert "滨江" in query.text
     assert query.rewritten is False
+
+
+@pytest.mark.parametrize("text,recent,expected", [
+    ("你好", [], False), ("帮我解释 Python", [], False), ("帮我翻译这句话", [], False),
+    ("搜索 https://example.com", [], False), ("HTTP 是什么", [], False),
+    ("我喜欢什么饮料", [], True), ("你还记得上次的计划吗", [], True),
+    ("那应该怎么选", ["我的预算有限"], True),
+    ("那怎么用", ["解释 Python"], False),
+])
+def test_automatic_recall_gate(text, recent, expected):
+    from quiet_memo.agent.recall import should_auto_recall
+    assert should_auto_recall(text, recent) is expected

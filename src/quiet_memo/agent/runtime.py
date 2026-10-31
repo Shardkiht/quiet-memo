@@ -21,7 +21,7 @@ from ..memory.detect import redact_secrets
 from ..memory.service import MemoryService, load_persona
 from .context import ContextManager
 from .prompts import build_system_prompt
-from .recall import RecallQueryBuilder
+from .recall import RecallQueryBuilder, should_auto_recall
 from .session import Session, SessionStore, new_message_id
 from .tools import build_tools, compact_tool_outputs
 
@@ -137,10 +137,13 @@ class AgentRuntime:
         text: str,
         on_event: Callable[[str], None] | None = None,
         on_delta: Callable[[str], None] | None = None,
+        on_progress: Callable[[str], None] | None = None,
     ) -> AgentReply:
         text = redact_secrets(text.strip())
         if not text:
             raise ValueError("消息为空。")
+        progress = on_progress or (lambda _: None)
+        progress("Preparing context")
         session = self.ensure_session()
         message_id = new_message_id()
         self.sessions.append(
@@ -186,6 +189,7 @@ class AgentRuntime:
         completed = False
 
         while steps < self.config.max_tool_steps:
+            progress("Waiting for model")
             turn = self._chat_with_retry(messages, tools.schemas(), on_delta=on_delta)
             usage.add(turn.usage)
             steps += 1
@@ -196,6 +200,7 @@ class AgentRuntime:
                 completed = True
                 break
             for call in turn.tool_calls:
+                progress(f"Calling tool: {call.name}")
                 outcome = tools.execute(call.name, call.arguments)
                 content = truncate_to_tokens(outcome.content, 2000)
                 self.sessions.append(
@@ -218,6 +223,7 @@ class AgentRuntime:
             compact_tool_outputs(messages, max_tokens=max(8000, self.config.context_window // 4))
 
         if not completed:
+            progress("Generating final answer")
             messages.append(
                 {
                     "role": "user",
@@ -408,13 +414,18 @@ class AgentRuntime:
     def _system_prompt(self) -> str:
         """每轮读 vault/SOUL.md，人设改动下一轮即生效；拼接规则见 prompts.py。"""
         prompt = build_system_prompt(load_persona(self.service.config.vault))
+        if self.service.config.search.enabled:
+            prompt += "\n联网能力已启用：search 搜索公开信息，HTTP 传输下 fetch_web 可读取公开网页。用户提供网页时应尝试可用工具，不要声称没有联网能力。实际可调用能力以本轮工具定义为准。"
         # 联网结果常只给到月/日；给出当前日期，模型才能判断“最新”是否成立。
         return f"{prompt}\n\n当前日期：{date.today().isoformat()}"
 
     def _auto_recall(self, text: str) -> str:
         if self.config.auto_recall <= 0:
             return ""
-        recall = self.recall_queries.build(text, self.current.user_texts()[:-1])
+        recent = self.current.user_texts()[:-1]
+        if not should_auto_recall(text, recent):
+            return ""
+        recall = self.recall_queries.build(text, recent)
         limit = self.config.auto_recall
         if recall.cue:
             limit = max(limit, 8)

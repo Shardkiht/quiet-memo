@@ -47,7 +47,7 @@ class ChatApp(ChatCommandsMixin, App):
     CSS = APP_CSS
 
     BINDINGS = [
-        Binding("ctrl+p", "model_providers", "供应商管理", priority=True, show=False),
+        Binding("ctrl+p", "model_providers", "Manage providers", priority=True, show=False),
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+b", "toggle_sidebar", "Toggle sidebar"),
     ]
@@ -71,6 +71,9 @@ class ChatApp(ChatCommandsMixin, App):
         self.sessions = sessions
         self.busy = False
         self.pending_count = 0
+        self._progress_phase = ""
+        self._progress_started = 0.0
+        self._model_status = Static("", id="model-status")
         self._pending_switch: str | None = None
         self._pending_new = False
         self._stream_widget: ChatReply | None = None
@@ -95,9 +98,12 @@ class ChatApp(ChatCommandsMixin, App):
                 yield TranscriptView(id="chat", classes="thin-scroll")
                 yield CommandPalette()
                 yield BarInput(placeholder="Message or /command", id="input")
-                yield Static("", id="status")
+                with Horizontal(id="status-row"):
+                    yield self._model_status
+                    yield Static("", id="status")
 
     def on_mount(self) -> None:
+        self.set_interval(0.15, self._render_model_status)
         self.refresh_pending()
         self.refresh_sessions()
         self.update_status()
@@ -538,7 +544,7 @@ class ChatApp(ChatCommandsMixin, App):
             return
         if used is None:
             self._usage_failed = key
-            self.notify("上下文用量估算失败")
+            self.notify("Context usage estimation failed")
         else:
             self._usage_cache[key] = used
             while len(self._usage_cache) > 16:
@@ -560,9 +566,8 @@ class ChatApp(ChatCommandsMixin, App):
         bar = f"[#8a8b90]{'━' * blocks}[/][#2f3035]{'─' * (10 - blocks)}[/]"
         used_text = format_tokens(used) if used else "0"
         if estimating:
-            used_text = "估算失败" if key == self._usage_failed else "计算中"
+            used_text = "Unavailable" if key == self._usage_failed else "Calculating"
         text = (
-            f"[#c2c3c7]◆ {self.runtime.model_label}[/] [#5f6068]·[/] "
             f"[#8a8b90]Context[/] {bar} [#8a8b90]{used_text}/{format_tokens(total)}[/]"
         )
         if self.pending_count:
@@ -570,13 +575,38 @@ class ChatApp(ChatCommandsMixin, App):
         if percent >= self.runtime.config.compact_threshold:
             text += " [#b08a6a]⚠ compact next turn[/]"
         self.query_one("#status", Static).update(text)
+        self._render_model_status()
 
     def _set_busy(self, busy: bool) -> None:
         self.busy = busy
+        if busy:
+            self._progress_started = time.monotonic()
+            self._progress_phase = "Working"
+        else:
+            self._progress_phase = ""
+        self._render_model_status()
         widget = self.query_one("#input", Input)
         widget.disabled = busy
         if not busy:
             widget.focus()
+
+    def _render_model_status(self) -> None:
+        if not self._model_status.is_mounted:
+            return
+        label = self.runtime.model_label
+        if self.busy:
+            elapsed = time.monotonic() - self._progress_started
+            frame = int(elapsed * 5) % 6
+            bar = "".join("━" if i == frame else "─" for i in range(6))
+            label += f"  {bar} {self._progress_phase} {elapsed:.0f}s"
+        if label != str(self._model_status.content):
+            self._model_status.update(label)
+
+    def _progress_update(self, phase: str) -> None:
+        self._progress_phase = phase
+        self._render_model_status()
+        if phase.startswith("Calling tool: "):
+            self.add_event(phase)
 
     # ---------- 输入与回合 ----------
 
@@ -622,6 +652,7 @@ class ChatApp(ChatCommandsMixin, App):
                 line,
                 on_event=lambda event: self.call_from_thread(self.add_event, event),
                 on_delta=lambda delta: self.call_from_thread(self._stream_append, stamp, delta),
+                on_progress=lambda phase: self.call_from_thread(self._progress_update, phase),
             )
         except ChatModelError as exc:
             self.call_from_thread(self._finish_error, str(exc))
@@ -639,6 +670,7 @@ class ChatApp(ChatCommandsMixin, App):
     # ---------- 流式渲染：帧合并更新，完成/中断后收尾 ----------
 
     def _stream_append(self, stamp: str, delta: str) -> None:
+        self._progress_phase = "Streaming"
         chat = self._chat()
         if self._stream_widget is None:
             chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))

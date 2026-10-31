@@ -75,7 +75,7 @@ async def test_import_error_releases_busy(tmp_path):
             if not app.busy:
                 break
         assert not app.busy
-        assert any("导入失败" in str(card.render()) for card in app.query(".card"))
+        assert any("import failed" in str(card.render()).lower() for card in app.query(".card"))
 
 
 def build_app(tmp_path, turns, extract_on_exit=False, search=None):
@@ -112,7 +112,7 @@ async def _wait_reply(app, pilot, limit=200):
 async def _wait_context_usage(app, pilot):
     for _ in range(100):
         await pilot.pause()
-        if "计算中" not in str(app.query_one("#status", Static).content):
+        if "Calculating" not in str(app.query_one("#status", Static).content):
             return
     raise AssertionError("等待后台上下文统计超时")
 
@@ -194,9 +194,9 @@ async def test_session_switch_drops_previous_context_usage(tmp_path, action):
             assert "0/32K" in status
         else:
             # 恢复会话后不能沿用上一个会话的用量，但要显示目标会话自身的占用。
-            assert "0/32K" not in status
+            assert app.runtime.context_usage() > 0
             assert f"{format_tokens(app.runtime.context_usage())}/32K" in status
-        # 重建 transcript 后焦点恢复可能晚一帧，busy 释放不等于 focus 已处理。
+        # 重建 transcript 后焦点恢复可能晚一帧，busy 释放不等于 focus Processed。
         for _ in range(50):
             await pilot.pause()
             if widget.has_focus:
@@ -463,7 +463,7 @@ async def test_context_estimation_failure_keeps_input_enabled(tmp_path, monkeypa
     monkeypatch.setattr(app.runtime.context, "estimate_usage", fail)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert "估算失败" in str(app.query_one("#status", Static).content)
+        assert "Unavailable" in str(app.query_one("#status", Static).content)
         assert not app.query_one("#input", Input).disabled
         app.update_status()
         await pilot.pause()
@@ -627,7 +627,7 @@ async def test_model_picker_can_configure_provider_key(tmp_path, monkeypatch):
         assert "Ctrl+P" in str(model_picker.query_one(".pick-hint").render())
         await pilot.press("ctrl+p")
         await pilot.pause()
-        assert "供应商管理" in str(app.screen.query_one(".pick-title").render())
+        assert "Providers" in str(app.screen.query_one(".pick-title").render())
         listing = app.screen.query_one("#pick-list", ListView)
         assert [item.value for item in listing.children] == ["add", "update", "remove"]
         listing.index = 0
@@ -1067,7 +1067,7 @@ async def test_resuming_torn_session_shows_recovery_notice_and_continues(tmp_pat
     app.runtime.resume(session.id)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        assert any("会话末行不完整" in str(card.render()) for card in app.query(".card"))
+        assert any("Incomplete session tail" in str(card.render()) for card in app.query(".card"))
         widget = app.query_one("#input", Input)
         widget.value = "接续提问"
         await pilot.press("enter")
@@ -2045,3 +2045,78 @@ async def test_removed_shortcuts_are_not_available(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "open_session_picker", lambda: opened.append(True))
     app._command("/sessions")
     assert opened == [True]
+
+
+@pytest.mark.parametrize("width", [80, 120])
+async def test_busy_progress_and_right_aligned_context(tmp_path, width):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(width, 40)) as pilot:
+        await pilot.pause()
+        app._set_busy(True)
+        app._progress_update("Calling tool: search")
+        await pilot.pause()
+        model = app.query_one("#model-status", Static)
+        context = app.query_one("#status", Static)
+        assert "search" in str(model.content)
+        assert model.region.right <= context.region.x
+        app._set_busy(False)
+        assert "search" not in str(model.content)
+
+
+async def test_progress_tick_after_status_unmount_is_safe(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await app.query_one("#model-status", Static).remove()
+        app._render_model_status()
+
+
+def test_fixed_tui_text_is_english():
+    import ast
+    import re
+    from pathlib import Path
+    from quiet_memo.app import chat_app
+
+    directory = Path(chat_app.__file__).parent
+    for name in ("chat_app", "chat_commands", "chat_widgets", "command_catalog", "chat_reflection"):
+        path = directory / f"{name}.py"
+        if not path.exists():
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docstrings = set()
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.body and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Constant):
+                    docstrings.add(id(node.body[0].value))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+                assert not re.search(r"[\u4e00-\u9fff]", node.value), f"{path.name}:{node.lineno}: {node.value}"
+
+
+async def test_native_input_cursor_tracks_editing_and_cleans_up(tmp_path, monkeypatch):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", BarInput)
+        writes = []
+        monkeypatch.setattr(app._driver, "write", writes.append)
+        monkeypatch.setattr(BarInput, "_uses_native_cursor", property(lambda self: True))
+        widget._restart_blink()
+        widget._show_native_cursor()
+        assert writes[-1] == "\x1b[5 q\x1b[?25h"
+        widget.value = "你好abc"
+        widget.cursor_position = 3
+        await pilot.pause()
+        assert app.cursor_position == widget.cursor_screen_offset
+        assert "│" not in widget.render_line(0).text
+        assert widget.value == "你好abc"
+        assert not widget._cursor_visible
+        widget.blur()
+        await pilot.pause()
+        assert writes[-1] == "\x1b[?25l\x1b[0 q"
+        writes.clear()
+        widget._hide_native_cursor()
+        assert not writes
+        widget.focus()
+        await pilot.pause()
+        assert writes[-1] == "\x1b[5 q\x1b[?25h"

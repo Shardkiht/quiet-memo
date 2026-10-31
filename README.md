@@ -123,7 +123,7 @@ cache_ttl = 86400
 transport = "http"            # http：本地 daemon；mcp：每次启动 npx MCP 进程
 auto_start = true             # 打开 TUI 时后台预热 daemon，不阻塞界面
 engines = ["bing"]            # 上游引擎；中文品牌名被拆词时可换 ["baidu"] 或 ["sogou"]
-fetch_timeout = 25.0          # 抓取正文的单独超时（秒）
+fetch_timeout = 45.0          # 抓取正文的单独超时（秒）
 ```
 
 讯飞 Spark MaaS 可在 `qm setup` 中选择；也可把上面的 `[llm]` 替换为以下配置，并设置环境变量 `SPARK_API_KEY`。凭据由环境变量或系统密钥环读取，不写进 TOML。
@@ -143,6 +143,8 @@ Spark 使用 MaaS 的 Bearer API Key；适配层保留服务端采样默认值�
 联网搜索默认启用，但需要本地 open-websearch daemon；启动方式和配置见下方[联网搜索](#联网搜索)。
 
 ## 对话 Agent
+
+发送后模型名称旁显示活动加载条、当前阶段和等待秒数；上下文占用位于状态栏右侧，工具开始执行时显示调用提示。
 
 直接运行 `qm` 或 `quietmemo` 进入全屏对话界面（基于 Textual，窗口拉伸时整个画面自适应重排）；会话在发送第一条消息时创建。`qm chat` 等价。左侧是可折叠的会话列表：点击会话恢复；点击列表后也可用 ↑↓ 选择、Enter 恢复，删除与重命名在 `/sessions` 中操作；点侧栏右上角的 « 折叠（Ctrl+B 同效），折叠后在对话区左上角点 » 展开。主区为宽幅左右布局：用户消息以右对齐气泡呈现，助手回复左对齐铺开，带说话人标头和时间；输入 `/` 在输入框上方弹出竖排命令面板（↑↓ 选择 · Enter 执行 · ESC 关闭，可点击）；底部状态栏显示模型、上下文用量（进度线与已用/上限数字）和待确认数量，检索模式与快捷键提示放在空会话欢迎区，超过压缩阈值会提示。回复正文流式渲染（边生成边显示，中断时保留半截并标注）；工具与检索事件以卡片形式实时显示，回合之间以分隔线区隔；Ctrl+Q 或 `/exit` 退出后自动沉淀本轮陈述并显示结果，启动检查发现未提交的 vault 变更会自动提交。
 
@@ -299,7 +301,7 @@ npx -y open-websearch@latest serve
 # 或：npm i -g open-websearch && open-websearch serve
 ```
 
-搜索结果只有标题、摘要和链接；`fetch_web` 会打开其中某个链接并提取正文（readability，最多 8000 字符），用于核对发布日期、原文细节或摘要。抓取只通过 HTTP transport 提供，MCP 接口仍只有 `search`。抓取入口只接受公网 http(s) 地址，拒绝 localhost、私网与链路本地地址，并对重定向后的最终地址复验；使用 fake-IP 代理时可用与上游同名的 `FAKE_IP_CIDRS` 放行合成地址。
+搜索结果只有标题、摘要和链接；`fetch_web` 会打开其中某个链接并提取正文（readability，最多 8000 字符），用于核对发布日期、原文细节或摘要。抓取只通过 HTTP transport 提供，MCP 接口仍只有 `search`。抓取入口只接受公网 http(s) 地址，拒绝 localhost、私网与链路本地地址，并对重定向后的最终地址复验；默认兼容 fake-IP 代理的 `198.18.0.0/15` 与 `2001:2::/48` 合成 DNS 段，仅对域名解析结果放行，直接填写非公网 IP 仍拒绝。`FAKE_IP_CIDRS` 可覆盖默认网段（空值关闭兼容）；自动启动的 daemon 继承相同设置，已运行的外部 daemon 需自行同步设置并重启。自动启动时优先使用 PATH 中已安装的 `open-websearch`，未安装时才通过 `npx open-websearch@latest` 拉起。
 
 Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「智」检索）；遇到明显跑题时，可在配置里把 `engines` 改为 `["baidu"]`，或让模型在 `search` 工具里传 `search_engine = "baidu"` 重试。`search_engine` 也接受数组，最多 3 个引擎，例如 `["baidu", "bing"]`，结果会在同一请求中合并；MCP 的 `search` 同样支持。
 
@@ -316,7 +318,7 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 
 - 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
 - daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
-- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）、`engines`（上游搜索引擎，默认 `["bing"]`）、`fetch_timeout`（抓取正文的单独超时，默认 25 秒）。
+- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）、`engines`（上游搜索引擎，默认 `["bing"]`）、`fetch_timeout`（抓取正文的单独超时，默认 45 秒）。
 - `auto_start` 启动的 daemon 在 Windows 下隐藏控制台窗口；退出 TUI 后继续常驻，下次直接复用。
 - 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
 
@@ -478,3 +480,10 @@ uv run python evals/retrieval_eval.py
 表中已标明基础实现与剩余规划；当前支持的行为和边界以 README 其他章节为准。
 
 会话浏览、搜索与恢复统一使用 `/sessions`。聊天中直接说“你记得……吗”或“记住……”，由 Agent 调用 recall / memorize；不提供对应的 TUI 斜杠命令。命令行管理入口保持可用。
+
+自动记忆召回按个人话题和连续追问触发；通用问题跳过预取，模型仍可按需调用 recall。auto_recall=0 关闭预取。
+
+
+TUI 固定界面文案统一使用英文，聊天内容保留原语言。默认 Bing 搜索连接失败或超时时，HTTP 搜索最多回退百度一次；显式指定引擎不自动替换。引擎失败不会显示为零结果或写入结果缓存。
+
+Windows 交互终端输入框使用原生细竖线光标，以配合中文输入法组字；拼音阶段的光标表现取决于终端与输入法。

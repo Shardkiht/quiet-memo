@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -9,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from .base import ProviderError, ProviderErrorKind
+from .base import DEFAULT_FAKE_IP_CIDRS, ProviderError, ProviderErrorKind
 from .open_websearch import NAME, npx_command
 
 START_TIMEOUT = 20.0
@@ -53,7 +54,11 @@ def ensure_daemon(
     target_log = log_path or DEFAULT_LOG
 
     def default_spawn() -> None:
-        command = npx_command("npx", ("-y", "open-websearch@latest")) + [
+        installed = shutil.which("open-websearch")
+        command = (
+            npx_command(installed, ()) if installed
+            else npx_command("npx", ("-y", "open-websearch@latest"))
+        ) + [
             "serve",
             "--port",
             str(port),
@@ -94,13 +99,16 @@ def _spawn_daemon(command: list[str], log_path: Path) -> None:
         kwargs["start_new_session"] = True
 
     try:
+        env = {**os.environ, "OPEN_WEBSEARCH_QUIET_STARTUP": "true"}
+        # 两层校验必须共用合成 DNS 段，否则本地通过后仍会被 daemon 拒绝。
+        env.setdefault("FAKE_IP_CIDRS", DEFAULT_FAKE_IP_CIDRS)
         with open(log_path, "ab") as log:
             subprocess.Popen(
                 command,
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                env={**os.environ, "OPEN_WEBSEARCH_QUIET_STARTUP": "true"},
+                env=env,
                 **kwargs,
             )
     except OSError as exc:

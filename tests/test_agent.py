@@ -323,7 +323,7 @@ def test_auto_recall_injects_long_term_memory(tmp_path):
     runtime, service = build_runtime(tmp_path, model)
     service.note("喜欢清淡风味", topic="preferences")
 
-    runtime.ask("清淡")
+    runtime.ask("我喜欢清淡吗")
 
     system_message = model.calls[0][0][0]
     assert "<long_term_memory>" in system_message["content"]
@@ -1199,3 +1199,33 @@ def test_consolidate_does_not_let_short_sessions_hide_eligible_sessions(tmp_path
     assert not runtime.sessions.load(sessions[0].id).needs_consolidation()
     assert all(runtime.sessions.load(s.id).needs_consolidation() for s in sessions[1:])
     assert runtime.consolidate_pending()["consolidated"] == 3
+
+
+def test_general_question_skips_automatic_memory(tmp_path, monkeypatch):
+    runtime, service = build_runtime(tmp_path, FakeChatModel([AssistantTurn(content="答案")]))
+    monkeypatch.setattr(service, "recall", lambda *a, **k: pytest.fail("不应预取记忆"))
+    monkeypatch.setattr(runtime.recall_queries, "build", lambda *a: pytest.fail("不应改写查询"))
+    runtime.ask("解释 Python 的列表推导式")
+
+
+def test_progress_precedes_model_and_tool_execution(tmp_path, monkeypatch):
+    from quiet_memo.agent.tools import ToolOutcome, ToolRegistry
+
+    progress = []
+
+    class ProgressModel(FakeChatModel):
+        def chat(self, messages, tools, on_delta=None):
+            assert progress[-1] == "Waiting for model"
+            return super().chat(messages, tools, on_delta)
+
+    def execute(registry, name, arguments):
+        assert progress[-1] == f"Calling tool: {name}"
+        return ToolOutcome(ok=True, content="合成结果", display="工具完成")
+
+    monkeypatch.setattr(ToolRegistry, "execute", execute)
+    runtime, _ = build_runtime(tmp_path, ProgressModel([
+        AssistantTurn(tool_calls=[ToolCall(id="t1", name="recall", arguments={"query": "合成"})]),
+        AssistantTurn(content="完成"),
+    ]))
+    runtime.ask("你好", on_progress=progress.append)
+    assert progress == ["Preparing context", "Waiting for model", "Calling tool: recall", "Waiting for model"]

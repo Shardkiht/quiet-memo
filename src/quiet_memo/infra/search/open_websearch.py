@@ -116,7 +116,7 @@ class HttpTransport:
         timeout: float = 10.0,
         client_factory: ClientFactory | None = None,
         engines: list[str] | tuple[str, ...] | None = None,
-        fetch_timeout: float = 25.0,
+        fetch_timeout: float = 45.0,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -212,6 +212,14 @@ class HttpTransport:
             raise ProviderError(
                 NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 响应缺少 data.results"
             )
+        failures = data.get("partialFailures")
+        if not results and isinstance(failures, list) and failures:
+            details = "; ".join(
+                f"{item.get('engine', 'unknown')}: {item.get('code', '')} {item.get('message', '')}"
+                for item in failures if isinstance(item, dict)
+            )
+            kind = ProviderErrorKind.TIMEOUT if "TIMEOUT" in details.upper() or "TIMEDOUT" in details.upper() else ProviderErrorKind.NETWORK
+            raise ProviderError(NAME, kind, details or "All search engines failed")
         return [item for item in results if isinstance(item, dict)]
 
 
@@ -421,7 +429,7 @@ class OpenWebSearchProvider:
         mcp_command: str = "npx",
         mcp_args: tuple[str, ...] = ("-y", "open-websearch@latest"),
         engines: list[str] | tuple[str, ...] | None = None,
-        fetch_timeout: float = 25.0,
+        fetch_timeout: float = 45.0,
     ):
         if transport == "mcp":
             self.transport: HttpTransport | McpStdioTransport = McpStdioTransport(

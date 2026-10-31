@@ -159,6 +159,67 @@ def test_fetch_url_allows_configured_fake_ip(monkeypatch):
     assert_public_fetch_url("https://example.com/")
 
 
+@pytest.mark.parametrize("final_url", ["https://example.com/", "https://example.com/final"])
+def test_router_fetch_allows_default_dual_stack_fake_dns(monkeypatch, final_url):
+    from quiet_memo.infra.search import base as search_base
+
+    monkeypatch.delenv("FAKE_IP_CIDRS", raising=False)
+    monkeypatch.setattr(
+        search_base.socket, "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("198.18.0.15", port)),
+            (socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("2001:2::12", port, 0, 0)),
+        ],
+    )
+
+    class FetchProvider:
+        capabilities = {"fetch"}
+
+        def fetch(self, query):
+            return FetchResult(query.url, final_url, "Title", "正文")
+
+    router = SearchRouter({"fake": FetchProvider()})
+    assert router.fetch("https://example.com/").content == "正文"
+
+
+@pytest.mark.parametrize("configured", ["", "203.0.113.0/24"])
+def test_explicit_fake_ip_ranges_replace_defaults(monkeypatch, configured):
+    monkeypatch.setenv("FAKE_IP_CIDRS", configured)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("198.18.0.15", port))
+        ],
+    )
+    with pytest.raises(ValueError, match="非公网"):
+        assert_public_fetch_url("https://example.com/")
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "fc00::1"])
+def test_fake_dns_does_not_hide_private_answer(monkeypatch, address):
+    monkeypatch.delenv("FAKE_IP_CIDRS", raising=False)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda host, port, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port))
+            for ip in ("198.18.0.15", address)
+        ],
+    )
+    with pytest.raises(ValueError, match="非公网"):
+        assert_public_fetch_url("https://example.com/")
+
+
+@pytest.mark.parametrize("configured", [None, "0.0.0.0/0,::/0"])
+@pytest.mark.parametrize("host", ["198.18.0.15", "[2001:2::12]", "127.0.0.1", "[::ffff:127.0.0.1]"])
+def test_fake_ip_exceptions_never_allow_literal_non_public_targets(monkeypatch, configured, host):
+    if configured is None:
+        monkeypatch.delenv("FAKE_IP_CIDRS", raising=False)
+    else:
+        monkeypatch.setenv("FAKE_IP_CIDRS", configured)
+    with pytest.raises(ValueError, match="私网或本机"):
+        assert_public_fetch_url(f"http://{host}/")
+
+
 def test_router_fetch_rejects_private_url_before_provider():
     class CountingProvider:
         name = "fake"
@@ -505,6 +566,21 @@ def test_ensure_daemon_reuses_running_process():
     assert spawns == []
 
 
+@pytest.mark.parametrize("installed", [None, "/installed/open-websearch"])
+def test_ensure_daemon_prefers_installed_service(monkeypatch, tmp_path, installed):
+    checks = iter([False, True])
+    commands = []
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda name: installed)
+    monkeypatch.setattr(daemon_module, "npx_command", lambda command, args: [command, *args])
+    monkeypatch.setattr(daemon_module, "_spawn_daemon", lambda command, log: commands.append(command))
+    assert ensure_daemon(
+        "http://127.0.0.1:3000", health_check=lambda: next(checks),
+        sleep=lambda _: None, log_path=tmp_path / "daemon.log",
+    ) == "started"
+    expected = [installed] if installed else ["npx", "-y", "open-websearch@latest"]
+    assert commands == [expected + ["serve", "--port", "3000"]]
+
+
 def test_ensure_daemon_health_uses_spawn_port_when_url_has_no_port(monkeypatch):
     seen = []
     monkeypatch.setattr(
@@ -582,6 +658,25 @@ def test_spawn_daemon_hides_console_window(tmp_path, monkeypatch):
     assert captured["creationflags"] & daemon_module.subprocess.CREATE_NO_WINDOW
     assert captured["startupinfo"].dwFlags & daemon_module.subprocess.STARTF_USESHOWWINDOW
     assert captured["startupinfo"].wShowWindow == daemon_module.subprocess.SW_HIDE
+
+
+@pytest.mark.parametrize("configured", [None, "", "203.0.113.0/24"])
+def test_spawn_daemon_shares_fake_dns_policy(tmp_path, monkeypatch, configured):
+    from quiet_memo.infra.search.base import DEFAULT_FAKE_IP_CIDRS
+
+    captured = {}
+    if configured is None:
+        monkeypatch.delenv("FAKE_IP_CIDRS", raising=False)
+    else:
+        monkeypatch.setenv("FAKE_IP_CIDRS", configured)
+    monkeypatch.setattr(
+        daemon_module.subprocess, "Popen",
+        lambda command, **kwargs: captured.update(kwargs),
+    )
+    daemon_module._spawn_daemon(["unused"], tmp_path / "daemon.log")
+    assert captured["env"]["FAKE_IP_CIDRS"] == (
+        DEFAULT_FAKE_IP_CIDRS if configured is None else configured
+    )
 
 
 def test_disabled_search_does_not_register_tool(tmp_path):
@@ -805,3 +900,65 @@ async def test_mcp_omits_search_when_disabled(tmp_path):
     async with Client(server) as client:
         tools = await client.list_tools()
         assert "search" not in {tool.name for tool in tools}
+
+
+@pytest.mark.parametrize("value, expected", [
+    ('["bing"]', ("bing",)),
+    ('["baidu", "bing", "baidu"]', ("baidu", "bing")),
+])
+def test_engine_argument_accepts_json_array_string(value, expected):
+    from quiet_memo.infra.search.base import normalize_search_engines
+    assert normalize_search_engines(value, ["bing", "baidu"]) == expected
+
+
+@pytest.mark.parametrize("value", ['[1]', '["notreal"]', '["bing"'])
+def test_engine_argument_rejects_invalid_json_array_string(value):
+    from quiet_memo.infra.search.base import normalize_search_engines
+    with pytest.raises(ValueError):
+        normalize_search_engines(value, ["bing", "baidu"])
+
+
+def test_default_engine_failure_falls_back_once():
+    requests = []
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if body["engines"] == ["bing"]:
+            payload = envelope([])
+            payload["data"]["partialFailures"] = [{"engine": "bing", "code": "ECONNRESET", "message": "TLS connection failed"}]
+            return httpx.Response(200, json=payload)
+        return httpx.Response(200, json=envelope([raw_result("Synthetic", "https://example.com")]))
+    provider = mock_provider(handler, engines=["bing"])
+    router = SearchRouter({"open_websearch": provider}, order=["open_websearch"], engines=["bing"])
+    results = router.search(SearchQuery("synthetic"))
+    assert len(results.results) == 1
+    assert [item["engines"] for item in requests] == [["bing"], ["baidu"]]
+
+
+def test_explicit_engine_failure_is_not_cached_as_empty(tmp_path):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        payload = envelope([])
+        payload["data"]["partialFailures"] = [{"engine": "bing", "code": "ETIMEDOUT", "message": "request timed out"}]
+        return httpx.Response(200, json=payload)
+    provider = mock_provider(handler)
+    router = SearchRouter({"open_websearch": provider}, order=["open_websearch"], cache=SearchCache(tmp_path / "cache.json", ttl=300))
+    for _ in range(2):
+        result = router.search(SearchQuery("synthetic", engines=("bing",)))
+        assert not result.results
+        assert result.failed[0].kind == "timeout"
+        assert not result.cached
+    assert len(calls) == 2
+
+
+def test_legacy_empty_search_cache_is_not_reused(tmp_path):
+    import hashlib
+    provider = FakeProvider([SearchResult("ok", "https://example.com", "")])
+    cache = SearchCache(tmp_path / "cache.json", ttl=60)
+    legacy_key = hashlib.sha256("\x1f".join(["q", "5", "auto", "", "", "fake"]).encode()).hexdigest()
+    cache.set(legacy_key, [], "fake")
+    router = SearchRouter({"fake": provider}, order=["fake"], cache=cache)
+    result = router.search(SearchQuery("q"))
+    assert result.results and not result.cached
+    assert provider.calls == 1

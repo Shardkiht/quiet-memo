@@ -108,7 +108,7 @@ class SearchConfig:
     auto_start: bool = True  # 打开 TUI 时后台预热 HTTP daemon
     # 上游搜索引擎；空列表表示沿用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
     engines: list[str] = field(default_factory=lambda: ["bing"])
-    fetch_timeout: float = 25.0  # 抓取正文单独超时，秒
+    fetch_timeout: float = 45.0  # 抓取正文单独超时，秒
 
 
 @dataclass(slots=True)

@@ -37,7 +37,7 @@ class ChatCommandsMixin:
         elif command == "/context":
             self._pick_context()
         elif command == "/setup":
-            self.add_card("在 /model 按 Ctrl+P 管理内置供应商；完整配置（自定义接口、记忆库）请在终端运行 qm setup。")
+            self.add_card("Use Ctrl+P in /model to manage providers. Run qm setup in a terminal for full configuration.")
         elif command == "/new":
             self._new_session()
         elif command == "/sessions":
@@ -65,7 +65,7 @@ class ChatCommandsMixin:
                 self._open_rename_prompt()
         elif command == "/import":
             if not argument:
-                self.push_screen(TextInputScreen("导入文件或目录路径（默认预览；末尾加 --apply 写入）", on_result=lambda value: self._run_import(value) if value else None))
+                self.push_screen(TextInputScreen("File or directory path (preview by default; add --apply to save)", on_result=lambda value: self._run_import(value) if value else None))
             else:
                 self._run_import(argument)
         elif command == "/pending":
@@ -312,10 +312,10 @@ class ChatCommandsMixin:
         if len(filename) >= 2 and filename[0] == filename[-1] and filename[0] in ("'", '"'):
             filename = filename[1:-1]
         if not filename:
-            self.add_card("用法：/import <文件或目录路径> [--apply]")
+            self.add_card("Usage: /import <file-or-directory> [--apply]")
             return
         self._set_busy(True)
-        self.add_card("开始导入：解析在本地完成；抽取会调用配置的模型并可能产生费用。" + ("本次写入记忆。" if apply else "本次只预览，不写入记忆。"))
+        self.add_card("Starting import: parsing is local; extraction calls the configured model and may incur charges. " + ("Memories will be saved." if apply else "Preview only; memories will not be saved."))
         self.run_worker(partial(self._import_work, Path(filename).expanduser(), apply),
                         group="ask", thread=True, exclusive=True, exit_on_error=False)
 
@@ -323,27 +323,27 @@ class ChatCommandsMixin:
         try:
             files = sorted(file for file in path.iterdir() if file.is_file() and file.suffix.lower() in SUPPORTED_SUFFIXES) if path.is_dir() else [path]
             if not files:
-                raise ValueError("当前目录没有支持的文件（不递归扫描）。")
+                raise ValueError("No supported files in this directory (non-recursive).")
             for file in files:
                 try:
                     chunks = split_chunks(read_document(file))
                     for index, chunk in enumerate(chunks, 1):
-                        self.call_from_thread(self.add_card, escape(f"正在分析 {file.name}：{index}/{len(chunks)} 块"))
+                        self.call_from_thread(self.add_card, escape(f"Analyzing {file.name}: chunk {index}/{len(chunks)}"))
                         result = self.service.import_text(chunk, source=f"import:{file.name}#chunk:{index}", dry_run=not apply)
-                        lines = [f"{'已处理' if apply else '预览'}：直写 {len(result.admitted)} · 待确认 {len(result.queued)} · 重复 {len(result.duplicates)} · 拦截 {len(result.blocked)}"]
+                        lines = [f"{'Processed' if apply else 'Preview'}: saved {len(result.admitted)} · pending {len(result.queued)} · duplicates {len(result.duplicates)} · blocked {len(result.blocked)}"]
                         # 只展示已通过凭据裁决的候选；被拦截原文不回显。
                         lines += [f"[{entry.topic}] {entry.text}" for entry in result.admitted]
-                        lines += [f"待确认 [{item.topic}] {item.text}" for item in result.queued]
+                        lines += [f"Pending [{item.topic}] {item.text}" for item in result.queued]
                         self.call_from_thread(self.add_card, escape("\n".join(lines)))
                 except DocumentError as exc:
-                    self.call_from_thread(self.add_card, escape(f"{file.name} 导入失败：{exc}"))
+                    self.call_from_thread(self.add_card, escape(f"{file.name} import failed: {exc}"))
                 except Exception:
-                    self.call_from_thread(self.add_card, escape(f"{file.name} 导入失败，请检查格式、解析依赖和模型配置；已处理部分不会回滚。"))
+                    self.call_from_thread(self.add_card, escape(f"{file.name} import failed. Check the format, parser dependencies and model settings; completed changes are retained."))
             self.call_from_thread(self.refresh_pending)
         except Exception as exc:
-            self.call_from_thread(self._finish_error, f"导入失败：{exc}")
+            self.call_from_thread(self._finish_error, f"Import failed: {exc}")
             return
-        self.call_from_thread(self._after_import, "导入结束。" if apply else "预览结束；确认后用 /import <路径> --apply 重新分析并写入。")
+        self.call_from_thread(self._after_import, "Import complete." if apply else "Preview complete; use /import <path> --apply to analyze again and save.")
 
     # ---------- 设置类选择器（逻辑在 actions.py） ----------
 
@@ -419,8 +419,8 @@ class ChatCommandsMixin:
         provider, model = value
         if provider == "__providers__":
             self.push_screen(PickScreen(
-                "供应商管理（Esc 返回模型列表）",
-                [("添加供应商", "add"), ("更新供应商 Key", "update"), ("移除供应商", "remove")],
+                "Providers (Esc to return to models)",
+                [("Add provider", "add"), ("Update provider key", "update"), ("Remove provider", "remove")],
                 self._provider_management_picked,
             ))
             return

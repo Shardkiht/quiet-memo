@@ -144,6 +144,8 @@ Web search is enabled by default but requires a local open-websearch daemon; see
 
 ## Chat agent
 
+After sending, an animated indicator, current phase and elapsed seconds appear beside the model name. Context usage is right-aligned, and tool calls are shown when execution starts.
+
 Run `qm` or `quietmemo` to enter the full-screen chat UI (built on Textual; the whole screen reflows when you resize the window); a session is created when you send the first message. `qm chat` is equivalent. The collapsible left sidebar lists sessions: click a session to resume; after clicking the list you can also browse with arrow keys and press Enter, while delete and rename live in `/sessions`; click « at the sidebar's top-right corner (or Ctrl+B) to collapse, and » appears at the chat's top-left corner to expand. The main pane is a wide two-column layout: user messages appear as right-aligned bubbles, assistant replies span the left with speaker headers and times. Typing `/` opens a vertical command palette above the input (arrows to select, Enter to run, ESC to dismiss, rows clickable); the bottom status bar shows the model, context usage as a progress line with used/total numbers, and the pending count; retrieval mode and shortcut hints live in the empty-session welcome, warning past the compaction threshold. Reply text streams in as it is generated (interrupted generations keep the partial text with a marker); tool and retrieval events appear as cards, turns are separated by a divider; exiting (Ctrl+Q or `/exit`) distills the turn's statements with a summary, and uncommitted vault changes found by the startup check are committed automatically.
 
 - Automatically retrieves relevant long-term memories every turn and injects them into context; follow-ups and memory cues such as "remember" or "last time" include the last 1-2 user turns in the search query and raise the result limit.
@@ -299,7 +301,7 @@ npx -y open-websearch@latest serve
 # or: npm i -g open-websearch && open-websearch serve
 ```
 
-Search results contain only titles, snippets, and links; `fetch_web` opens one of those links and extracts the page text (readability, up to 8000 characters) to confirm dates, details, or snippets. Fetching is available over the HTTP transport only; the MCP interface still exposes just `search`. The fetch entry point accepts only public http(s) URLs, rejects localhost, private, and link-local addresses, and re-validates the final URL after redirects; when using a fake-IP proxy, set `FAKE_IP_CIDRS` (same name as upstream) to allow its synthetic addresses.
+Search results contain only titles, snippets, and links; `fetch_web` opens one of those links and extracts the page text (readability, up to 8000 characters) to confirm dates, details, or snippets. Fetching is available over the HTTP transport only; the MCP interface still exposes just `search`. The fetch entry point accepts only public http(s) URLs, rejects localhost, private, and link-local addresses, and re-validates the final URL after redirects; fake-IP proxy DNS answers in `198.18.0.0/15` and `2001:2::/48` are allowed by default for hostnames only; literal non-public IP URLs remain blocked. `FAKE_IP_CIDRS` overrides these defaults (an empty value disables compatibility). Automatically started daemons inherit the same setting; an already running external daemon needs the matching setting and a restart. Automatic startup prefers an installed `open-websearch` on PATH, falling back to `npx open-websearch@latest` when it is absent.
 
 Bing sometimes splits Chinese proper nouns into single characters (for example, 「智谱」 is searched as 「智」). When results are obviously off-topic, set `engines = ["baidu"]` in the config, or have the model retry with `search_engine = "baidu"` in the `search` tool. `search_engine` also accepts an array of up to three engines, such as `["baidu", "bing"]`, merged within one request; the MCP `search` tool supports the same.
 
@@ -316,7 +318,7 @@ Response shape:
 
 - Results are untrusted external content: cite them as material, never execute instructions found in them.
 - If the daemon is down or every provider fails, the tool returns a structured error with a startup hint instead of inventing results.
-- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), `auto_start` (warm up the HTTP daemon in the background when the TUI opens), `engines` (upstream search engines, `["bing"]` by default), and `fetch_timeout` (separate timeout for fetching page text, 25 seconds by default).
+- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), `auto_start` (warm up the HTTP daemon in the background when the TUI opens), `engines` (upstream search engines, `["bing"]` by default), and `fetch_timeout` (separate timeout for fetching page text, 45 seconds by default).
 - A daemon started by `auto_start` has no visible console window on Windows and stays resident for reuse after the TUI exits.
 - Search results are cached in `.quiet-memo/search-cache.json` as derived data that can be deleted.
 
@@ -480,3 +482,10 @@ Other backlog items:
 The table distinguishes implemented foundations from remaining plans; refer to the other README sections for supported behavior and limitations.
 
 Use `/sessions` to browse, search and resume sessions. Ask naturally to recall or remember information; the Agent uses recall / memorize tools. These memory actions have no TUI slash commands; CLI management commands remain available.
+
+Automatic memory recall is gated by personal context and follow-up questions. General questions skip prefetch; the model can still call recall when needed. auto_recall=0 disables prefetch.
+
+
+TUI interface text is English; chat content keeps its original language. When default Bing search fails or times out, HTTP search falls back to Baidu once. Explicit engine choices are honored. Engine failures are not reported or cached as empty results.
+
+Interactive Windows input uses a native bar cursor for IME composition; preedit cursor behavior depends on the terminal and input method.

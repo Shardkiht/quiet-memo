@@ -13,7 +13,7 @@ SLASH_COMMANDS = [
     ("context", "/context", "Context window"),
     ("setup", "/setup", "Run setup in terminal"),
     ("rename", "/rename <title>", "Rename session"),
-    ("import", "/import <path> [--apply]", "导入文件或目录（默认预览）"),
+    ("import", "/import <path> [--apply]", "Import a file or directory (preview by default)"),
     ("pending", "/pending", "Review pending"),
     ("topics", "/topics [name]", "Browse topics"),
     ("help", "/help", "Show commands"),

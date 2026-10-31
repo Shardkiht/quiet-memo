@@ -68,7 +68,7 @@ class ChatReply(Static):
 
 class HistoryMore(Static):
     can_focus = True
-    BINDINGS = [("enter", "load", "加载历史"), ("space", "load", "加载历史")]
+    BINDINGS = [("enter", "load", "Load history"), ("space", "load", "Load history")]
 
     def on_click(self) -> None:
         self.action_load()
@@ -107,13 +107,13 @@ class TranscriptView(VerticalScroll):
                 self._turns.append(record)
         widgets = []
         if session.damaged_tail_line is not None:
-            widgets.append(Static("会话末行不完整，已恢复此前完整记录；原文件内容仍保留。", classes="card"))
+            widgets.append(Static("Incomplete session tail: recovered complete records; original file preserved.", classes="card"))
         summary = session.summary_text()
         if summary:
             widgets.extend([Static("Earlier summary", classes="who-ai"), ChatReply(summary, classes="reply")])
         self._start = max(0, len(self._turns) - self.PAGE_SIZE)
         if self._start:
-            self._more = HistoryMore(f"加载更早的记录（剩余 {self._start} 条）", classes="card")
+            self._more = HistoryMore(f"Load earlier records ({self._start} remaining)", classes="card")
             widgets.append(self._more)
         widgets.extend(self._widgets(self._turns[self._start:]))
         if widgets:
@@ -149,7 +149,7 @@ class TranscriptView(VerticalScroll):
         self.mount(*self._widgets(self._turns[start:self._start]), after=more)
         self._start = start
         if start:
-            more.update(f"加载更早的记录（剩余 {start} 条）")
+            more.update(f"Load earlier records ({start} remaining)")
         else:
             more.remove()
             self._more = None
@@ -260,16 +260,16 @@ class ModelPickerScreen(PickScreen):
     """模型列表只显示模型；管理入口使用独立快捷键，搜索框聚焦时也可用。"""
 
     BINDINGS = [
-        Binding("ctrl+p", "providers", "供应商管理", priority=True),
-        Binding("ctrl+r", "refresh_models", "刷新模型", priority=True),
-        Binding("ctrl+n", "custom_model", "自定义模型", priority=True),
+        Binding("ctrl+p", "providers", "Manage providers", priority=True),
+        Binding("ctrl+r", "refresh_models", "Refresh models", priority=True),
+        Binding("ctrl+n", "custom_model", "Custom model", priority=True),
     ]
 
     def on_mount(self) -> None:
         super().on_mount()
         self.query_one(".pick-hint", Static).update(
-            "输入搜索 · ↓ 选择 · Enter 确认 · Esc 取消\n"
-            "Ctrl+P 供应商管理 · Ctrl+R 刷新 · Ctrl+N 自定义模型"
+            "Type to search · Down to select · Enter to confirm · Esc to cancel\n"
+            "Ctrl+P providers · Ctrl+R refresh · Ctrl+N custom model"
         )
 
     def action_providers(self) -> None:
