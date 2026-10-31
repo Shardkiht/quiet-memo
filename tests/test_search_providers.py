@@ -350,3 +350,51 @@ def test_exa_403_maps_to_auth():
     with pytest.raises(ProviderError) as caught:
         provider.search(SearchQuery("q"))
     assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+# ---------- 卡 07：You.com Search ----------
+
+
+def test_you_request_header_and_web_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": {
+                    "web": [
+                        {"title": "Tibo news", "url": "https://example.com/a",
+                         "description": "full description"},
+                        {"title": "Snippet only", "url": "https://example.com/b",
+                         "snippets": ["first snippet", "second"]},
+                        {"title": "No text", "url": "https://example.com/c"},
+                    ]
+                }
+            },
+        )
+    )
+    provider = make(YouSearchProvider, sent)
+    results = provider.search(SearchQuery("Tibo latest news", limit=10))
+    assert [item.snippet for item in results] == ["full description", "first snippet", ""]
+    # 日期字段未经真实响应核实：published 保持未知，不猜。
+    assert all(item.published is None for item in results)
+    assert all(item.provider == "you" for item in results)
+    request = requests[0]
+    assert request.headers["x-api-key"] == KEY
+    assert "authorization" not in request.headers
+    body = json.loads(request.content)
+    # 不发送 livecrawl/extraction_mode 等会产生抓取计费的参数。
+    assert body == {"query": "Tibo latest news", "count": 10}
+
+
+def test_you_missing_web_section_is_empty():
+    sent, _ = capture(lambda request: httpx.Response(200, json={"results": {}}))
+    provider = make(YouSearchProvider, sent)
+    assert provider.search(SearchQuery("q")) == []
+
+
+def test_you_401_maps_to_auth():
+    sent, _ = capture(lambda request: httpx.Response(401, json={"message": "Missing Authentication Token"}))
+    provider = make(YouSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.AUTH
