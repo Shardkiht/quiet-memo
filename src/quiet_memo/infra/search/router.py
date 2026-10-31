@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from collections.abc import Sequence
 import dataclasses
@@ -33,6 +34,40 @@ from .quality import (
 
 DEFAULT_PROVIDER = "open_websearch"
 KNOWN_PROVIDERS = {DEFAULT_PROVIDER}
+
+# 需要厂商 API Key 的外部搜索服务；列进 providers 且 Key 可读才会注册。
+_EXTERNAL_PROVIDERS = {
+    "baidu_search": ("baidu.py:BaiduSearchProvider", "BAIDU_SEARCH_API_KEY"),
+    "tavily": ("tavily.py:TavilySearchProvider", "TAVILY_API_KEY"),
+    "exa": ("exa.py:ExaSearchProvider", "EXA_API_KEY"),
+    "you": ("you.py:YouSearchProvider", "YDC_API_KEY"),
+    "volcengine": ("volcengine.py:VolcengineSearchProvider", "VOLCENGINE_SEARCH_API_KEY"),
+}
+
+
+def _build_external_provider(name: str, api_key: str, timeout: float) -> SearchProvider:
+    # 延迟导入：未配置 Key 时不必加载这些模块。
+    if name == "baidu_search":
+        from .baidu import BaiduSearchProvider
+
+        return BaiduSearchProvider(api_key, timeout=timeout)
+    if name == "tavily":
+        from .tavily import TavilySearchProvider
+
+        return TavilySearchProvider(api_key, timeout=timeout)
+    if name == "exa":
+        from .exa import ExaSearchProvider
+
+        return ExaSearchProvider(api_key, timeout=timeout)
+    if name == "you":
+        from .you import YouSearchProvider
+
+        return YouSearchProvider(api_key, timeout=timeout)
+    if name == "volcengine":
+        from .volcengine import VolcengineSearchProvider
+
+        return VolcengineSearchProvider(api_key, timeout=timeout)
+    raise ValueError(f"未知的外部搜索 provider: {name}")
 
 # 空结果与时效性查询的缓存短命 TTL；成功结果沿用配置的 cache_ttl。
 EMPTY_RESULT_TTL = 300.0
@@ -133,6 +168,13 @@ def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
                 engines=config.engines,
                 fetch_timeout=config.fetch_timeout,
             )
+        elif name in _EXTERNAL_PROVIDERS:
+            env_name = _EXTERNAL_PROVIDERS[name][1]
+            api_key = os.environ.get(env_name, "").strip()
+            if not api_key:
+                # 未配置 Key 的厂商直接跳过：不参与尝试，也不报错。
+                continue
+            registry[name] = _build_external_provider(name, api_key, config.timeout)
     return registry
 
 
@@ -364,12 +406,15 @@ class SearchRouter:
             # 永不入缓存，否则验证码/限流期间会一直拿到空。
             self.cache.set(cache_key, [], name_hint, ttl=EMPTY_RESULT_TTL)
         if failures and all(
-            failure.kind in ("timeout", "network", "rate_limit", "unavailable", "bad_response")
+            failure.kind
+            in ("timeout", "network", "rate_limit", "unavailable", "bad_response", "auth", "quota")
             for failure in failures
         ):
             hint = "所有搜索引擎均失败。"
         else:
             hint = "未找到相关结果。"
+        if any(failure.kind == "auth" for failure in failures):
+            hint += " 存在鉴权失败：请检查对应厂商的 API Key 环境变量。"
         if any("open-websearch" in failure.detail or "daemon" in failure.detail for failure in failures):
             hint += " 请确认 open-websearch 已启动：npx open-websearch@latest serve"
         return SearchOutcome(failed=failures, hint=hint)

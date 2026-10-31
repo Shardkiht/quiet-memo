@@ -133,6 +133,10 @@ class ProviderErrorKind(str, Enum):
     NETWORK = "network"
     BAD_RESPONSE = "bad_response"
     UNAVAILABLE = "unavailable"
+    # 鉴权失效/权限不足（401/403）与配额/余额限制（402、额度用尽）；
+    # 不做快速重试，也不得把这类失败缓存成空结果。
+    AUTH = "auth"
+    QUOTA = "quota"
 
 
 class ProviderError(Exception):

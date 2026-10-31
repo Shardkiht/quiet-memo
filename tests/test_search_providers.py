@@ -1,0 +1,155 @@
+"""多厂商搜索 Provider 适配测试（任务卡 02-08）。
+
+全部走 httpx.MockTransport，不发真实网络请求；Key 一律用占位字符串。
+"""
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+
+pytestmark = pytest.mark.search
+
+from quiet_memo.infra.config import SearchConfig
+from quiet_memo.infra.search.base import ProviderError, ProviderErrorKind, SearchQuery
+from quiet_memo.infra.search.baidu import BaiduSearchProvider
+from quiet_memo.infra.search.exa import ExaSearchProvider
+from quiet_memo.infra.search.http_client import JsonApiClient
+from quiet_memo.infra.search.router import build_registry
+from quiet_memo.infra.search.tavily import TavilySearchProvider
+from quiet_memo.infra.search.volcengine import VolcengineSearchProvider
+from quiet_memo.infra.search.you import YouSearchProvider
+
+KEY = "test-key-placeholder"
+
+
+def mock_factory(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def make(provider_cls, handler, **kwargs):
+    return provider_cls(KEY, client_factory=lambda: mock_factory(handler), **kwargs)
+
+
+def capture(handler):
+    """包装 handler，记录收到的请求。"""
+    requests: list[httpx.Request] = []
+
+    def wrapped(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return handler(request)
+
+    return wrapped, requests
+
+
+# ---------- 卡 02：registry 最小扩展 ----------
+
+
+def test_registry_without_new_providers_keeps_old_behavior(monkeypatch):
+    config = SearchConfig()
+    registry = build_registry(config)
+    assert set(registry) == {"open_websearch"}
+
+
+def test_registry_skips_external_provider_without_api_key(monkeypatch):
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    config = SearchConfig()
+    config.providers = ["open_websearch", "tavily"]
+    registry = build_registry(config)
+    assert set(registry) == {"open_websearch"}
+
+
+def test_registry_registers_external_provider_with_api_key(monkeypatch):
+    monkeypatch.setenv("TAVILY_API_KEY", KEY)
+    config = SearchConfig()
+    config.providers = ["tavily"]
+    registry = build_registry(config)
+    assert set(registry) == {"tavily"}
+    assert registry["tavily"].name == "tavily"
+
+
+def test_registry_ignores_unknown_provider_names(monkeypatch):
+    config = SearchConfig()
+    config.providers = ["open_websearch", "not_a_provider"]
+    assert set(build_registry(config)) == {"open_websearch"}
+
+
+# ---------- 卡 03：共用 HTTP 客户端 ----------
+
+
+def _client_with_status(status: int) -> JsonApiClient:
+    return JsonApiClient(
+        "probe",
+        "https://api.example.com",
+        client_factory=lambda: mock_factory(
+            lambda request: httpx.Response(status, json={"secret": "x"})
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "kind"),
+    [
+        (401, ProviderErrorKind.AUTH),
+        (403, ProviderErrorKind.AUTH),
+        (402, ProviderErrorKind.QUOTA),
+        (429, ProviderErrorKind.RATE_LIMIT),
+        (500, ProviderErrorKind.UNAVAILABLE),
+    ],
+)
+def test_status_codes_map_to_failure_kinds(status, kind):
+    with pytest.raises(ProviderError) as caught:
+        _client_with_status(status).post_json("/x", {}, {})
+    assert caught.value.kind == kind
+    # 不把上游响应体带进异常（可能包含不该进会话的内容）。
+    assert "secret" not in caught.value.detail
+
+
+def test_api_key_never_appears_in_error_details():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={})
+
+    client = JsonApiClient(
+        "probe", "https://api.example.com", client_factory=lambda: mock_factory(handler)
+    )
+    with pytest.raises(ProviderError) as caught:
+        client.post_json("/x", {}, {"Authorization": f"Bearer {KEY}"})
+    assert KEY not in str(caught.value)
+    assert KEY not in caught.value.detail
+
+
+def test_network_and_timeout_errors_are_distinguished():
+    def failing_factory():
+        return mock_factory(lambda request: (_ for _ in ()).throw(httpx.ConnectError("boom")))
+
+    client = JsonApiClient("probe", "https://api.example.com", client_factory=failing_factory)
+    with pytest.raises(ProviderError) as caught:
+        client.post_json("/x", {}, {})
+    assert caught.value.kind == ProviderErrorKind.NETWORK
+
+    def timeout_factory():
+        return mock_factory(lambda request: (_ for _ in ()).throw(httpx.ReadTimeout("slow")))
+
+    client = JsonApiClient("probe", "https://api.example.com", client_factory=timeout_factory)
+    with pytest.raises(ProviderError) as caught:
+        client.post_json("/x", {}, {})
+    assert caught.value.kind == ProviderErrorKind.TIMEOUT
+
+
+def test_malformed_json_is_bad_response():
+    client = JsonApiClient(
+        "probe",
+        "https://api.example.com",
+        client_factory=lambda: mock_factory(lambda request: httpx.Response(200, text="not-json")),
+    )
+    with pytest.raises(ProviderError) as caught:
+        client.parse_json(client.post_json("/x", {}, {}))
+    assert caught.value.kind == ProviderErrorKind.BAD_RESPONSE
+
+
+def test_effective_timeout_takes_minimum():
+    client = JsonApiClient("probe", "https://api.example.com", timeout=10.0)
+    assert client.effective_timeout(None) is None
+    assert client.effective_timeout(25.0) == 10.0
+    assert client.effective_timeout(2.0) == 2.0
