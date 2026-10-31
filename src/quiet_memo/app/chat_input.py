@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 from rich.cells import cell_len
@@ -22,10 +23,31 @@ class BarInput(Input):
         self._hint = hint
         self.border_title = hint or None
 
+    @staticmethod
+    def _terminal_supports_native_cursor() -> bool:
+        # conhost 不识别 DECSCUSR：转义序列会被画出来或光标错置。
+        # Windows Terminal（WT_*）与 VS Code 等（TERM_PROGRAM）支持，其余退回自绘光标。
+        return bool(
+            os.environ.get("WT_SESSION")
+            or os.environ.get("WT_PROFILE_ID")
+            or os.environ.get("TERM_PROGRAM")
+        )
+
     @property
     def _uses_native_cursor(self) -> bool:
         driver = self.app._driver
-        return sys.platform == "win32" and driver is not None and not driver.is_headless
+        return (
+            sys.platform == "win32"
+            and driver is not None
+            and not driver.is_headless
+            and self._terminal_supports_native_cursor()
+        )
+
+    def on_resize(self) -> None:
+        # 折叠侧栏/窗口缩放会移动输入框，但 App 每帧只回放上次记录的光标坐标；
+        # 不及时刷新硬件光标就会落在旧位置（看起来停在文字中间）。
+        if self._native_cursor_active and self.has_focus:
+            self.app.cursor_position = self.cursor_screen_offset
 
     def _restart_blink(self) -> None:
         if self._uses_native_cursor:

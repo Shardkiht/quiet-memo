@@ -66,6 +66,9 @@ class ChatReply(Static):
         return selection.extract(str(content)), "\n"
 
 
+ASSISTANT_NAME = "qmo"
+
+
 class HistoryMore(Static):
     can_focus = True
     BINDINGS = [("enter", "load", "Load history"), ("space", "load", "Load history")]

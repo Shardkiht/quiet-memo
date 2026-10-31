@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+import threading
+
 import pytest
 
 pytestmark = pytest.mark.ui
 
+from textual.geometry import Offset
 from textual.widgets import Input, Static
 
 from quiet_memo.agent.runtime import AgentRuntime
@@ -984,11 +988,13 @@ async def test_sidebar_items_are_compact_and_clickable(tmp_path):
         )
         ids.append(session.id)
     async with app.run_test(size=(100, 30)) as pilot:
-        # 等启动补沉淀（含自动提交）结束再操作列表，避免列表刷新吞掉点击
+        # 等启动补沉淀（含自动提交）结束再操作列表：补记的 refresh_sessions 会重建
+        # 列表控件，点击旧引用会被吞掉。busy 不覆盖后台补记，必须等 worker 收尾。
         for _ in range(200):
             await pilot.pause()
             if not app.busy:
                 break
+        await app.workers.wait_for_complete()
         await pilot.pause()
         items = list(app.query(SessionItem))
         assert len(items) >= 2
@@ -1096,6 +1102,10 @@ async def test_session_switch_updates_sidebar_without_reload(tmp_path, monkeypat
             await pilot.pause()
             if len(list(app.query(SessionItem))) >= 2:
                 break
+        # 启动补记可能在低负载下稍后才触发 refresh_sessions：等 worker 收尾再计数，
+        # 否则补记的全量刷新会被误判为切换引起的重载。
+        await app.workers.wait_for_complete()
+        await pilot.pause()
 
         calls = []
         original_list = store.list
@@ -1391,16 +1401,16 @@ async def test_auto_start_warms_search_in_background(tmp_path, monkeypatch):
 
 
 async def test_new_session_click_queues_while_busy(tmp_path):
-    # 回归：忙碌期间点击新会话不能被静默丢弃。
+    # 回归：导航期间点击新会话不能被静默丢弃；LLM 等待期则应立即切换（另测）。
     app = build_app(tmp_path, [])
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
-        app._set_busy(True)
+        app._begin_navigation()
         await pilot.click("#new-session")
 
         assert app._pending_new is True
 
-        app._set_busy(False)
+        app._end_navigation()
         app._drain_pending_intent()
         for _ in range(100):
             await pilot.pause()
@@ -2052,14 +2062,14 @@ async def test_busy_progress_and_right_aligned_context(tmp_path, width):
     app = build_app(tmp_path, [])
     async with app.run_test(size=(width, 40)) as pilot:
         await pilot.pause()
-        app._set_busy(True)
+        app._begin_ask(None)
         app._progress_update("Calling tool: search")
         await pilot.pause()
         model = app.query_one("#model-status", Static)
         context = app.query_one("#status", Static)
         assert "search" in str(model.content)
         assert model.region.right <= context.region.x
-        app._set_busy(False)
+        app._end_ask()
         assert "search" not in str(model.content)
 
 
@@ -2078,7 +2088,7 @@ def test_fixed_tui_text_is_english():
     from quiet_memo.app import chat_app
 
     directory = Path(chat_app.__file__).parent
-    for name in ("chat_app", "chat_commands", "chat_widgets", "command_catalog", "chat_reflection"):
+    for name in ("chat_app", "chat_commands", "chat_widgets", "chat_flow", "command_catalog", "chat_reflection"):
         path = directory / f"{name}.py"
         if not path.exists():
             continue
@@ -2099,7 +2109,14 @@ async def test_native_input_cursor_tracks_editing_and_cleans_up(tmp_path, monkey
         await pilot.pause()
         widget = app.query_one("#input", BarInput)
         writes = []
-        monkeypatch.setattr(app._driver, "write", writes.append)
+        # 只捕获光标控制序列：帧渲染也会写 driver，全量捕获会在负载下污染 writes[-1] 断言。
+        monkeypatch.setattr(
+            app._driver,
+            "write",
+            lambda data: writes.append(data)
+            if data in ("\x1b[5 q\x1b[?25h", "\x1b[?25l\x1b[0 q")
+            else None,
+        )
         monkeypatch.setattr(BarInput, "_uses_native_cursor", property(lambda self: True))
         widget._restart_blink()
         widget._show_native_cursor()
@@ -2120,3 +2137,354 @@ async def test_native_input_cursor_tracks_editing_and_cleans_up(tmp_path, monkey
         widget.focus()
         await pilot.pause()
         assert writes[-1] == "\x1b[5 q\x1b[?25h"
+
+
+# ---------- 忙碌态解耦与全局 FIFO（base/chat-stability） ----------
+
+
+class GatedChatModel:
+    """每个回合在返回前等待各自的 Event，用于精确构造"请求进行中"的窗口。"""
+
+    def __init__(self, turns, stream_first=False):
+        self.turns = list(turns)
+        self.gates: list[threading.Event] = []
+        self._gate_index = 0
+        self.calls: list[str] = []
+        self.stream_first = stream_first
+
+    def chat(self, messages, tools, on_delta=None):
+        self.calls.append(str(messages[-1]["content"]) if messages else "")
+        # 按调用序取门、不弹出：测试里始终用 gates[i] 控制第 i+1 个请求。
+        gate = (
+            self.gates[self._gate_index]
+            if self._gate_index < len(self.gates)
+            else threading.Event()
+        )
+        self._gate_index += 1
+        turn = self.turns.pop(0)
+        if isinstance(turn, Exception):
+            raise turn
+        if self.stream_first and on_delta is not None and turn.content:
+            half = max(1, len(turn.content) // 2)
+            on_delta(turn.content[:half])
+            on_delta(turn.content[half:])
+        gate.wait(timeout=30)
+        if not self.stream_first and on_delta is not None and turn.content:
+            half = max(1, len(turn.content) // 2)
+            on_delta(turn.content[:half])
+            on_delta(turn.content[half:])
+        return turn
+
+
+async def _wait_ask_started(app, pilot, limit=200):
+    for _ in range(limit):
+        await pilot.pause()
+        if app._ask_active:
+            return
+    raise AssertionError("请求未开始")
+
+
+async def _wait_idle(app, pilot, limit=400):
+    for _ in range(limit):
+        await pilot.pause()
+        if not app.busy:
+            return
+    raise AssertionError("等待空闲超时")
+
+
+async def test_input_stays_enabled_during_ask(tmp_path):
+    # 回归：等待 LLM 期间输入框保持可输入，不再被全局 busy 禁用。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="first reply")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "hello"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        assert app.query_one("#input", Input).disabled is False
+        app.query_one("#input", Input).value = "typing while waiting"
+        await pilot.pause()
+        assert app.query_one("#input", Input).value == "typing while waiting"
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+
+
+async def test_submit_during_ask_queues_fifo_across_sessions(tmp_path):
+    # 验收场景：A 生成中 → 切 B（/new）→ A/B 各排队一条 → 按提交顺序全局执行，
+    # 回复各自落回原会话，且任意时刻至多一个请求。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([
+        AssistantTurn(content="reply-1"),
+        AssistantTurn(content="reply-2"),
+        AssistantTurn(content="reply-3"),
+    ])
+    gated.gates = [threading.Event(), threading.Event(), threading.Event()]
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "m1"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        app.query_one("#input", Input).value = "m2"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert [item.line for item in app._queue] == ["m2"]
+
+        app._command("/new")  # 等待期导航命令：立即执行
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert not app.runtime.has_session  # 新会话尚无第一条消息
+
+        app.query_one("#input", Input).value = "m3"
+        await pilot.press("enter")
+        await pilot.pause()
+        session_b = app.runtime.current.id
+        assert session_b != session_a
+        assert [item.session_id for item in app._queue] == [session_a, session_b]
+
+        gated.gates[0].set()
+        for _ in range(400):
+            await pilot.pause()
+            if len(gated.calls) >= 2:
+                break
+        assert app._ask_in_flight == session_a  # 全局 FIFO：A 的排队消息先执行
+        gated.gates[1].set()
+        for _ in range(400):
+            await pilot.pause()
+            if len(gated.calls) >= 3:
+                break
+        assert app._ask_in_flight == session_b
+        gated.gates[2].set()
+        await _wait_idle(app, pilot)
+
+        assert gated.calls[1] == "m2"
+        assert gated.calls[2] == "m3"
+        store = app.sessions
+        records_a = store.load(session_a).records
+        records_b = store.load(session_b).records
+        assert any(r.get("content") == "m2" for r in records_a)
+        assert any(r.get("type") == "assistant" and "reply-2" in str(r.get("content")) for r in records_a)
+        assert any(r.get("content") == "m3" for r in records_b)
+        assert any(r.get("type") == "assistant" and "reply-3" in str(r.get("content")) for r in records_b)
+
+
+async def test_switch_during_ask_is_immediate_and_reply_lands_in_original(tmp_path):
+    # 回归：请求进行中切会话必须立即执行（不再排队），回复写回原会话且不串入当前视图。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="slow reply")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "question"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert app.runtime.current.id == session_b  # 立即切换成功
+        assert app._ask_active  # 请求仍在后台进行
+
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        records_a = app.sessions.load(session_a).records
+        assert any(r.get("type") == "assistant" and "slow reply" in str(r.get("content")) for r in records_a)
+        assert not app.query(".reply")  # B 的空视图未被串入
+
+
+async def test_switch_back_to_generating_session_replays_stream(tmp_path):
+    # 回归：切走再切回生成中的会话，未落盘的活跃段从状态重放并继续实时更新。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="streamed body")], stream_first=True)
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "q"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        for _ in range(100):
+            await pilot.pause()
+            if app._stream_buffer:
+                break
+        session_a = app.runtime.current.id
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert not app.query(".reply")  # 切走后视图清空，buffer 保留
+
+        app._switch_session(session_a)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert app.query(".reply")  # 活跃段重放
+        assert app._stream_buffer == "streamed body"
+
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        records_a = app.sessions.load(session_a).records
+        assert any(r.get("type") == "assistant" and "streamed body" in str(r.get("content")) for r in records_a)
+
+
+async def test_closed_marker_after_assistant_records_when_switching_mid_ask(tmp_path):
+    # 回归：切换时对生成中的会话延迟打关闭标记，closed 必须排在 assistant 记录之后。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="late reply")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "q"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        # 请求未结束时不得提前落 closed 标记
+        path = app.service.config.vault / "sessions" / f"{session_a}.jsonl"
+        types = [json.loads(line)["type"] for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert "closed" not in types
+
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        types = [json.loads(line)["type"] for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        assert types.count("closed") == 1
+        assert "distill_deferred" in types
+        last_assistant = max(i for i, t in enumerate(types) if t == "assistant")
+        assert len(types) - 1 - types[::-1].index("closed") > last_assistant
+
+
+async def test_delete_blocked_while_generating(tmp_path):
+    # 回归：删除正在生成回复的会话必须被拒绝，否则后台写入会重建僵尸文件。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="slow reply")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "q"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+
+        app.confirm_delete_session({"id": session_a, "title": "A"})
+        await pilot.pause()
+        assert app.sessions.exists(session_a)  # 拒绝删除
+        assert len(app.screen_stack) == 1  # 未弹出确认对话框
+
+
+async def test_command_during_ask_queues_and_runs_after_reply(tmp_path):
+    # 回归：等待期的 /compact 进全局队列，回复完成后执行，而不是取消进行中的请求。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="reply body")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "q"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+
+        app.query_one("#input", Input).value = "/compact"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert [item.line for item in app._queue] == ["/compact"]
+        assert len(gated.calls) == 1  # 请求未被取消
+
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        assert any("No earlier records" in str(card.render()) for card in app.query(".event-card"))
+
+
+async def test_switch_consolidate_skipped_while_ask_in_flight(tmp_path, monkeypatch):
+    # 回归：切走时目标会话仍在生成，后台补沉淀必须跳过，留给启动补记。
+    calls: list[str] = []
+
+    def fake_consolidate(self, **kwargs):
+        calls.append("consolidate")
+        return {"consolidated": 0, "errors": [], "admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0}
+
+    monkeypatch.setattr(AgentRuntime, "consolidate_pending", fake_consolidate)
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="slow reply")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        calls.clear()  # 启动补记的调用不计入
+
+        app.query_one("#input", Input).value = "q"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert calls == []  # 生成期间不补沉淀
+
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        assert calls == []
+
+
+def test_native_cursor_requires_supported_terminal(monkeypatch):
+    # conhost 无 DECSCUSR 支持：必须退回自绘光标，避免转义序列被画出来。
+    for var in ("WT_SESSION", "WT_PROFILE_ID", "TERM_PROGRAM"):
+        monkeypatch.delenv(var, raising=False)
+    assert BarInput._terminal_supports_native_cursor() is False
+    monkeypatch.setenv("WT_SESSION", "{abc}")
+    assert BarInput._terminal_supports_native_cursor() is True
+    monkeypatch.delenv("WT_SESSION", raising=False)
+    monkeypatch.setenv("TERM_PROGRAM", "vscode")
+    assert BarInput._terminal_supports_native_cursor() is True
+
+
+async def test_native_cursor_position_refreshed_on_resize(tmp_path, monkeypatch):
+    # 回归：布局变化（折叠侧栏/缩放）后 App 回放的是旧光标坐标，必须重算。
+    app = build_app(tmp_path, [])
+    writes: list[str] = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", BarInput)
+        monkeypatch.setattr(app._driver, "write", writes.append)
+        monkeypatch.setattr(BarInput, "_uses_native_cursor", property(lambda self: True))
+        widget._show_native_cursor()
+        app.cursor_position = Offset(0, 0)  # 模拟布局变化后未刷新的旧坐标
+        widget.on_resize()
+        assert app.cursor_position == widget.cursor_screen_offset

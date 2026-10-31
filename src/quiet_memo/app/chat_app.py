@@ -20,12 +20,13 @@ from ..agent.runtime import AgentRuntime
 from ..agent.session import Session, SessionStore
 from ..infra.search.daemon import ensure_search_daemon
 from ..infra.tokens import format_tokens
-from ..llm import ChatModelError
 from ..memory.service import MemoryService
 from .chat_commands import ChatCommandsMixin
+from .chat_flow import ChatFlowMixin, _QueuedLine
 from .chat_input import BarInput
 from .chat_theme import APP_CSS
 from .chat_widgets import (
+    ASSISTANT_NAME,
     CommandPalette,
     NewSessionButton,
     PickScreen,
@@ -38,10 +39,8 @@ from .chat_widgets import (
 )
 from .session_ui import visible_sessions
 
-ASSISTANT_NAME = "qmo"
 
-
-class ChatApp(ChatCommandsMixin, App):
+class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
     TITLE = "quiet-memo — Personal Memory"
 
     CSS = APP_CSS
@@ -69,15 +68,20 @@ class ChatApp(ChatCommandsMixin, App):
         self.runtime = runtime
         self.service = service
         self.sessions = sessions
-        self.busy = False
+        # 忙碌三态：导航操作与 LLM 请求分开记账，输入框只在导航期间禁用。
+        self._navigation_busy = False
+        self._ask_active = False
+        self._ask_in_flight: str | None = None
         self.pending_count = 0
         self._progress_phase = ""
         self._progress_started = 0.0
         self._model_status = Static("", id="model-status")
         self._pending_switch: str | None = None
         self._pending_new = False
+        self._queue: list[_QueuedLine] = []
         self._stream_widget: ChatReply | None = None
         self._stream_buffer = ""
+        self._stream_stamp = ""
         self._stream_flush_scheduled = False
         self._usage_cache: dict[tuple, int] = {}
         self._usage_request: tuple | None = None
@@ -202,7 +206,12 @@ class ChatApp(ChatCommandsMixin, App):
     def run_command_from_palette(self, command: str) -> None:
         self.query_one("#cmd-palette", CommandPalette).close()
         self.query_one("#input", Input).value = ""
-        self._command(f"/{command}")
+        line = f"/{command}"
+        if self._ask_active:
+            # 面板路径与输入路径同规则：非导航命令在等待期进全局队列。
+            self._submit_during_ask(line)
+            return
+        self._command(line)
 
     # ---------- 会话侧栏 ----------
 
@@ -239,8 +248,9 @@ class ChatApp(ChatCommandsMixin, App):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if not isinstance(event.item, SessionItem):
             return
-        if self.busy:
-            # 忙碌期间点击会话：记住意图，结束后自动切换，不静默丢弃。
+        if self._navigation_busy:
+            # 导航期间点击会话：记住意图，结束后自动切换，不静默丢弃。
+            # LLM 请求进行中不排队：回复由 runtime 绑定原会话写盘，可立即切换。
             self._pending_switch = event.item.row["id"]
             self._pending_new = False
             return
@@ -268,11 +278,11 @@ class ChatApp(ChatCommandsMixin, App):
                 return
 
     def _new_session(self) -> None:
-        if self.busy:
+        if self._navigation_busy:
             self._pending_new = True
             self._pending_switch = None
             return
-        self._set_busy(True)
+        self._begin_navigation()
         self.run_worker(
             partial(self._session_work, None),
             group="session",
@@ -282,11 +292,11 @@ class ChatApp(ChatCommandsMixin, App):
         )
 
     def _switch_session(self, session_id: str) -> None:
-        if self.busy:
+        if self._navigation_busy:
             self._pending_switch = session_id
             self._pending_new = False
             return
-        self._set_busy(True)
+        self._begin_navigation()
         self.run_worker(
             partial(self._session_work, session_id),
             group="session",
@@ -296,7 +306,7 @@ class ChatApp(ChatCommandsMixin, App):
         )
 
     def _drain_pending_intent(self) -> None:
-        """忙碌期间收到的会话意图在空闲后接续执行，最后一次操作优先。"""
+        """空闲时接续排队的切换意图与等待期消息，最后一次切换优先，不静默丢弃。"""
         if self.busy:
             return
         if self._pending_new:
@@ -307,6 +317,8 @@ class ChatApp(ChatCommandsMixin, App):
             session_id = self._pending_switch
             self._pending_switch = None
             self._switch_session(session_id)
+            return
+        self._dispatch_queue()
 
     def _session_work(self, session_id: str | None) -> None:
         try:
@@ -355,20 +367,27 @@ class ChatApp(ChatCommandsMixin, App):
             message = "New session · created after your first message"
         else:
             self.build_transcript()
+            if (
+                self._ask_active
+                and self._ask_in_flight is not None
+                and self.runtime.has_session
+                and self.runtime.current.id == self._ask_in_flight
+            ):
+                # 切回生成中的会话：磁盘重建负责已完成轮次，活跃段从状态重放。
+                self._replay_stream()
         if stats.get("admitted") or stats.get("queued"):
             message = f"{message or ''} (previous session distilled: {stats['admitted']} written, {stats['queued']} pending)".strip()
         self._sync_current_session()
         self.refresh_pending()
         self.update_status()
-        self._set_busy(False)
+        self._end_navigation()
         if message:
             self.notify(message)
         self.query_one("#input", Input).focus()
         self._drain_pending_intent()
 
     def confirm_delete_session(self, row: dict) -> None:
-        if self.runtime.has_session and row["id"] == self.runtime.current.id:
-            self.notify("Cannot delete the current session; use /new first.")
+        if not self._session_deletable(row["id"]):
             return
         self.push_screen(
             PickScreen(
@@ -378,14 +397,29 @@ class ChatApp(ChatCommandsMixin, App):
             )
         )
 
+    def _session_deletable(self, session_id: str) -> bool:
+        """删除守卫：当前会话、正在生成回复的会话、队列引用的会话都不可删。
+
+        后台请求仍持有会话对象并继续写文件，物理删除后下一次追加会重建出僵尸文件。
+        """
+        if self.runtime.has_session and session_id == self.runtime.current.id:
+            self.notify("Cannot delete the current session; use /new first.")
+            self.query_one("#input", Input).focus()
+            return False
+        if session_id == self._ask_in_flight or any(
+            item.session_id == session_id for item in self._queue
+        ):
+            self.notify("Session is generating or has queued tasks; try again later.")
+            self.query_one("#input", Input).focus()
+            return False
+        return True
+
     def _delete_session_result(self, row: dict, confirmed) -> None:
         if confirmed is not True:
             self.query_one("#input", Input).focus()
             return
-        # 弹窗期间可能已排队切换到目标会话：确认时复查，不能删掉当前活跃会话。
-        if self.runtime.has_session and row["id"] == self.runtime.current.id:
-            self.notify("Cannot delete the current session; use /new first.")
-            self.query_one("#input", Input).focus()
+        # 弹窗期间可能已排队切换/生成：确认时复查，不能删掉受保护的会话。
+        if not self._session_deletable(row["id"]):
             return
         # 用弹窗打开前捕获的 row，不读列表当前高亮：模态期间列表可能被刷新重建。
         if self.sessions.exists(row["id"]):
@@ -407,6 +441,9 @@ class ChatApp(ChatCommandsMixin, App):
 
     def _clear_chat(self) -> None:
         self.query_one("#chat", TranscriptView).clear_transcript()
+        # 视图销毁后活跃段控件失效；buffer 保留供切回时重放（落盘段由磁盘重建负责）。
+        self._stream_widget = None
+        self._stream_flush_scheduled = False
 
     def _scroll_end(self) -> None:
         self.call_after_refresh(self._chat().scroll_end, animate=False)
@@ -479,17 +516,6 @@ class ChatApp(ChatCommandsMixin, App):
         chat.mount(Static("", classes="divider"))
         self._scroll_end()
 
-    def add_event(self, event: str) -> None:
-        if self._stream_widget is not None and self._stream_buffer:
-            # 工具事件在两轮生成之间：先就地定稿当前段，后续 delta 另起一块，
-            # 否则最终回复会覆盖工具前的正文，事件顺序也会颠倒。
-            self._stream_close(self._stream_buffer)
-        memo = event.startswith(("Saved", "Corrected", "Deleted"))
-        self._chat().mount(
-            Static(f"✓ {event}" if memo else event, classes="event-card memo" if memo else "event-card")
-        )
-        self._scroll_end()
-
     def add_card(self, text: str, title: str | None = None) -> None:
         body = f"{title}\n{text}" if title else text
         self._chat().mount(Static(body, classes="card"))
@@ -540,7 +566,9 @@ class ChatApp(ChatCommandsMixin, App):
     def _after_usage(self, key: tuple, used: int | None) -> None:
         if self._usage_request == key:
             self._usage_request = None
-        if key != self._usage_key() or self.runtime.last_plan is not None:
+        if key != self._usage_key() or (
+            self.runtime.last_plan is not None and self._plan_is_current()
+        ):
             return
         if used is None:
             self._usage_failed = key
@@ -553,7 +581,8 @@ class ChatApp(ChatCommandsMixin, App):
 
     def update_status(self) -> None:
         total = self.service.config.chat.context_window
-        plan = self.runtime.last_plan
+        # 后台请求的 plan 属于别的会话时不得污染当前视图的用量显示。
+        plan = self.runtime.last_plan if self._plan_is_current() else None
         key = self._usage_key()
         used = plan.estimated_tokens if plan is not None else self._usage_cache.get(key, 0)
         estimating = plan is None and key is not None and key not in self._usage_cache
@@ -577,18 +606,46 @@ class ChatApp(ChatCommandsMixin, App):
         self.query_one("#status", Static).update(text)
         self._render_model_status()
 
-    def _set_busy(self, busy: bool) -> None:
-        self.busy = busy
-        if busy:
-            self._progress_started = time.monotonic()
-            self._progress_phase = "Working"
-        else:
-            self._progress_phase = ""
+    @property
+    def busy(self) -> bool:
+        """任一操作（导航或 LLM 请求）进行中；等待请求期间输入与切换不再被禁用。"""
+        return self._navigation_busy or self._ask_active
+
+    def _begin_navigation(self) -> None:
+        self._navigation_busy = True
+        self._progress_started = time.monotonic()
+        self._progress_phase = "Working"
+        self.query_one("#input", Input).disabled = True
         self._render_model_status()
+
+    def _end_navigation(self) -> None:
+        self._navigation_busy = False
+        self._release_input_if_idle()
+
+    def _begin_ask(self, session_id: str | None) -> None:
+        self._ask_active = True
+        self._ask_in_flight = session_id
+        self._progress_started = time.monotonic()
+        self._progress_phase = "Working"
+        self._render_model_status()
+
+    def _end_ask(self) -> None:
+        self._ask_active = False
+        self._ask_in_flight = None
+        self._stream_widget = None
+        self._stream_buffer = ""
+        self._stream_stamp = ""
+        self._stream_flush_scheduled = False
+        self._release_input_if_idle()
+
+    def _release_input_if_idle(self) -> None:
         widget = self.query_one("#input", Input)
-        widget.disabled = busy
-        if not busy:
+        # 输入只在导航操作期间禁用；LLM 等待期始终可输入（提交进全局队列）。
+        widget.disabled = self._navigation_busy
+        if not self.busy:
+            self._progress_phase = ""
             widget.focus()
+        self._render_model_status()
 
     def _render_model_status(self) -> None:
         if not self._model_status.is_mounted:
@@ -619,11 +676,12 @@ class ChatApp(ChatCommandsMixin, App):
             palette.close()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if self.busy:
-            return
         line = event.value.strip()
         event.input.value = ""
         if not line:
+            return
+        if self._ask_active:
+            self._submit_during_ask(line)
             return
         if line.startswith("/"):
             palette = self.query_one("#cmd-palette", CommandPalette)
@@ -634,92 +692,4 @@ class ChatApp(ChatCommandsMixin, App):
             self._command(line)
             return
         self.query_one("#cmd-palette", CommandPalette).close()
-        stamp = time.strftime("%H:%M")
-        self.add_user_turn(line, stamp)
-        self._set_busy(True)
-        self.run_worker(
-            partial(self._ask_work, line, stamp),
-            group="ask",
-            thread=True,
-            exclusive=True,
-            exit_on_error=False,
-        )
-
-    def _ask_work(self, line: str, stamp: str) -> None:
-        started = time.monotonic()
-        try:
-            reply = self.runtime.ask(
-                line,
-                on_event=lambda event: self.call_from_thread(self.add_event, event),
-                on_delta=lambda delta: self.call_from_thread(self._stream_append, stamp, delta),
-                on_progress=lambda phase: self.call_from_thread(self._progress_update, phase),
-            )
-        except ChatModelError as exc:
-            self.call_from_thread(self._finish_error, str(exc))
-            return
-        except Exception as exc:  # 界面不因单轮失败退出
-            self.call_from_thread(self._finish_error, f"Request failed: {exc}")
-            return
-        elapsed = time.monotonic() - started
-        meta = [f"{reply.steps} steps", f"{reply.estimated_tokens} tok"]
-        if reply.usage.cost_usd:
-            meta.append(f"${reply.usage.cost_usd:.4f}")
-        meta.append(f"{elapsed:.1f}s")
-        self.call_from_thread(self._finish_reply, reply.content, stamp, " · ".join(meta))
-
-    # ---------- 流式渲染：帧合并更新，完成/中断后收尾 ----------
-
-    def _stream_append(self, stamp: str, delta: str) -> None:
-        self._progress_phase = "Streaming"
-        chat = self._chat()
-        if self._stream_widget is None:
-            chat.mount(Static(f"{ASSISTANT_NAME} · {stamp}", classes="who-ai"))
-            self._stream_buffer = ""
-            self._stream_widget = ChatReply("", classes="reply")
-            chat.mount(self._stream_widget)
-        self._stream_buffer += delta
-        if not self._stream_flush_scheduled:
-            self._stream_flush_scheduled = True
-            self.call_after_refresh(self._stream_flush)
-
-    def _stream_flush(self) -> None:
-        self._stream_flush_scheduled = False
-        if self._stream_widget is not None:
-            self._stream_widget.update(self._stream_buffer)
-            self._scroll_end()
-
-    def _stream_close(self, final_content: str) -> None:
-        if self._stream_widget is not None:
-            self._stream_widget.update(final_content)
-            self._stream_widget = None
-            self._stream_buffer = ""
-        self._stream_flush_scheduled = False
-
-    def _finish_reply(self, content: str, stamp: str, meta: str) -> None:
-        if self._stream_widget is not None:
-            # 流式已实时渲染正文：就地定稿并补 meta/分隔线，不再重复挂载。
-            self._stream_close(content or "(empty reply)")
-            chat = self._chat()
-            if meta:
-                chat.mount(Static(meta, classes="meta"))
-            chat.mount(Static("", classes="divider"))
-            self._scroll_end()
-        else:
-            self.add_assistant_turn(content, stamp, meta)
-        self.refresh_sessions()  # 首条消息会创建会话，侧栏需要随之出现
-        self.refresh_pending()
-        self.update_status()
-        self._set_busy(False)
-        self._drain_pending_intent()
-
-    def _finish_error(self, message: str) -> None:
-        if self._stream_widget is not None:
-            # 中途断流：保留已生成的半截并显式标注，不静默吞掉。
-            interrupted = self._stream_buffer + "\n\n*(generation interrupted)*"
-            self._stream_close(interrupted)
-            self._chat().mount(Static("", classes="divider"))
-            self._scroll_end()
-        self.add_card(message)
-        self.refresh_sessions()
-        self._set_busy(False)
-        self._drain_pending_intent()
+        self._start_ask(line)

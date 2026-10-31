@@ -82,7 +82,7 @@ class ContextManager:
         config: ChatConfig,
         summarizer: Summarizer,
         sessions: SessionStore,
-        flush: Callable[[list[str]], dict] | None = None,
+        flush: Callable[[list[str], Session], dict] | None = None,
     ):
         self.config = config
         self.summarizer = summarizer
@@ -202,7 +202,7 @@ class ContextManager:
             distilled_ids: list[str] = []
             if user_records and self.flush:
                 try:
-                    flushed = self.flush([record["content"] for record in user_records])
+                    flushed = self.flush([record["content"] for record in user_records], session)
                 except Exception as exc:
                     flushed = {"error": str(exc)}
                 if flushed.get("error"):

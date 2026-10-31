@@ -2,6 +2,16 @@
 
 更新日期：2026-10-31。代码版本 `0.3.2`，发行标记使用 `v0.3.2`；基础功能参照 `444fe0f`，文件导入与模型选择界面参照 `bef5199`。包版本、锁文件与 MCP 客户端标识保持一致；远端发布结果以 GitHub Release、Actions 与 PyPI 为准。
 
+## 忙碌态解耦与会话一致性（2026-10-31，分支 base/chat-stability）
+
+- 分支约定：基础层修复与改进使用 `base/` 前缀；验证通过后经用户同意才分别合入 main 与 feature-memory-evolution（后者定位为记忆内容前沿版本）。
+- 等待 LLM 期间输入保持可用、会话切换立即执行；等待期提交（消息与 /命令）进入全局 FIFO 队列，按提交顺序执行且任意时刻至多一个请求（并发第二个请求会被 exclusive worker 协作取消且 runtime.ask 无重入保护，故只能排队）；导航/只读命令（/new、/sessions、/exit 等）等待期直接执行。旧的全局 busy 布尔拆为 navigation_busy 与 ask_active 两态，输入框只在导航期间禁用。
+- 数据一致性：`runtime.ask` 支持显式 session 并新增 on_session 回调；`_auto_recall`/`_flush_memories` 显式绑定请求会话，不再读 self.current；`last_plan` 带 session 标识，状态栏不串会话；后台任务执行时从磁盘新鲜加载会话对象，完成后若目标是当前会话则 reload 治愈内存快照；切走/新建时对生成中的会话延迟打 closed/distill_deferred 标记（保证排在最后的 assistant 记录之后）；生成期间跳过后台补沉淀，留给启动补记；删除守卫拒绝删除生成中或被队列引用的会话——物理删除后后台追加会原路重建僵尸文件（已用临时库脚本实证）。
+- 切回生成中的会话：磁盘重建负责已完成轮次，界面只重放未落盘的活跃段（已完成段必然已随 assistant 记录落盘，天然去重）。
+- 输入光标：原生光标仅用于支持 DECSCUSR 的终端（WT_SESSION/WT_PROFILE_ID/TERM_PROGRAM，conhost 退回自绘）；`on_resize` 重算 app.cursor_position，修复布局变化（折叠侧栏、窗口缩放）后硬件光标停在旧坐标的问题。rich 宽度表与终端在 emoji/歧义宽度字符上的渲染差异仍需真实 PowerShell 人工验证，headless 测试无法覆盖。
+- 测试：新增 10 个回归（跨会话全局 FIFO 验收场景、等待期输入可用、立即切换、流式重放、关闭标记顺序、删除守卫、补沉淀跳过、光标终端门控与重算等）；同步修稳两个既有负载抖动测试——启动补记可能晚于测试打点触发 refresh_sessions（干扰计数与点击旧控件），driver.write 全量捕获会被帧渲染写入污染 `writes[-1]` 断言。
+- 验证：全量 `uv run pytest` 592 passed 连续两轮；分支未合并、未推送。
+
 ## 环境变量污染事件与抓取超时（2026-10-31）
 
 - **污染事件**：`QUIET_MEMO_CONFIG`/`QUIET_MEMO_VAULT` 曾被 `setx` 持久化进 Windows 用户注册表（本应只在手动测试启动器进程内注入），导致此后所有新进程（含 TUI 会话）加载测试配置与测试 vault，期间的会话沉淀写入了测试库。已从注册表删除这两个变量。教训：多环境隔离只能用进程级环境变量或启动器包装，禁止 `setx` 等持久化写入；已在运行的长驻程序需重启才脱离旧环境。

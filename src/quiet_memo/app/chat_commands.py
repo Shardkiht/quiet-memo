@@ -192,8 +192,9 @@ class ChatCommandsMixin:
             self.notify("Already the current session.")
             self.query_one("#input", Input).focus()
             return
-        if self.busy:
+        if self._navigation_busy:
             self._pending_switch = session_id
+            self._pending_new = False
             return
         self._switch_session(session_id)
 
@@ -278,7 +279,7 @@ class ChatCommandsMixin:
         self.notify("Message restored for editing.")
 
     def _run_compact(self) -> None:
-        self._set_busy(True)
+        self._begin_navigation()
         self.run_worker(
             self._compact_work, group="ask", thread=True, exclusive=True, exit_on_error=False
         )
@@ -295,13 +296,13 @@ class ChatCommandsMixin:
         for event in events:
             self.add_event(event)
         self.update_status()
-        self._set_busy(False)
+        self._end_navigation()
         self._drain_pending_intent()
 
     def _after_import(self, message: str) -> None:
         self.add_card(message)
         self.update_status()
-        self._set_busy(False)
+        self._end_navigation()
         self._drain_pending_intent()
 
     def _run_import(self, argument: str) -> None:
@@ -314,7 +315,7 @@ class ChatCommandsMixin:
         if not filename:
             self.add_card("Usage: /import <file-or-directory> [--apply]")
             return
-        self._set_busy(True)
+        self._begin_navigation()
         self.add_card("Starting import: parsing is local; extraction calls the configured model and may incur charges. " + ("Memories will be saved." if apply else "Preview only; memories will not be saved."))
         self.run_worker(partial(self._import_work, Path(filename).expanduser(), apply),
                         group="ask", thread=True, exclusive=True, exit_on_error=False)

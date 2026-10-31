@@ -66,7 +66,7 @@ def test_force_compact_summarizes_and_flushes(tmp_path):
     store.append(session, {"type": "message", "id": current_id, "role": "user", "content": "当前问题"})
     flushed = []
 
-    def flush(texts):
+    def flush(texts, session):
         flushed.append(texts)
         return {"admitted": len(texts), "queued": 0}
 
@@ -182,7 +182,7 @@ def test_failed_flush_still_compacts_and_keeps_messages_for_retry(tmp_path, rais
     original_texts = session.user_texts()
     store.append(session, {"type": "message", "id": "current", "role": "user", "content": "当前问题"})
 
-    def failed_flush(texts):
+    def failed_flush(texts, session):
         if raise_error:
             raise RuntimeError("synthetic timeout")
         return {"error": "synthetic timeout"}
@@ -208,7 +208,7 @@ def test_later_successful_compaction_does_not_cover_an_earlier_failed_flush(tmp_
     session = build_session(store, repeat=80)
     attempts = []
 
-    def flush(texts):
+    def flush(texts, session):
         attempts.append(texts)
         if len(attempts) == 1:
             raise RuntimeError("synthetic timeout")
@@ -254,7 +254,7 @@ def test_compaction_does_not_flush_already_distilled_messages(tmp_path):
     flushed = []
     manager = ContextManager(
         ChatConfig(context_window=1000, reserve_output_tokens=100, keep_recent_tokens=100),
-        FakeSummarizer(), store, flush=lambda texts: flushed.append(texts),
+        FakeSummarizer(), store, flush=lambda texts, session: flushed.append(texts),
     )
     plan = manager.prepare(session, "系统提示", "继续", force=True)
     assert plan.compacted

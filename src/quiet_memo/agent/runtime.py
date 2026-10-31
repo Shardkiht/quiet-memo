@@ -67,12 +67,17 @@ class AgentRuntime:
         )
         self.session: Session | None = None
         self.last_plan = None
+        self.last_plan_session: str | None = None
         self._closed = False
+        # 请求进行中的会话与被延迟打关闭标记的会话（切换不阻塞生成）。
+        self._active_ask: Session | None = None
+        self._deferred_close: Session | None = None
 
     def start(self) -> None:
         """进入新对话。会话文件在第一条消息发送时才创建。"""
         self.session = None
         self.last_plan = None
+        self.last_plan_session = None
         self._closed = False
 
     def ensure_session(self) -> Session:
@@ -91,6 +96,7 @@ class AgentRuntime:
             self.close(distill=False)
         self.session = session
         self.last_plan = None
+        self.last_plan_session = None
         self._closed = False
         return self.session
 
@@ -135,23 +141,56 @@ class AgentRuntime:
     def ask(
         self,
         text: str,
+        *,
+        session: Session | None = None,
+        on_session: Callable[[Session], None] | None = None,
         on_event: Callable[[str], None] | None = None,
         on_delta: Callable[[str], None] | None = None,
         on_progress: Callable[[str], None] | None = None,
     ) -> AgentReply:
+        """执行一轮对话。
+
+        session 显式传入时（后台/排队任务）所有读写都绑定该会话，不触碰
+        self.session——切换会话不影响进行中的请求；否则使用当前会话。
+        """
         text = redact_secrets(text.strip())
         if not text:
             raise ValueError("消息为空。")
+        if session is None:
+            session = self.ensure_session()
+        if on_session is not None:
+            on_session(session)
+        self._active_ask = session
+        try:
+            return self._run_ask(session, text, on_event, on_delta, on_progress)
+        finally:
+            self._active_ask = None
+            deferred = self._deferred_close
+            self._deferred_close = None
+            if deferred is session:
+                # 切走/新建时该会话仍在生成：关闭标记延迟到此刻补打，
+                # 保证排在最后的 assistant 记录之后；沉淀由启动补记兜底。
+                if session.user_texts_after_distilled():
+                    self.sessions.append(session, {"type": "distill_deferred"})
+                self.sessions.append(session, {"type": "closed"})
+
+    def _run_ask(
+        self,
+        session: Session,
+        text: str,
+        on_event: Callable[[str], None] | None,
+        on_delta: Callable[[str], None] | None,
+        on_progress: Callable[[str], None] | None,
+    ) -> AgentReply:
         progress = on_progress or (lambda _: None)
         progress("Preparing context")
-        session = self.ensure_session()
         message_id = new_message_id()
         self.sessions.append(
             session,
             {"type": "message", "id": message_id, "role": "user", "content": text},
         )
 
-        memory_context = self._auto_recall(text)
+        memory_context = self._auto_recall(session, text)
         plan = self.context.prepare(
             session,
             self._system_prompt(),
@@ -160,6 +199,7 @@ class AgentRuntime:
             memory_context=memory_context,
         )
         self.last_plan = plan
+        self.last_plan_session = session.id
         events: list[str] = []
 
         def emit(event: str) -> None:
@@ -272,6 +312,11 @@ class AgentRuntime:
         session = self.session
         self._closed = True
         stats = dict(empty)
+        if session is self._active_ask:
+            # 该会话仍有请求在写：不在此处落标记/抽取，延迟到请求结束（ask finally）
+            # 补打，保证 closed 排在最后的 assistant 记录之后；沉淀由启动补记兜底。
+            self._deferred_close = session
+            return stats
         # 游标感知：只抽取上次成功沉淀之后的新内容，反复切换不重复抽取。
         user_texts = session.user_texts_after_distilled()
         if not distill:
@@ -419,10 +464,11 @@ class AgentRuntime:
         # 联网结果常只给到月/日；给出当前日期，模型才能判断“最新”是否成立。
         return f"{prompt}\n\n当前日期：{date.today().isoformat()}"
 
-    def _auto_recall(self, text: str) -> str:
+    def _auto_recall(self, session: Session, text: str) -> str:
         if self.config.auto_recall <= 0:
             return ""
-        recent = self.current.user_texts()[:-1]
+        # 显式绑定请求的会话：进行中切换会话时不得读错当前会话的近期消息。
+        recent = session.user_texts()[:-1]
         if not should_auto_recall(text, recent):
             return ""
         recall = self.recall_queries.build(text, recent)
@@ -432,15 +478,16 @@ class AgentRuntime:
         hits = self.service.recall(recall.text, limit)
         return "\n".join(f"- [{hit.topic}] ({hit.timestamp}) {hit.text}" for hit in hits)
 
-    def _flush_memories(self, texts: list[str]) -> dict:
+    def _flush_memories(self, texts: list[str], session: Session) -> dict:
+        # 沉淀来源绑定发起压缩的会话：prepare 期间切走会话不得关联错来源。
         joined = "\n---\n".join(texts)
         totals = {"admitted": 0, "queued": 0, "duplicates": 0, "blocked": 0}
         for chunk in split_chunks(joined, max_chars=DISTILL_MAX_CHARS):
             result = self.service.memorize(
                 chunk,
-                source=f"session:{self.current.id}:compact",
-                session_id=self.current.id,
-                message_id=self.current.last_user_message_id(),
+                source=f"session:{session.id}:compact",
+                session_id=session.id,
+                message_id=session.last_user_message_id(),
             )
             for key in totals:
                 totals[key] += len(getattr(result, key))
