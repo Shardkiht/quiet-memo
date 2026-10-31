@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import os
 from typing import Protocol
 
 from ..config import FetchConfig, SearchConfig
@@ -97,7 +96,9 @@ def build_fetch_registry(
             )
         elif name in _EXTERNAL_FETCH_PROVIDERS:
             env_name = _EXTERNAL_FETCH_PROVIDERS[name][1]
-            api_key = os.environ.get(env_name, "").strip()
+            from ..config import read_api_key
+
+            api_key = read_api_key(env_name)
             if not api_key:
                 # 未配置 Key 的厂商直接跳过：不参与尝试，也不报错。
                 continue

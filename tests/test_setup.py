@@ -484,3 +484,233 @@ def test_cancellable_stream_with_installed_litellm_mock_transport(monkeypatch):
                            on_delta=deltas.append, cancel=Event())
         assert reply.content == "Synthetic response"
         assert "".join(deltas) == reply.content
+
+
+class _FakeChoice:
+    def __init__(self, label, value=None):
+        self.title = label
+        self.value = label if value is None else value
+
+
+class _FakeQuestion:
+    def __init__(self, kind, message, choices=None, **kwargs):
+        self.kind = kind
+        self.message = message
+        self.choices = choices or []
+
+
+class _FakeQuestionary:
+    """questionary 构造器会初始化控制台，测试里整体替换为哑对象。"""
+
+    def Choice(self, label=None, value=None, title=None, **kwargs):
+        return _FakeChoice(title if label is None else label, value)
+
+    def select(self, message, choices=None, **kwargs):
+        return _FakeQuestion("select", message, choices, **kwargs)
+
+    def password(self, message, **kwargs):
+        return _FakeQuestion("password", message, **kwargs)
+
+    def confirm(self, message, default=True, **kwargs):
+        return _FakeQuestion("confirm", message, **kwargs)
+
+    def text(self, message, **kwargs):
+        return _FakeQuestion("text", message, **kwargs)
+
+
+def _script_answers(monkeypatch, answers: list):
+    """把 providers.ask/questionary 换成按脚本出队的假交互。"""
+    from quiet_memo.infra import providers as providers_module
+
+    queue = list(answers)
+
+    def fake_ask(_question):
+        assert queue, "交互脚本耗尽：问题数量与预期不符"
+        answer = queue.pop(0)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(providers_module, "ask", fake_ask)
+    monkeypatch.setattr(providers_module, "questionary", _FakeQuestionary())
+
+
+def _install_fake_keyring(monkeypatch, store: dict):
+    import sys
+    import types
+
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service, name: store.get(name)
+    fake.set_password = lambda service, name, value: store.__setitem__(name, value)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+
+def test_run_setup_routes_to_search_wizard(tmp_path, monkeypatch):
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text(
+        "[search]\nproviders = ['open_websearch']\n", encoding="utf-8"
+    )
+    _script_answers(
+        monkeypatch, ["search", "providers", "open_websearch", "back", "done"]
+    )
+    from quiet_memo.infra.providers import run_setup
+
+    result = run_setup(config_path, None)
+    assert result["mode"] == "search"
+    assert result["search_providers"] == ["open_websearch"]
+    # 未做任何启停时，重写出的配置保持原样。
+    import tomllib
+
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert data["search"]["providers"] == ["open_websearch"]
+
+
+def test_search_setup_saves_key_and_enables_search_and_fetch(tmp_path, monkeypatch):
+    import tomllib
+
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    store: dict = {}
+    _install_fake_keyring(monkeypatch, store)
+    _script_answers(
+        monkeypatch,
+        [
+            "search",
+            "providers",
+            "tavily",
+            "sk-tavily-placeholder",  # password 输入
+            "search",  # 启用 Search
+            "fetch",  # 启用 Fetch
+            "back",
+            "done",
+        ],
+    )
+    result = providers_module.run_setup(config_path, None)
+
+    # save/read 走同一个假 keyring：保存后立即可读，env 变量未设置。
+    assert store == {"TAVILY_API_KEY": "sk-tavily-placeholder"}
+    assert result["search_providers"] == ["open_websearch", "tavily"]
+    assert result["fetch_providers"] == ["open_websearch", "tavily"]
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    # TOML 只写非敏感配置，不落 Key。
+    assert "sk-tavily-placeholder" not in config_path.read_text(encoding="utf-8")
+    assert data["search"]["providers"] == ["open_websearch", "tavily"]
+    assert data["fetch"]["providers"] == ["open_websearch", "tavily"]
+
+
+def test_search_setup_refuses_enable_without_key(tmp_path, monkeypatch):
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    _install_fake_keyring(monkeypatch, {})
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    _script_answers(
+        monkeypatch,
+        ["search", "providers", "tavily", "", "search", "back", "done"],
+    )
+
+    result = providers_module.run_setup(config_path, None)
+
+    assert result["search_providers"] == ["open_websearch"]
+    assert any("未检测到有效 Key" in message for message in result["messages"])
+
+
+def test_search_setup_updates_existing_key(tmp_path, monkeypatch):
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    store = {"TAVILY_API_KEY": "old"}
+    _install_fake_keyring(monkeypatch, store)
+    _script_answers(
+        monkeypatch,
+        ["search", "providers", "tavily", "new", "back", "done"],
+    )
+    providers_module.run_setup(config_path, None)
+    assert store == {"TAVILY_API_KEY": "new"}
+
+
+def test_search_setup_adjusts_provider_order(tmp_path, monkeypatch):
+    import tomllib
+
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text(
+        "[search]\nproviders = ['open_websearch', 'tavily']\n", encoding="utf-8"
+    )
+    _script_answers(
+        monkeypatch,
+        [
+            "search",
+            "search_order",
+            "tavily",
+            -1,  # 上移
+            None,  # 完成
+            "done",
+        ],
+    )
+
+    result = providers_module.run_setup(config_path, None)
+    assert result["search_providers"] == ["tavily", "open_websearch"]
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert data["search"]["providers"] == ["tavily", "open_websearch"]
+
+
+def test_search_setup_search_and_fetch_independent(tmp_path, monkeypatch):
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    _install_fake_keyring(monkeypatch, {"EXA_API_KEY": "k"})
+    _script_answers(
+        monkeypatch,
+        [
+            "search",
+            "providers",
+            "exa",
+            "",  # 不更新 Key
+            "search",  # 只启用 Search
+            "back",
+            "fetch_order",  # Fetch 保持默认 open_websearch
+            None,
+            "done",
+        ],
+    )
+
+    result = providers_module.run_setup(config_path, None)
+    assert result["search_providers"] == ["open_websearch", "exa"]
+    assert result["fetch_providers"] == ["open_websearch"]
+
+
+def test_llm_setup_flow_unchanged(tmp_path, monkeypatch):
+    """顶层菜单选 LLM 时走原有流程，返回结构不变。"""
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    _script_answers(
+        monkeypatch,
+        [
+            "llm",
+            next(p for p in providers_module.PRESETS if p.key == "custom"),
+            "https://api.example.com/v1",
+            "MY_KEY_ENV",
+            "my-model",
+            16000,  # context（reasoning 因 custom 无参数而跳过）
+            "",  # API Key 留空
+            False,  # 不初始化记忆库
+        ],
+    )
+    monkeypatch.setattr(
+        providers_module, "_capabilities", lambda *args, **kwargs: ({}, ())
+    )
+
+    result = providers_module.run_setup(config_path, None)
+
+    assert result["provider"] == "custom"
+    assert result["base_url"] == "https://api.example.com/v1"
+    assert result["key_saved"] is False

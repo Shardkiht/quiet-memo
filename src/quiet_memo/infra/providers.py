@@ -17,6 +17,7 @@ from .config import (
     default_config_path,
     default_vault_path,
     load_config,
+    read_api_key,
     toml_literal,
     write_example_config,
 )
@@ -375,11 +376,206 @@ def resolve_config_path(config_path: Path | None) -> Path:
 
 
 def run_setup(config_path: Path | None = None, vault: Path | None = None) -> dict:
+    """qm setup 顶层入口：先选配置内容，再进入对应向导。"""
     path = resolve_config_path(config_path)
     config = load_config(path) if path.exists() else Config(vault=default_vault_path())
     if vault is not None:
         config.vault = vault.expanduser().resolve()
 
+    choice = ask(
+        questionary.select(
+            "配置内容",
+            choices=[
+                questionary.Choice("模型与 LLM", value="llm"),
+                questionary.Choice("搜索与网页抓取 API", value="search"),
+            ],
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
+    if choice is None:
+        raise KeyboardInterrupt
+    if choice == "search":
+        return run_search_setup(config, path)
+    return _run_llm_setup(config, path)
+
+
+SEARCH_PROVIDER_LABELS = {
+    "open_websearch": "open-websearch（免费，无需 Key）",
+    "baidu_search": "百度千帆 AI 搜索",
+    "tavily": "Tavily",
+    "exa": "Exa",
+    "you": "You.com",
+    "volcengine": "火山引擎豆包搜索",
+}
+
+# 各官方厂商的 Key 环境变量名；open-websearch 无需 Key。
+SEARCH_KEY_ENVS = {
+    "baidu_search": "BAIDU_SEARCH_API_KEY",
+    "tavily": "TAVILY_API_KEY",
+    "exa": "EXA_API_KEY",
+    "you": "YDC_API_KEY",
+    "volcengine": "VOLCENGINE_SEARCH_API_KEY",
+}
+
+
+def _toggle_provider(names: list[str], name: str, enable: bool) -> None:
+    if enable and name not in names:
+        names.append(name)
+    elif not enable and name in names:
+        names.remove(name)
+
+
+def _move_provider(names: list[str], name: str, offset: int) -> None:
+    index = names.index(name)
+    target = index + offset
+    if 0 <= target < len(names):
+        names[index], names[target] = names[target], names[index]
+
+
+def _select(message: str, choices: list):
+    return ask(
+        questionary.select(
+            message,
+            choices=choices,
+            style=_MENU_STYLE,
+            qmark="›",
+            pointer="❯",
+            instruction="↑↓ 选择 · Enter 确认",
+        )
+    )
+
+
+def _provider_state(config: Config, name: str) -> str:
+    marks = []
+    if name in config.search.providers:
+        marks.append("Search")
+    if name in config.fetch.providers:
+        marks.append("Fetch")
+    return f"（{'/'.join(marks)}已启用）" if marks else ""
+
+
+def _configure_search_provider(config: Config, messages: list[str]) -> None:
+    choices = [
+        questionary.Choice(f"{label}{_provider_state(config, name)}", value=name)
+        for name, label in SEARCH_PROVIDER_LABELS.items()
+    ]
+    name = _select("选择厂商", choices)
+    if name is None:
+        raise KeyboardInterrupt
+    env_name = SEARCH_KEY_ENVS.get(name)
+    if env_name is None:
+        console.print("[dim]open-websearch 免费且无需 Key，本地 daemon 即可用。[/dim]")
+    else:
+        state = "已配置" if read_api_key(env_name) else "未配置"
+        api_key = ask(
+            questionary.password(
+                f"{SEARCH_PROVIDER_LABELS[name]} API Key（当前{state}；留空保持不变）"
+            )
+        )
+        if api_key and api_key.strip():
+            if save_api_key(env_name, api_key.strip()):
+                messages.append(
+                    f"{name} 的 API Key 已保存到系统凭据（环境变量 {env_name} 优先）。"
+                )
+            else:
+                messages.append(
+                    f"系统凭据存储不可用，{name} 的 Key 未保存明文，请改用环境变量 {env_name}。"
+                )
+    while True:
+        search_on = name in config.search.providers
+        fetch_on = name in config.fetch.providers
+        action = _select(
+            f"配置 {SEARCH_PROVIDER_LABELS[name]}",
+            [
+                questionary.Choice(
+                    f"{'禁用' if search_on else '启用'} Search", value="search"
+                ),
+                questionary.Choice(
+                    f"{'禁用' if fetch_on else '启用'} Fetch", value="fetch"
+                ),
+                questionary.Choice("返回上级", value="back"),
+            ],
+        )
+        if action is None or action == "back":
+            return
+        if action in ("search", "fetch"):
+            enable = not (search_on if action == "search" else fetch_on)
+            if enable and env_name and not read_api_key(env_name):
+                messages.append(
+                    f"{name} 未检测到有效 Key（环境变量或系统凭据），无法启用。"
+                )
+                continue
+            names = (
+                config.search.providers if action == "search" else config.fetch.providers
+            )
+            _toggle_provider(names, name, enable)
+
+
+def _adjust_order(names: list[str], label: str) -> None:
+    if not names:
+        console.print(f"[dim]{label} 当前没有启用的 provider。[/dim]")
+        return
+    while True:
+        current = " → ".join(
+            SEARCH_PROVIDER_LABELS.get(name, name) for name in names
+        )
+        choices = [
+            questionary.Choice(
+                f"{SEARCH_PROVIDER_LABELS.get(name, name)}", value=name
+            )
+            for name in names
+        ]
+        choices.append(questionary.Choice("完成", value=None))
+        name = _select(f"{label} 当前顺序：{current}（选择要移动的厂商）", choices)
+        if name is None:
+            return
+        direction = _select(
+            f"移动 {SEARCH_PROVIDER_LABELS.get(name, name)}",
+            [
+                questionary.Choice("上移", value=-1),
+                questionary.Choice("下移", value=1),
+            ],
+        )
+        if direction is None:
+            return
+        _move_provider(names, name, direction)
+
+
+def run_search_setup(config: Config, path: Path) -> dict:
+    """搜索与网页抓取向导：Key、启停与优先级；TOML 只写非敏感配置。"""
+    messages: list[str] = []
+    while True:
+        action = _select(
+            "搜索与网页抓取配置",
+            [
+                questionary.Choice("选择厂商：配置 Key / 启用停用", value="providers"),
+                questionary.Choice("调整 Search 优先级", value="search_order"),
+                questionary.Choice("调整 Fetch 优先级", value="fetch_order"),
+                questionary.Choice("保存并返回", value="done"),
+            ],
+        )
+        if action is None or action == "done":
+            break
+        if action == "providers":
+            _configure_search_provider(config, messages)
+        elif action == "search_order":
+            _adjust_order(config.search.providers, "Search")
+        elif action == "fetch_order":
+            _adjust_order(config.fetch.providers, "Fetch")
+    write_config(path, config)
+    return {
+        "mode": "search",
+        "config_path": str(path),
+        "search_providers": list(config.search.providers),
+        "fetch_providers": list(config.fetch.providers),
+        "messages": messages,
+    }
+
+
+def _run_llm_setup(config: Config, path: Path) -> dict:
     choice = ask(
         questionary.select(
             "选择模型供应商",

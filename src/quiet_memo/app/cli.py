@@ -88,7 +88,7 @@ def setup(
     config: Path | None = CONFIG_OPTION,
     vault: Path | None = VAULT_OPTION,
 ) -> None:
-    """交互式选择模型供应商并安全保存 API Key。"""
+    """交互式配置模型、搜索与网页抓取 API。"""
     from ..infra.providers import run_setup
 
     try:
@@ -97,6 +97,12 @@ def setup(
         fail("已取消。")
         return
     console.print(f"配置已保存：{result['config_path']}")
+    if result.get("mode") == "search":
+        console.print(f"Search providers：{result['search_providers']}")
+        console.print(f"Fetch providers：{result['fetch_providers']}")
+        for message in result["messages"]:
+            console.print(message)
+        return
     console.print(
         f"供应商：{result['base_url']} · 模型：{result['model']} · provider：{result['provider']}"
     )

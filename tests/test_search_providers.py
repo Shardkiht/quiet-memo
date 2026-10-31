@@ -60,8 +60,19 @@ def test_registry_without_new_providers_keeps_old_behavior(monkeypatch):
     assert set(registry) == {"open_websearch"}
 
 
+def _install_empty_keyring(monkeypatch) -> None:
+    # registry 现在会回退读系统凭据；测试必须隔离本机 keyring。
+    import sys
+    import types
+
+    fake = types.ModuleType("keyring")
+    fake.get_password = lambda service, name: None
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+
+
 def test_registry_skips_external_provider_without_api_key(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    _install_empty_keyring(monkeypatch)
     config = SearchConfig()
     config.providers = ["open_websearch", "tavily"]
     registry = build_registry(config)
@@ -614,6 +625,7 @@ def test_fetch_registry_registers_tavily_with_api_key(monkeypatch):
     assert "fetch" in registry["tavily"].capabilities
 
     monkeypatch.delenv("TAVILY_API_KEY")
+    _install_empty_keyring(monkeypatch)
     registry = build_fetch_registry(FetchConfig(providers=["tavily"]), SearchConfig())
     assert "tavily" not in registry
 

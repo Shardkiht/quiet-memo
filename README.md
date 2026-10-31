@@ -31,7 +31,7 @@ qm setup
 qm
 ```
 
-`qm setup` 选择模型供应商并配置 API Key。标准安装不需要下载本地向量模型；未安装向量后端时自动使用关键词检索。之后可用 `uv tool upgrade quiet-memo` 更新。
+`qm setup` 选择模型供应商并配置 API Key，也可进入「搜索与网页抓取 API」向导：为百度千帆、Tavily、Exa、You.com、火山引擎输入或更新 Key（存入系统凭据，TOML 不落明文），并分别启用各厂商的 Search / Fetch、调整两类 provider 的优先级。官方厂商即使已有 Key 也不会自动启用，必须在此显式开启；未配置有效 Key 时无法启用。open-websearch 免费且始终是默认项。标准安装不需要下载本地向量模型；未安装向量后端时自动使用关键词检索。之后可用 `uv tool upgrade quiet-memo` 更新。
 
 ## 为什么用 Quiet-Memo
 

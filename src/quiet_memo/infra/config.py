@@ -119,6 +119,19 @@ class SearchConfig:
     max_requests: int = 9
 
 
+def read_api_key(env_name: str) -> str:
+    """读取厂商 API Key：环境变量优先，其次系统凭据（Keyring）。"""
+    value = os.environ.get(env_name, "").strip()
+    if value:
+        return value
+    try:
+        import keyring
+
+        return (keyring.get_password(KEYRING_SERVICE, env_name) or "").strip()
+    except Exception:
+        return ""
+
+
 @dataclass(slots=True)
 class FetchConfig:
     # 网页抓取的 provider 顺序；与 search.providers 相互独立。

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import time
 from collections.abc import Sequence
 import dataclasses
@@ -9,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from ..config import SearchConfig
+from ..config import SearchConfig, read_api_key
 from .base import (
     FetchResult,
     ProviderError,
@@ -173,7 +172,7 @@ def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
             )
         elif name in _EXTERNAL_PROVIDERS:
             env_name = _EXTERNAL_PROVIDERS[name][1]
-            api_key = os.environ.get(env_name, "").strip()
+            api_key = read_api_key(env_name)
             if not api_key:
                 # 未配置 Key 的厂商直接跳过：不参与尝试，也不报错。
                 continue

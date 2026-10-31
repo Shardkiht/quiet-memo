@@ -31,7 +31,7 @@ qm setup
 qm
 ```
 
-`qm setup` selects a model provider and configures its API key. The standard installation does not download a local embedding model; keyword retrieval is used when the vector backend is not installed. Update later with `uv tool upgrade quiet-memo`.
+`qm setup` selects a model provider and configures its API key, and also offers a "search & fetch API" wizard: enter or update keys for Baidu Qianfan, Tavily, Exa, You.com, and Volcengine (stored in the system credential store, never written as plaintext to TOML), enable each vendor's Search / Fetch separately, and reorder both provider lists. Official vendors are never enabled automatically just because a key exists — enable them explicitly here; enabling without a valid key is refused. open-websearch is free and remains the default. The standard installation does not download a local embedding model; keyword retrieval is used when the vector backend is not installed. Update later with `uv tool upgrade quiet-memo`.
 
 ## Why Quiet-Memo
 
