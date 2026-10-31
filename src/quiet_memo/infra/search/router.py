@@ -108,6 +108,20 @@ class CandidatePool:
         return [entry.result for entry in self.ranked_entries(analysis)]
 
 
+def weak_share_hint(merged: list[SearchResult], analysis: QueryAnalysis) -> str:
+    """输出中多数条目与核心词无关时如实提示，避免整批被当作相关结果。
+
+    上游单字切词（如 bing 把「智谱」拆成「智」）会让候选池混入大量噪音；
+    少数弱候选是常态，不提示，过半才提示。
+    """
+    if len(merged) < 2:
+        return ""
+    weak = sum(1 for result in merged if not has_core_hit(result, analysis))
+    if weak * 2 > len(merged):
+        return "部分结果与查询核心词无关，仅供参考。"
+    return ""
+
+
 def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
     registry: dict[str, SearchProvider] = {}
     for name in config.providers:
@@ -310,7 +324,7 @@ class SearchRouter:
                         results=merged,
                         provider=name,
                         failed=failures,
-                        hint="",
+                        hint=weak_share_hint(merged, analysis),
                     )
                 # 质量不足：保留候选继续候补引擎/变体，由收尾统一排序。
 
@@ -334,7 +348,10 @@ class SearchRouter:
             # 池里至少有核心词命中：按成功语义缓存（时效查询仍短 TTL）。
             self._cache_put(cache_key, merged, name_hint, analysis)
             return SearchOutcome(
-                results=merged, provider=name_hint, failed=failures, hint=""
+                results=merged,
+                provider=name_hint,
+                failed=failures,
+                hint=weak_share_hint(merged, analysis),
             )
         if merged:
             # 候补都没命中核心词：返回候选但如实提示低相关，不伪装成精准命中；

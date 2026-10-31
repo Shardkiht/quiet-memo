@@ -456,3 +456,40 @@ def test_baidu_redirect_link_kept_without_auto_follow():
     outcome = router.search(SearchQuery("tibo"))
     assert outcome.results[0].url == link
     assert outcome.results[0].engine == "baidu"
+
+
+def test_gate_stop_with_mixed_pool_reports_weak_share():
+    """早停输出中多数条目与核心词无关时附提示，不让整批冒充相关结果。"""
+    provider = EngineProvider(
+        {
+            "bing": [
+                # 1 条强命中 + 2 条仅命中单字的噪音（模拟 bing 单字切词）。
+                SearchResult("智谱清言", "https://example.com/zq", "智谱官方应用"),
+                SearchResult("智（汉语汉字）_百度百科", "https://example.com/dict1", "智的意思"),
+                SearchResult("智 zhì - 汉典", "https://example.com/dict2", "智的解释"),
+            ]
+        }
+    )
+    router = SearchRouter(
+        {"fake": provider}, engines=["bing"], fallback_engines=(), max_engines=1
+    )
+    outcome = router.search(SearchQuery("智谱 最新消息"))
+    assert outcome.results[0].title == "智谱清言"
+    assert "无关" in outcome.hint
+
+
+def test_single_strong_hit_stays_hint_free():
+    """单条或少数强命中 + 个别弱候选是常态，不应误报提示。"""
+    provider = EngineProvider(
+        {
+            "bing": [
+                SearchResult("Tibo announces the roadmap", "https://example.com/a", "details"),
+                SearchResult("Weekly digest", "https://example.com/weak", "a mention of tibo"),
+            ]
+        }
+    )
+    router = SearchRouter(
+        {"fake": provider}, engines=["bing"], fallback_engines=(), max_engines=1
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert outcome.hint == ""
