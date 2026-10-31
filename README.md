@@ -374,7 +374,7 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
+├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py, chat_flow.py,
 │                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
 │                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP 入口
@@ -489,6 +489,6 @@ uv run python evals/retrieval_eval.py
 自动记忆召回按个人话题和连续追问触发；通用问题跳过预取，模型仍可按需调用 recall。auto_recall=0 关闭预取。
 
 
-TUI 固定界面文案统一使用英文，聊天内容保留原语言。默认 Bing 搜索连接失败或超时时，HTTP 搜索最多回退百度一次；显式指定引擎不自动替换。引擎失败不会显示为零结果或写入结果缓存。
+TUI 固定界面文案统一使用英文，聊天内容保留原语言。搜索引擎的自动回退规则见[联网搜索](#联网搜索)；显式指定引擎不自动替换。引擎失败不会显示为零结果或写入结果缓存。
 
 Windows 交互终端输入框使用原生细竖线光标，以配合中文输入法组字；拼音阶段的光标表现取决于终端与输入法。

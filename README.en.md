@@ -376,7 +376,7 @@ Credential detection considers assignment syntax and separators. It permits Chin
 
 ```text
 src/quiet_memo/
-├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py,
+├── app/          cli.py, server.py, tui.py, chat_app.py, chat_commands.py, chat_flow.py,
 │                 chat_widgets.py, chat_input.py, chat_theme.py, command_catalog.py,
 │                 actions.py, ui.py, session_ui.py
 │                                                   # CLI / Textual TUI / FastMCP entry points
@@ -491,6 +491,6 @@ Use `/sessions` to browse, search and resume sessions. Ask naturally to recall o
 Automatic memory recall is gated by personal context and follow-up questions. General questions skip prefetch; the model can still call recall when needed. auto_recall=0 disables prefetch.
 
 
-TUI interface text is English; chat content keeps its original language. When default Bing search fails or times out, HTTP search falls back to Baidu once. Explicit engine choices are honored. Engine failures are not reported or cached as empty results.
+TUI interface text is English; chat content keeps its original language. Automatic engine fallback rules are described in [Web search](#web-search); explicit engine choices are honored. Engine failures are not reported or cached as empty results.
 
 Interactive Windows input uses a native bar cursor for IME composition; preedit cursor behavior depends on the terminal and input method.
