@@ -1,0 +1,440 @@
+{
+ "summary": {
+  "cases": 33,
+  "wall_seconds": 0.001,
+  "pipeline": {
+   "p_at_5": 0.1879,
+   "success_at_5": 0.5455,
+   "mrr_at_5": 0.5455,
+   "ndcg_at_5": 0.7387,
+   "false_accept_rate": 0.1515,
+   "false_accept_negative_only": 0.25,
+   "avg_requests_per_query": 1.4848
+  },
+  "naive_pool_order": {
+   "p_at_5": 0.2606,
+   "success_at_5": 0.8485,
+   "ndcg_at_5": 0.8733
+  },
+  "oracle_pool_order": {
+   "p_at_5": 0.2606,
+   "success_at_5": 0.8485,
+   "ndcg_at_5": 1.0
+  }
+ },
+ "per_case": [
+  {
+   "qid": "se1",
+   "query": "tibo",
+   "category": "short-entity",
+   "grades": [
+    0,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.0
+  },
+  {
+   "qid": "se2",
+   "query": "tibo codex",
+   "category": "short-entity",
+   "grades": [
+    2,
+    1,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "se3",
+   "query": "thsottiaux codex",
+   "category": "short-entity",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 2,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "se4",
+   "query": "tibo 最近的公告",
+   "category": "short-entity",
+   "grades": [
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.2754
+  },
+  {
+   "qid": "se5",
+   "query": "wjx-handler ai",
+   "category": "short-entity",
+   "grades": [
+    0,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "se6",
+   "query": "Tibo OpenAI",
+   "category": "short-entity",
+   "grades": [
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.0
+  },
+  {
+   "qid": "cn1",
+   "query": "智谱 GLM 更新",
+   "category": "cjk-proper",
+   "grades": [
+    1,
+    0,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.2754
+  },
+  {
+   "qid": "cn2",
+   "query": "文心一言 用户数",
+   "category": "cjk-proper",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 2,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "cn3",
+   "query": "通义千问 开源",
+   "category": "cjk-proper",
+   "grades": [
+    2
+   ],
+   "requests": 2,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "cn4",
+   "query": "豆包 大模型",
+   "category": "cjk-proper",
+   "grades": [
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.0
+  },
+  {
+   "qid": "cn5",
+   "query": "Kimi 月之暗面",
+   "category": "cjk-proper",
+   "grades": [
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.2754
+  },
+  {
+   "qid": "tt1",
+   "query": "LiteLLM tool calling documentation",
+   "category": "tech-term",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "tt2",
+   "query": "python asyncio tutorial",
+   "category": "tech-term",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "tt3",
+   "query": "rust ownership borrow checker",
+   "category": "tech-term",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "tt4",
+   "query": "docker compose healthcheck",
+   "category": "tech-term",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "tt5",
+   "query": "textual python tui",
+   "category": "tech-term",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "nw1",
+   "query": "GLM 最新模型 发布",
+   "category": "freshness",
+   "grades": [
+    2,
+    1
+   ],
+   "requests": 2,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "nw2",
+   "query": "codex reset latest",
+   "category": "freshness",
+   "grades": [],
+   "requests": 3,
+   "confident": false,
+   "hint": "未找到相关结果。",
+   "ndcg5": 0.0
+  },
+  {
+   "qid": "nw3",
+   "query": "openai news today",
+   "category": "freshness",
+   "grades": [
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.2754
+  },
+  {
+   "qid": "nw4",
+   "query": "智谱 最新 发布",
+   "category": "freshness",
+   "grades": [
+    1
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 0.2754
+  },
+  {
+   "qid": "nw5",
+   "query": "litellm release notes latest version",
+   "category": "freshness",
+   "grades": [],
+   "requests": 3,
+   "confident": false,
+   "hint": "未找到相关结果。",
+   "ndcg5": 0.0
+  },
+  {
+   "qid": "am1",
+   "query": "mercury planet facts",
+   "category": "ambiguous",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "am2",
+   "query": "julia programming",
+   "category": "ambiguous",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "am3",
+   "query": "orca whale",
+   "category": "ambiguous",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "am4",
+   "query": "swift language",
+   "category": "ambiguous",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "gn1",
+   "query": "python 教程",
+   "category": "generic",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "gn2",
+   "query": "编程入门",
+   "category": "generic",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "gn3",
+   "query": "healthy breakfast ideas",
+   "category": "generic",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "gn4",
+   "query": "如何学习英语",
+   "category": "generic",
+   "grades": [
+    2,
+    0
+   ],
+   "requests": 3,
+   "confident": false,
+   "hint": "候补引擎未找到与查询词直接相关的结果，以下为各引擎返回的候选。",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "ng1",
+   "query": "tibo",
+   "category": "negative",
+   "grades": [
+    0,
+    0
+   ],
+   "requests": 3,
+   "confident": false,
+   "hint": "候补引擎未找到与查询词直接相关的结果，以下为各引擎返回的候选。",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "ng2",
+   "query": "zzqqwxy protocol",
+   "category": "negative",
+   "grades": [],
+   "requests": 3,
+   "confident": false,
+   "hint": "未找到相关结果。",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "ng3",
+   "query": "asdkjhg kitchen",
+   "category": "negative",
+   "grades": [
+    0
+   ],
+   "requests": 1,
+   "confident": true,
+   "hint": "",
+   "ndcg5": 1.0
+  },
+  {
+   "qid": "ng4",
+   "query": "fake-project-x release",
+   "category": "negative",
+   "grades": [
+    0
+   ],
+   "requests": 3,
+   "confident": false,
+   "hint": "候补引擎未找到与查询词直接相关的结果，以下为各引擎返回的候选。",
+   "ndcg5": 1.0
+  }
+ ]
+}

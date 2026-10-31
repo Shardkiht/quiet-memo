@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -21,6 +20,7 @@ from .base import (
 )
 from .cache import SearchCache
 from .open_websearch import OpenWebSearchProvider
+from .quality import QueryAnalysis, analyze_query, is_relevant, result_relevance
 
 DEFAULT_PROVIDER = "open_websearch"
 KNOWN_PROVIDERS = {DEFAULT_PROVIDER}
@@ -28,12 +28,6 @@ KNOWN_PROVIDERS = {DEFAULT_PROVIDER}
 # 空结果与时效性查询的缓存短命 TTL；成功结果沿用配置的 cache_ttl。
 EMPTY_RESULT_TTL = 300.0
 FRESHNESS_TTL = 600.0
-# 查询文本命中这些词时视为时效性查询，成功结果也只短缓存。
-_FRESHNESS_PATTERN = re.compile(
-    r"今天|最新|最近|刚刚|昨日|本周|新闻|latest|news|today|now", re.IGNORECASE
-)
-# 相关性分词：连续拉丁串（含 @账号、域名片段）与连续 CJK 串各算一个词元。
-_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_@.\-]{2,}|[\u4e00-\u9fff]{2,}")
 
 
 def query_variants(text: str, context_terms: Sequence[str] = ()) -> list[str]:
@@ -56,41 +50,8 @@ def query_variants(text: str, context_terms: Sequence[str] = ()) -> list[str]:
     return variants
 
 
-def query_tokens(text: str, context_terms: Sequence[str] = ()) -> tuple[str, ...]:
-    """提取查询词元：拉丁串保持完整（专有名词整体匹配），CJK 取连续段。"""
-    tokens: list[str] = []
-    for source in (text, *context_terms):
-        for raw in _TOKEN_PATTERN.findall(source):
-            token = raw.strip("@.-_").lower()
-            if len(token) >= 2 and token not in tokens:
-                tokens.append(token)
-    return tuple(tokens)
-
-
-def relevance_score(result: SearchResult, tokens: tuple[str, ...]) -> int:
-    """轻量相关性评分：标题命中权重高于摘要；不打分用不上模型。"""
-    if not tokens:
-        return 0
-    title = result.title.lower()
-    snippet = result.snippet.lower()
-    score = 0
-    for token in tokens:
-        if token in title:
-            score += 2
-        elif token in snippet:
-            score += 1
-    return score
-
-
-def is_relevant(results: list[SearchResult], tokens: tuple[str, ...]) -> bool:
-    """保守判定：只要任何结果命中任何词元即算相关；词元为空时不判定。"""
-    if not tokens or not results:
-        return False
-    return any(relevance_score(result, tokens) > 0 for result in results)
-
-
 def merge_results(
-    candidates: list[SearchResult], tokens: tuple[str, ...], limit: int
+    candidates: list[SearchResult], analysis: QueryAnalysis, limit: int
 ) -> list[SearchResult]:
     """多引擎候选合并：URL 去重，按相关性分排序后截断；同分保持原顺序。"""
     seen: set[str] = set()
@@ -111,8 +72,8 @@ def merge_results(
                 engine=result.engine,
             )
         )
-    if tokens:
-        merged.sort(key=lambda item: -relevance_score(item, tokens))
+    if analysis.core_terms:
+        merged.sort(key=lambda item: -result_relevance(item, analysis))
     return merged[:limit]
 
 
@@ -191,10 +152,10 @@ class SearchRouter:
         engine = (query.engine or "auto").strip()
         names = [engine] if engine != "auto" else self.order
         # 缓存必须区分实际使用的上游引擎，否则改配置后会命中旧引擎的结果。
-        # v4：context 影响变体与相关性判断、auto/explicit 决定回退策略、
+        # v5：context 影响变体与相关性判断、auto/explicit 决定回退策略、
         # 回退配置改变尝试序列——都要进键，与旧策略缓存隔离。
         engines = tuple(query.engines) or self.engines
-        tokens = query_tokens(text, query.context_terms)
+        analysis = analyze_query(text, query.context_terms)
         cache_key = self._cache_key(
             text, limit, engine, query.lang, query.freshness, names, engines, query
         )
@@ -224,11 +185,11 @@ class SearchRouter:
                 continue
             outcome = self._search_one_provider(
                 provider, name, query, text, limit, engine, engines,
-                slot_queries, tokens, cache_key, failures, started,
+                slot_queries, analysis, cache_key, failures, started,
             )
             if outcome is not None:
                 return outcome
-        return self._final_outcome(failures, [], tokens, limit, cache_key, text, name_hint=names[-1] if names else "")
+        return self._final_outcome(failures, [], analysis, limit, cache_key, text, name_hint=names[-1] if names else "")
 
     def _search_one_provider(
         self,
@@ -240,7 +201,7 @@ class SearchRouter:
         engine: str,
         engines: tuple[str, ...],
         slot_queries: list[str],
-        tokens: tuple[str, ...],
+        analysis: QueryAnalysis,
         cache_key: str,
         failures: list[SearchFailure],
         started: float,
@@ -267,7 +228,7 @@ class SearchRouter:
                     )
                     if candidates:
                         return self._final_outcome(
-                            failures, candidates, tokens, limit, cache_key, text, name_hint=name
+                            failures, candidates, analysis, limit, cache_key, text, name_hint=name
                         )
                     return None
                 try:
@@ -294,23 +255,23 @@ class SearchRouter:
                     result.engine = slot_engines[0] if slot_engines else ""
                 if not results:
                     continue
-                if not tokens or is_relevant(results, tokens):
+                if not analysis.core_terms or is_relevant(results, analysis):
                     # 缓存与返回必须是同一份最终结果：先合并排序截断再入缓存，
                     # 否则缓存命中后顺序与首查不一致。
-                    merged = merge_results(results, tokens, limit)
-                    self._cache_put(cache_key, merged, name, text)
+                    merged = merge_results(results, analysis, limit)
+                    self._cache_put(cache_key, merged, name, analysis)
                     return SearchOutcome(
                         results=merged,
                         provider=name,
                         failed=failures,
                         hint="",
                     )
-                # 有结果但与查询词元零命中：保留为候选（保守，不丢弃），继续候补。
+                # 有结果但与核心词零命中：保留为候选（保守，不丢弃），继续候补。
                 candidates.extend(results)
 
         if candidates:
             return self._final_outcome(
-                failures, candidates, tokens, limit, cache_key, text, name_hint=name
+                failures, candidates, analysis, limit, cache_key, text, name_hint=name
             )
         return None
 
@@ -318,16 +279,16 @@ class SearchRouter:
         self,
         failures: list[SearchFailure],
         candidates: list[SearchResult],
-        tokens: tuple[str, ...],
+        analysis: QueryAnalysis,
         limit: int,
         cache_key: str,
         text: str,
         name_hint: str = "",
     ) -> SearchOutcome:
         if candidates:
-            # 候补都没命中词元时返回已有候选并如实提示，不伪装成精准命中；
+            # 候补都没命中核心词时返回已有候选并如实提示，不伪装成精准命中；
             # 候选结果用短 TTL 缓存，给之后的回退留机会。
-            merged = merge_results(candidates, tokens, limit)
+            merged = merge_results(candidates, analysis, limit)
             if self.cache is not None:
                 self.cache.set(cache_key, merged, name_hint, ttl=FRESHNESS_TTL)
             return SearchOutcome(
@@ -356,13 +317,13 @@ class SearchRouter:
         cache_key: str,
         results: list[SearchResult],
         name: str,
-        text: str,
+        analysis: QueryAnalysis,
         short: bool = False,
     ) -> None:
         if self.cache is None or not results:
             return
-        # 时效性查询（今天/最新/latest...）与不相关候选都只短缓存。
-        if short or _FRESHNESS_PATTERN.search(text):
+        # 时效性查询（今天/最新/latest...）成功结果也只短缓存。
+        if short or analysis.freshness_requested:
             self.cache.set(cache_key, results, name, ttl=FRESHNESS_TTL)
         else:
             self.cache.set(cache_key, results, name)
@@ -436,7 +397,7 @@ class SearchRouter:
         engines: tuple[str, ...],
         query: SearchQuery,
     ) -> str:
-        # v4：context（保留顺序，影响变体生成）、auto/explicit 策略、回退
+        # v5：context（保留顺序，影响变体生成）、auto/explicit 策略、回退
         # 引擎序列与预算都参与键；策略或配置一变即视为新查询。
         strategy = "explicit" if query.engines else "auto"
         context_sig = "\x1e".join(
@@ -444,7 +405,7 @@ class SearchRouter:
         )
         raw = "\x1f".join(
             [
-                "search-v4",
+                "search-v5",
                 text,
                 str(limit),
                 engine,

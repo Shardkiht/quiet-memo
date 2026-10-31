@@ -1,0 +1,223 @@
+"""查询分析与确定性相关性评分（搜索质量优化 Phase 1）。
+
+把“整句词元子串匹配”升级为分层打分：
+- core_terms 只来自原始查询（拉丁专有名词按词边界、中文按轻量分词短语），
+  是判定结果是否相关的唯一依据；
+- context_terms 只做低权重消歧，不能单独令结果通过质量门控；
+- 时间词/事件词归入 freshness/intent，不要求结果完整命中。
+全部为确定性规则，不访问 LLM。
+"""
+from __future__ import annotations
+
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from .base import SearchResult
+
+_CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
+# 拉丁词元：字母数字开头结尾，允许内部 @ . _ -（账号、域名片段、版本号）。
+_LATIN_RUN = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_@.\-]*[A-Za-z0-9])?")
+
+# 受控停用词：只收虚词/疑问词，不收可能成为实体的内容词。
+_CJK_STOPWORDS = frozenset(
+    "的 了 吗 呢 吧 啊 呀 是 在 有 和 与 对 就 还 都 也 很 我 你 他 她 它 这 那 "
+    "什么 怎么 怎样 如何 为什么 哪 哪些 哪个 关于 请问 一下 介绍 详细 说说 看看 "
+    "新 个 种 等".split()
+)
+# 时间词：命中即视为时效性查询，不进入核心词，也不猜测事实日期。
+_FRESHNESS_WORDS = (
+    "今天",
+    "最新",
+    "最近",
+    "刚刚",
+    "昨日",
+    "昨天",
+    "本周",
+    "上周",
+    "latest",
+    "news",
+    "today",
+    "now",
+    "breaking",
+)
+# 事件词：弱特征（发布/故障/价格等），命中只加分，不作为相关性门槛。
+_INTENT_WORDS = (
+    "发布",
+    "官宣",
+    "公告",
+    "更新",
+    "上线",
+    "新闻",
+    "消息",
+    "价格",
+    "故障",
+    "版本",
+    "release",
+    "launch",
+    "announce",
+    "announcement",
+    "update",
+    "changelog",
+    "outage",
+    "incident",
+)
+_LATIN_STOPWORDS = frozenset(
+    "the a an of in on for and or is are was were what how who when where why "
+    "to do does did about with vs at by from".split()
+)
+# 从原始查询中剥离出 core_terms 的词（停用词 + 时间词 + 事件词）。
+_REMOVED_WORDS = _CJK_STOPWORDS | frozenset(_FRESHNESS_WORDS) | frozenset(_INTENT_WORDS)
+
+_FRESHNESS_PATTERN = re.compile(
+    "|".join(re.escape(word) for word in _FRESHNESS_WORDS), re.IGNORECASE
+)
+
+
+# 拉丁词边界匹配：前后不能紧邻字母数字，避免 tibo 命中 tibonacci。
+def _latin_pattern(word: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![0-9a-z]){re.escape(word)}(?![0-9a-z])")
+
+
+@dataclass(frozen=True)
+class QueryTerm:
+    """参与匹配的词元；latin 用词边界，cjk 用子串。"""
+
+    text: str  # 匹配用的小写形式
+    kind: str  # "latin" | "cjk_phrase" | "cjk_gram"
+    original: str = ""
+
+
+@dataclass(frozen=True)
+class QueryAnalysis:
+    raw_query: str
+    core_terms: tuple[QueryTerm, ...]  # 来自原始查询，决定相关性
+    context_terms: tuple[QueryTerm, ...]  # 仅辅助消歧，不可独立令结果通过
+    intent_terms: tuple[str, ...]  # 事件主题词（发布/故障/价格...）
+    freshness_requested: bool
+    ambiguous: bool  # 无高置信实体时提高回退保守度
+
+
+def _split_cjk(run: str) -> list[str]:
+    """按受控词表把连续中文段切成片段，保留原始词序。
+
+    这是刻意从简的切分：不引入分词模型，只剥离虚词/时间词/事件词，
+    剩下的片段（≥2 字）作为短语词元；更长片段补充二元词元兜底。
+    """
+    removed = sorted(_REMOVED_WORDS, key=len, reverse=True)
+    segments: list[str] = []
+    buffer: list[str] = []
+    index = 0
+    while index < len(run):
+        for word in removed:
+            if run.startswith(word, index):
+                if buffer:
+                    segments.append("".join(buffer))
+                    buffer.clear()
+                index += len(word)
+                break
+        else:
+            buffer.append(run[index])
+            index += 1
+    if buffer:
+        segments.append("".join(buffer))
+    return [segment for segment in segments if len(segment) >= 2]
+
+
+def _extract_terms(source: str) -> list[QueryTerm]:
+    terms: list[QueryTerm] = []
+    for raw in _LATIN_RUN.findall(source):
+        token = raw.strip("@._-").lower()
+        if len(token) >= 2 and token not in _LATIN_STOPWORDS:
+            terms.append(QueryTerm(token, "latin", raw))
+    for run in _CJK_RUN.findall(source):
+        for segment in _split_cjk(run):
+            # ≥2 字中文片段统一按短语权重匹配；更长片段再补二元词元兜底。
+            terms.append(QueryTerm(segment, "cjk_phrase", segment))
+            if len(segment) >= 4:
+                seen: set[str] = set()
+                for start in range(len(segment) - 1):
+                    gram = segment[start : start + 2]
+                    if gram not in seen:
+                        seen.add(gram)
+                        terms.append(QueryTerm(gram, "cjk_gram", gram))
+    # 去重保序：同文本的词元只保留首个（短语优先于二元）。
+    deduped: list[QueryTerm] = []
+    seen: set[tuple[str, str]] = set()
+    for term in terms:
+        key = (term.text, term.kind)
+        if key not in seen:
+            seen.add(key)
+            deduped.append(term)
+    return deduped
+
+
+def _match(term: QueryTerm, text_lower: str) -> bool:
+    if term.kind == "latin":
+        return _latin_pattern(term.text).search(text_lower) is not None
+    return term.text in text_lower
+
+
+def _intent_hit(word: str, text_lower: str) -> bool:
+    if word.isascii():
+        return _latin_pattern(word).search(text_lower) is not None
+    return word in text_lower
+
+
+def analyze_query(text: str, context_terms: Sequence[str] = ()) -> QueryAnalysis:
+    raw = text.strip()
+    core = _extract_terms(raw)
+    core_texts = {term.text for term in core}
+    context: list[QueryTerm] = []
+    for term in context_terms:
+        for extracted in _extract_terms(str(term)):
+            if extracted.text not in core_texts:
+                context.append(extracted)
+    intent = [word for word in _INTENT_WORDS if _intent_hit(word, raw.lower())]
+    # 高置信实体：拉丁专有名词或 ≥3 字中文短语；只有二元片段时视为模糊。
+    confident = any(term.kind in ("latin", "cjk_phrase") for term in core)
+    return QueryAnalysis(
+        raw_query=raw,
+        core_terms=tuple(core),
+        context_terms=tuple(context),
+        intent_terms=tuple(intent),
+        freshness_requested=bool(_FRESHNESS_PATTERN.search(raw)),
+        ambiguous=not confident,
+    )
+
+
+def has_core_hit(result: SearchResult, analysis: QueryAnalysis) -> bool:
+    """结果是否命中任一核心词；核心词为空时不做门控。"""
+    if not analysis.core_terms:
+        return True
+    title = result.title.lower()
+    snippet = result.snippet.lower()
+    return any(_match(term, title) or _match(term, snippet) for term in analysis.core_terms)
+
+
+def result_relevance(result: SearchResult, analysis: QueryAnalysis) -> float:
+    """确定性评分：标题核心命中 > 摘要核心命中 > 二元片段 > 上下文/事件词。"""
+    title = result.title.lower()
+    snippet = result.snippet.lower()
+    score = 0.0
+    for term in analysis.core_terms:
+        if _match(term, title):
+            score += 3.0 if term.kind != "cjk_gram" else 1.0
+        elif _match(term, snippet):
+            score += 1.0 if term.kind != "cjk_gram" else 0.5
+    for term in analysis.context_terms:
+        if _match(term, title):
+            score += 0.5
+        elif _match(term, snippet):
+            score += 0.25
+    for word in analysis.intent_terms:
+        if _intent_hit(word, title) or _intent_hit(word, snippet):
+            score += 0.5
+    return score
+
+
+def is_relevant(results: list[SearchResult], analysis: QueryAnalysis) -> bool:
+    """保守判定：任一结果命中核心词即算相关；无核心词时不判定。"""
+    if not analysis.core_terms or not results:
+        return False
+    return any(has_core_hit(result, analysis) for result in results)
