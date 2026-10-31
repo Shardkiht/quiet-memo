@@ -493,3 +493,89 @@ def test_single_strong_hit_stays_hint_free():
     )
     outcome = router.search(SearchQuery("tibo"))
     assert outcome.hint == ""
+
+
+class NamedProvider:
+    """可命名 provider：按 name 注册，用于跨 Provider 调度测试。"""
+
+    capabilities = {"search", "engines"}
+
+    def __init__(self, name: str, results: list[SearchResult]):
+        self.name = name
+        self.results = results
+        self.calls: list[SearchQuery] = []
+
+    def search(self, query: SearchQuery) -> list[SearchResult]:
+        self.calls.append(query)
+        return list(self.results)
+
+
+def test_weak_first_provider_does_not_block_second_provider():
+    """Phase A：第一家只有弱候选时不得收尾，第二家的强候选要能进前五。"""
+    weak = NamedProvider(
+        "weak_one",
+        [SearchResult("Unrelated candidate", f"https://example.com/w{i}", "") for i in range(3)],
+    )
+    strong = NamedProvider(
+        "strong_two",
+        [
+            SearchResult("Tibo announces the roadmap", "https://example.com/s1", "details"),
+            SearchResult("Tibo release notes", "https://example.com/s2", "more"),
+        ],
+    )
+    router = SearchRouter(
+        {"weak_one": weak, "strong_two": strong},
+        order=["weak_one", "strong_two"],
+        engines=["bing"],
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert weak.calls and strong.calls
+    assert outcome.provider == "strong_two"
+    urls = [item.url for item in outcome.results[:5]]
+    assert "https://example.com/s1" in urls and "https://example.com/s2" in urls
+    # 强候选在前，弱候选如实提示（3/5 过半触发 weak_share_hint）。
+    assert "无关" in outcome.hint
+
+
+def test_all_providers_exhausted_finalizes_with_collected_pool():
+    """全部 provider 遍历完才收尾：低相关候选如实提示，不丢第一家的候选。"""
+    weak = NamedProvider(
+        "weak_one",
+        [SearchResult("Unrelated candidate", "https://example.com/w", "")],
+    )
+    empty = NamedProvider("empty_two", [])
+    router = SearchRouter(
+        {"weak_one": weak, "empty_two": empty},
+        order=["weak_one", "empty_two"],
+        engines=["bing"],
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert weak.calls and empty.calls
+    assert [item.url for item in outcome.results] == ["https://example.com/w"]
+    assert "未找到" in outcome.hint
+
+
+def test_provider_budget_shared_across_providers(monkeypatch):
+    """全局超时预算跨 provider 共享：第一家耗时耗尽后不再打第二家。"""
+    from quiet_memo.infra.search import router as router_module
+
+    clock = [0.0]
+
+    class SlowProvider(NamedProvider):
+        def search(self, query):
+            self.calls.append(query)
+            clock[0] += 30.0
+            return list(self.results)
+
+    weak = SlowProvider("weak_one", [SearchResult("Unrelated", "https://example.com/w", "")])
+    second = NamedProvider("second", [SearchResult("Tibo roadmap", "https://example.com/s", "")])
+    monkeypatch.setattr(router_module.time, "perf_counter", lambda: clock[0])
+    router = SearchRouter(
+        {"weak_one": weak, "second": second},
+        order=["weak_one", "second"],
+        engines=["bing"],
+        timeout_budget=25.0,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert weak.calls and not second.calls
+    assert any(item.kind == "timeout" for item in outcome.failed)

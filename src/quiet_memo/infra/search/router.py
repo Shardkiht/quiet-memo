@@ -326,12 +326,8 @@ class SearchRouter:
                         failed=failures,
                         hint=weak_share_hint(merged, analysis),
                     )
-                # 质量不足：保留候选继续候补引擎/变体，由收尾统一排序。
-
-        if pool.size:
-            return self._final_outcome(
-                failures, pool, analysis, limit, cache_key, name_hint=name
-            )
+                # 质量不足：保留候选继续候补引擎/变体/下一个 provider，
+                # 由 search() 在全部遍历或预算耗尽后统一收尾。
         return None
 
     def _final_outcome(
