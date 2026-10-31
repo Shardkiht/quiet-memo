@@ -153,3 +153,90 @@ def test_effective_timeout_takes_minimum():
     assert client.effective_timeout(None) is None
     assert client.effective_timeout(25.0) == 10.0
     assert client.effective_timeout(2.0) == 2.0
+
+
+# ---------- 卡 04：百度 Search ----------
+
+
+def baidu_payload(references):
+    return {"request_id": "rid", "references": references}
+
+
+def test_baidu_maps_web_references_only():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json=baidu_payload(
+                [
+                    {"type": "web", "title": "Tibo 动态", "url": "https://example.com/a",
+                     "content": "相关内容", "date": "2026-10-30"},
+                    {"type": "video", "title": "视频", "url": "https://example.com/v", "content": "x"},
+                    {"title": "无类型", "url": "https://example.com/n", "content": "y"},
+                ]
+            ),
+        )
+    )
+    provider = make(BaiduSearchProvider, sent)
+    results = provider.search(SearchQuery("Tibo 最新消息", limit=10))
+    assert [item.url for item in results] == ["https://example.com/a", "https://example.com/n"]
+    assert results[0].snippet == "相关内容"
+    assert results[0].published == "2026-10-30"
+    assert results[0].provider == "baidu_search"
+    request = requests[0]
+    body = json.loads(request.content)
+    assert body["messages"] == [{"role": "user", "content": "Tibo 最新消息"}]
+    assert body["edition"] == "standard"
+    assert body["search_source"] == "baidu_search_v2"
+    # 默认不带时间过滤，不悄悄缩小召回。
+    assert "search_recency_filter" not in body
+    assert request.headers["authorization"] == f"Bearer {KEY}"
+    assert "x-appbuilder-authorization" not in request.headers
+
+
+def test_baidu_alternative_auth_header_is_exclusive():
+    sent, requests = capture(lambda request: httpx.Response(200, json=baidu_payload([])))
+    provider = make(BaiduSearchProvider, sent, auth_header="x-appbuilder-authorization")
+    provider.search(SearchQuery("q"))
+    request = requests[0]
+    assert request.headers["x-appbuilder-authorization"] == f"Bearer {KEY}"
+    assert "authorization" not in request.headers
+
+
+def test_baidu_business_error_in_http_200_is_auth_failure():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "requestId": "rid",
+                "code": 216003,
+                "message": "Authentication error: InvalidHTTPAuthHeader",
+            },
+        )
+    )
+    provider = make(BaiduSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.AUTH
+    assert KEY not in caught.value.detail
+
+
+def test_baidu_missing_references_is_empty_not_error():
+    sent, _ = capture(lambda request: httpx.Response(200, json={"request_id": "rid"}))
+    provider = make(BaiduSearchProvider, sent)
+    assert provider.search(SearchQuery("q")) == []
+
+
+def test_baidu_non_json_response_is_bad_response():
+    sent, _ = capture(lambda request: httpx.Response(200, text="gateway html"))
+    provider = make(BaiduSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.BAD_RESPONSE
+
+
+def test_baidu_401_maps_to_auth():
+    sent, _ = capture(lambda request: httpx.Response(401, json={}))
+    provider = make(BaiduSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.AUTH
