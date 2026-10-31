@@ -230,7 +230,7 @@ class ScoreBreakdown:
 def score_entry(
     result: SearchResult,
     analysis: QueryAnalysis,
-    ranks: Sequence[tuple[str, int]] = (),
+    ranks: Sequence[tuple[str, str, int]] = (),
 ) -> ScoreBreakdown:
     """确定性多特征评分；每个特征单独记录贡献，便于解释与调参。"""
     title = result.title.lower()
@@ -260,9 +260,11 @@ def score_entry(
             context += 0.25
     engine_rank = 0.0
     if ranks:
-        best = min(rank for _, rank in ranks)
+        best = min(rank for _, _, rank in ranks)
         engine_rank = {1: 1.2, 2: 0.6, 3: 0.3}.get(best, 0.0)
-    distinct = len({engine for engine, _ in ranks if engine})
+    # 交叉来源按 (provider, engine) 独立身份计数：不同厂商返回同一 URL
+    # 也算交叉命中；引擎字段为空的厂商凭 provider 身份参与统计。
+    distinct = len({(provider, engine) for provider, engine, _ in ranks if provider or engine})
     corroboration = 0.0 if distinct < 2 else (1.0 if distinct == 2 else 1.5)
     # 时间优先级只对明确时效查询生效；没有 published 就保持未知，不猜测日期。
     published = 0.3 if analysis.freshness_requested and result.published else 0.0

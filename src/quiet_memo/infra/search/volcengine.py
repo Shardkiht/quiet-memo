@@ -18,6 +18,8 @@ NAME = "volcengine"
 DEFAULT_BASE_URL = "https://open.feedcoopapi.com"
 GLOBAL_PATH = "/search_api/global_search"
 CUSTOM_PATH = "/search_api/web_search"
+# 官方两种模式的 Query 上限都是 1-100 字符；超限不静默截断，显式报错。
+QUERY_MAX_CHARS = 100
 
 
 def _error_from_metadata(payload: dict[str, Any]) -> ProviderError | None:
@@ -37,6 +39,17 @@ def _error_from_metadata(payload: dict[str, Any]) -> ProviderError | None:
     else:
         kind = ProviderErrorKind.BAD_RESPONSE
     return ProviderError(NAME, kind, f"{code}: {message}")
+
+
+def _checked_query(text: str) -> str:
+    if len(text) > QUERY_MAX_CHARS:
+        # 截断会静默改写查询语义；超限直接报给上层，由 router 换下一家。
+        raise ProviderError(
+            NAME,
+            ProviderErrorKind.BAD_RESPONSE,
+            f"查询长度 {len(text)} 超过火山引擎 {QUERY_MAX_CHARS} 字符上限",
+        )
+    return text
 
 
 def _documents(payload: dict[str, Any]) -> list[Any]:
@@ -113,10 +126,8 @@ class VolcengineSearchProvider:
         return [item for item in mapped if item is not None]
 
     def _global_request(self, text: str, count: int) -> tuple[str, dict[str, Any]]:
-        # Query 限 1-100 字符；超长截断，保留头部信息（官方不支持多词的
-        # 表述与实际行为待真实冒烟确认，这里不静默改写查询语义）。
         return GLOBAL_PATH, {
-            "Query": text[:100],
+            "Query": _checked_query(text),
             "SearchType": "web",
             "DocCount": count,
             "MaxSnippetLength": 1000,
@@ -126,7 +137,7 @@ class VolcengineSearchProvider:
         # NeedContent=true：搜索结果需要 snippet 供相关性门控使用；
         # 方案示例里的 false 会拿不到正文摘要，实现上按搜索需求取内容。
         return CUSTOM_PATH, {
-            "Query": text[:100],
+            "Query": _checked_query(text),
             "SearchType": "web",
             "Count": count,
             "Filter": {"NeedContent": True, "NeedUrl": True},

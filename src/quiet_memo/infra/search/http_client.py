@@ -14,6 +14,10 @@ from .base import ProviderError, ProviderErrorKind
 
 
 def _status_kind(status: int) -> ProviderErrorKind | None:
+    # 非 2xx 一律失败：400/404/422 等也必须抛 ProviderError，
+    # 绝不能把错误响应当成功返回给调用方。
+    if 200 <= status < 300:
+        return None
     if status in (401, 403):
         # 403 兼作 Scope/套餐不足；与鉴权一样不做快速重试。
         return ProviderErrorKind.AUTH
@@ -23,7 +27,8 @@ def _status_kind(status: int) -> ProviderErrorKind | None:
         return ProviderErrorKind.RATE_LIMIT
     if status >= 500:
         return ProviderErrorKind.UNAVAILABLE
-    return None
+    # 3xx 重定向与 400/404/408/422 等其余状态：按坏响应处理，只报状态码。
+    return ProviderErrorKind.BAD_RESPONSE
 
 
 class JsonApiClient:

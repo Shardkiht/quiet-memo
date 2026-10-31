@@ -366,8 +366,25 @@ def test_cross_engine_corroboration_boosts_confidence():
     pool.add([duplicate])
     entry = next(item for item in pool.ranked_entries(analysis) if item.result.url.endswith("/a"))
     assert entry.score.corroboration > 0.0
-    assert ("bing", 1) in entry.ranks and ("baidu", 1) in entry.ranks
+    assert ("", "bing", 1) in entry.ranks and ("", "baidu", 1) in entry.ranks
     assert pool.ranked(analysis)[0].url == "https://example.com/a"
+
+
+def test_cross_provider_same_url_counts_as_corroboration():
+    """不同 Provider 返回同一 URL：交叉来源按 (provider, engine) 身份统计。"""
+    from quiet_memo.infra.search.router import CandidatePool
+
+    analysis = analyze_query("tibo")
+    from_a = SearchResult("Tibo update", "https://example.com/a", "")
+    from_a.provider = "prov_a"  # 外部厂商没有引擎字段，交叉证据靠 provider 身份
+    from_b = SearchResult("Tibo update", "https://example.com/a", "")
+    from_b.provider = "prov_b"
+    pool = CandidatePool()
+    pool.add([from_a])
+    pool.add([from_b])
+    entry = next(item for item in pool.ranked_entries(analysis) if item.result.url.endswith("/a"))
+    assert ("prov_a", "", 1) in entry.ranks and ("prov_b", "", 1) in entry.ranks
+    assert entry.score.corroboration > 0.0
 
 
 def test_published_boost_only_for_freshness_queries():
@@ -393,7 +410,11 @@ def test_score_breakdown_sums_to_total():
     result = SearchResult(
         "Tibo codex announcement", "https://example.com/a", "openai notes"
     )
-    breakdown = score_entry(result, analysis, ranks=[("bing", 1), ("baidu", 3)])
+    breakdown = score_entry(
+        result,
+        analysis,
+        ranks=[("open_websearch", "bing", 1), ("open_websearch", "baidu", 3)],
+    )
     parts = [
         breakdown.title_core,
         breakdown.snippet_core,
@@ -579,3 +600,57 @@ def test_provider_budget_shared_across_providers(monkeypatch):
     outcome = router.search(SearchQuery("tibo"))
     assert weak.calls and not second.calls
     assert any(item.kind == "timeout" for item in outcome.failed)
+
+
+def test_request_count_budget_stops_across_providers():
+    """请求次数预算跨 provider 共享：用尽后返回最佳候选并显式提示截断。"""
+    weak = NamedProvider(
+        "weak_one", [SearchResult("Unrelated", "https://example.com/w", "")]
+    )
+    strong = NamedProvider(
+        "strong_two", [SearchResult("Tibo roadmap", "https://example.com/s", "")]
+    )
+    router = SearchRouter(
+        {"weak_one": weak, "strong_two": strong},
+        order=["weak_one", "strong_two"],
+        engines=["bing"],
+        max_engines=2,
+        max_requests=2,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert len(weak.calls) == 2 and not strong.calls
+    assert any(item.kind == "quota" for item in outcome.failed)
+    assert "请求次数上限" in outcome.hint
+    assert [item.url for item in outcome.results] == ["https://example.com/w"]
+
+
+def test_query_variants_run_on_first_provider_only():
+    """查询变体只由第一家执行：后续 provider 不重复放大同一组变体请求。"""
+    weak = NamedProvider("weak_one", [])
+    strong = NamedProvider(
+        "strong_two",
+        [SearchResult("Tibo announces the roadmap", "https://example.com/s1", "details")],
+    )
+    router = SearchRouter(
+        {"weak_one": weak, "strong_two": strong},
+        order=["weak_one", "strong_two"],
+        engines=["bing"],
+        max_engines=1,
+    )
+    outcome = router.search(SearchQuery("tibo", context_terms=("OpenAI",)))
+    # 第一家：原始查询 + 1 个变体（2 次请求）；第二家：只跑原始查询。
+    assert len(weak.calls) == 2
+    assert weak.calls[1].query == "tibo OpenAI"
+    assert len(strong.calls) == 1 and strong.calls[0].query == "tibo"
+    assert outcome.results[0].url == "https://example.com/s1"
+
+
+def test_default_request_budget_preserves_single_provider_worst_case():
+    """默认预算覆盖单 provider 最坏情况：首槽位 3 个查询 + 2 个候补槽位。"""
+    weak = NamedProvider(
+        "weak_one", [SearchResult("Unrelated", "https://example.com/w", "")]
+    )
+    router = SearchRouter({"weak_one": weak}, engines=["bing"], max_engines=3)
+    router.search(SearchQuery("tibo", context_terms=("OpenAI", "Codex")))
+    # 变体只跑第一个引擎槽位：3（原始+2 变体）+ 1 + 1 = 5 次。
+    assert len(weak.calls) == 5

@@ -96,6 +96,13 @@ def _client_with_status(status: int) -> JsonApiClient:
         (402, ProviderErrorKind.QUOTA),
         (429, ProviderErrorKind.RATE_LIMIT),
         (500, ProviderErrorKind.UNAVAILABLE),
+        # 非 2xx 一律失败：400/404/408/422 与 3xx 重定向不得当成功响应返回。
+        (308, ProviderErrorKind.BAD_RESPONSE),
+        (400, ProviderErrorKind.BAD_RESPONSE),
+        (404, ProviderErrorKind.BAD_RESPONSE),
+        (408, ProviderErrorKind.BAD_RESPONSE),
+        (422, ProviderErrorKind.BAD_RESPONSE),
+        (418, ProviderErrorKind.BAD_RESPONSE),
     ],
 )
 def test_status_codes_map_to_failure_kinds(status, kind):
@@ -104,6 +111,12 @@ def test_status_codes_map_to_failure_kinds(status, kind):
     assert caught.value.kind == kind
     # 不把上游响应体带进异常（可能包含不该进会话的内容）。
     assert "secret" not in caught.value.detail
+
+
+@pytest.mark.parametrize("status", [200, 201, 204])
+def test_2xx_status_returned_as_success(status):
+    response = _client_with_status(status).post_json("/x", {}, {})
+    assert response.status_code == status
 
 
 def test_api_key_never_appears_in_error_details():
@@ -440,10 +453,22 @@ def test_volcengine_global_request_and_document_mapping():
     assert request.headers["authorization"] == f"Bearer {KEY}"
 
 
-def test_volcengine_global_query_truncated_to_100_chars():
+@pytest.mark.parametrize("mode", ["global", "custom"])
+def test_volcengine_over_limit_query_rejected_not_truncated(mode):
+    # 官方 Query 上限 100 字符；超限显式报错，不静默截断改写查询语义。
+    sent, requests = capture(lambda request: httpx.Response(200, json=volc_payload([])))
+    provider = make(VolcengineSearchProvider, sent, mode=mode)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("x" * 101))
+    assert caught.value.kind == ProviderErrorKind.BAD_RESPONSE
+    assert "100" in caught.value.detail
+    assert requests == []
+
+
+def test_volcengine_query_exactly_100_chars_is_sent():
     sent, requests = capture(lambda request: httpx.Response(200, json=volc_payload([])))
     provider = make(VolcengineSearchProvider, sent, mode="global")
-    provider.search(SearchQuery("x" * 300))
+    provider.search(SearchQuery("x" * 100))
     assert len(json.loads(requests[0].content)["Query"]) == 100
 
 

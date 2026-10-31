@@ -97,8 +97,9 @@ def query_variants(text: str, context_terms: Sequence[str] = ()) -> list[str]:
 @dataclass(slots=True)
 class PoolEntry:
     result: SearchResult
-    # (engine, rank_in_engine) 证据列表：同一页面被多个引擎返回时全部保留。
-    ranks: list[tuple[str, int]]
+    # (provider, engine, rank_in_engine) 证据列表：同一页面被多个来源返回时
+    # 全部保留；provider 与 engine 是两层身份，交叉统计按 (provider, engine) 计。
+    ranks: list[tuple[str, str, int]]
     # 最近一次 ranked 计算的逐特征贡献，供解释与调试。
     score: ScoreBreakdown = dataclasses.field(default_factory=ScoreBreakdown)
 
@@ -120,10 +121,12 @@ class CandidatePool:
             key = url or f"{result.title}\x00{result.snippet}"
             entry = self._entries.get(key)
             if entry is None:
-                self._entries[key] = PoolEntry(result, [(result.engine, rank)])
+                self._entries[key] = PoolEntry(
+                    result, [(result.provider, result.engine, rank)]
+                )
                 self._order.append(key)
                 continue
-            entry.ranks.append((result.engine, rank))
+            entry.ranks.append((result.provider, result.engine, rank))
             # 同一页面多来源合并时保留更完整的标题/摘要。
             if len(result.title) > len(entry.result.title):
                 entry.result.title = result.title
@@ -215,6 +218,7 @@ class SearchRouter:
         fallback_engines: Sequence[str] | None = ("baidu", "duckduckgo", "sogou"),
         max_engines: int = 3,
         timeout_budget: float = 25.0,
+        max_requests: int = 9,
     ):
         self.registry = registry
         self.order = list(dict.fromkeys(order or list(registry)))
@@ -224,6 +228,9 @@ class SearchRouter:
         self.fallback_engines = tuple(fallback_engines or ())
         self.max_engines = max(1, max_engines)
         self.timeout_budget = timeout_budget
+        # 单次 search() 的跨 Provider 请求次数上限：默认 9 恰好容纳
+        # 单 Provider 的最坏情况（3 个引擎槽位 × 原始查询 + 2 个变体）。
+        self.max_requests = max(1, max_requests)
 
     @property
     def supports_fetch(self) -> bool:
@@ -267,6 +274,10 @@ class SearchRouter:
         slot_queries = [text]
         if not query.engines:
             slot_queries += query_variants(text, query.context_terms)
+        # 变体只在第一家实际尝试的 provider 上执行：后续 provider 只跑原始
+        # 查询，避免每家重复放大同一组变体请求。
+        variants_used = False
+        budget = {"requests": 0}
 
         started = time.perf_counter()  # Windows monotonic 分辨率粗，预算计时用高精度时钟
         for name in names:
@@ -274,9 +285,14 @@ class SearchRouter:
             if provider is None:
                 failures.append(SearchFailure(name, "unavailable", "未注册的搜索 provider"))
                 continue
+            if query.engines or variants_used:
+                provider_queries = [text]
+            else:
+                provider_queries = slot_queries
+                variants_used = True
             outcome = self._search_one_provider(
                 provider, name, query, text, limit, fetch_limit, engine, engines,
-                slot_queries, analysis, pool, cache_key, failures, started,
+                provider_queries, analysis, pool, cache_key, failures, started, budget,
             )
             if outcome is not None:
                 return outcome
@@ -301,11 +317,12 @@ class SearchRouter:
         cache_key: str,
         failures: list[SearchFailure],
         started: float,
+        budget: dict[str, int],
     ) -> SearchOutcome | None:
         """渐进式尝试：原始查询优先，逐槽位补候补；候选池质量够好才早停。
 
         引擎回退只对声明 engines 能力的 provider 生效；其余 provider 单次尝试，
-        失败交给上层换下一个 provider。
+        失败交给上层换下一个 provider。请求次数预算跨 Provider 共享。
         """
         if query.engines:
             slots: tuple[tuple[str, ...], ...] = (query.engines,)
@@ -326,6 +343,15 @@ class SearchRouter:
                     return self._final_outcome(
                         failures, pool, analysis, limit, cache_key, name_hint=name
                     )
+                if budget["requests"] >= self.max_requests:
+                    failures.append(
+                        SearchFailure(name, "quota", "单次搜索请求次数预算已用尽")
+                    )
+                    return self._final_outcome(
+                        failures, pool, analysis, limit, cache_key,
+                        name_hint=name, budget_exhausted=True,
+                    )
+                budget["requests"] += 1
                 try:
                     raw = provider.search(
                         SearchQuery(
@@ -380,26 +406,34 @@ class SearchRouter:
         limit: int,
         cache_key: str,
         name_hint: str = "",
+        budget_exhausted: bool = False,
     ) -> SearchOutcome:
         merged = pool.ranked(analysis)[:limit]
+        # 预算耗尽时如实告知是截断收尾，不能伪装成正常完成。
+        budget_hint = (
+            "已达到单次搜索的请求次数上限，以下为当前最佳候选。" if budget_exhausted else ""
+        )
         if merged and any(has_core_hit(result, analysis) for result in merged):
             # 池里至少有核心词命中：按成功语义缓存（时效查询仍短 TTL）。
             self._cache_put(cache_key, merged, name_hint, analysis)
+            weak = weak_share_hint(merged, analysis)
+            hints = [item for item in (budget_hint, weak) if item]
             return SearchOutcome(
                 results=merged,
                 provider=name_hint,
                 failed=failures,
-                hint=weak_share_hint(merged, analysis),
+                hint=" ".join(hints),
             )
         if merged:
             # 候补都没命中核心词：返回候选但如实提示低相关，不伪装成精准命中；
             # 低相关候选只短 TTL 缓存，给之后的回退留机会。
             self._cache_put(cache_key, merged, name_hint, analysis, short=True)
+            base = "候补引擎未找到与查询核心词直接相关的结果，以下为各引擎返回的候选。"
             return SearchOutcome(
                 results=merged,
                 provider=name_hint,
                 failed=failures,
-                hint="候补引擎未找到与查询核心词直接相关的结果，以下为各引擎返回的候选。",
+                hint=f"{base}{budget_hint}" if budget_hint else base,
             )
         if self.cache is not None and not failures:
             # 真正的零命中（没有任何上游失败）才短 TTL 缓存；失败导致的空
@@ -523,6 +557,7 @@ class SearchRouter:
                 str(self.max_engines),
                 ",".join(self.fallback_engines),
                 f"{self.timeout_budget:g}",
+                str(self.max_requests),
                 *engines,
                 *names,
             ]
