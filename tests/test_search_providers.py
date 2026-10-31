@@ -298,3 +298,55 @@ def test_tavily_missing_results_is_empty():
     sent, _ = capture(lambda request: httpx.Response(200, json={"response_time": 0.1}))
     provider = make(TavilySearchProvider, sent)
     assert provider.search(SearchQuery("q")) == []
+
+
+# ---------- 卡 06：Exa Search（固定 auto） ----------
+
+
+def test_exa_fixed_auto_request_and_snippet_fallback():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "requestId": "rid",
+                "results": [
+                    {"title": "Exa result", "url": "https://example.com/a",
+                     "publishedDate": "2026-10-01", "summary": "总结内容"},
+                    {"title": "No summary", "url": "https://example.com/b",
+                     "highlights": ["高亮片段", "another"]},
+                    {"title": "Text only", "url": "https://example.com/c",
+                     "text": "x" * 600},
+                    {"title": "No snippet", "url": "https://example.com/d"},
+                ],
+            },
+        )
+    )
+    provider = make(ExaSearchProvider, sent)
+    results = provider.search(SearchQuery("Tibo latest updates", limit=10))
+    assert [item.snippet for item in results] == [
+        "总结内容",
+        "高亮片段",
+        "x" * 500,  # text 截断到 500，不把整页灌进摘要
+        "",
+    ]
+    assert results[0].published == "2026-10-01"
+    body = json.loads(requests[0].content)
+    assert body == {"query": "Tibo latest updates", "type": "auto", "numResults": 10}
+    assert requests[0].headers["x-api-key"] == KEY
+
+
+def test_exa_does_not_send_contents_or_crawl_parameters():
+    sent, requests = capture(lambda request: httpx.Response(200, json={"results": []}))
+    provider = make(ExaSearchProvider, sent)
+    provider.search(SearchQuery("q"))
+    body = json.loads(requests[0].content)
+    # 隐式正文抓取是额外计费项：请求体里不允许出现 contents/livecrawl 类参数。
+    assert set(body) == {"query", "type", "numResults"}
+
+
+def test_exa_403_maps_to_auth():
+    sent, _ = capture(lambda request: httpx.Response(403, json={}))
+    provider = make(ExaSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.AUTH
