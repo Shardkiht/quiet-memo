@@ -81,6 +81,7 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
         # 排队命令绑定提交时的会话：目标不是当前会话时先切回再执行。
         self._pending_command: _QueuedLine | None = None
         self._queue: list[_QueuedLine] = []
+        self._cancel_generation = None
         self._stream_widget: ChatReply | None = None
         self._stream_buffer = ""
         self._stream_stamp = ""
@@ -103,6 +104,7 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
                 yield SidebarToggle("»", id="show-sidebar")
                 yield TranscriptView(id="chat", classes="thin-scroll")
                 yield CommandPalette()
+                yield Static("", id="send-queue", markup=False)
                 yield BarInput(placeholder="Message or /command", id="input")
                 with Horizontal(id="status-row"):
                     yield self._model_status
@@ -278,6 +280,11 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
                 event.prevent_default()
                 palette.close()
                 return
+
+        if event.key == "escape" and len(self.screen_stack) == 1 and self._ask_active:
+            event.prevent_default()
+            event.stop()
+            self._stop_generation()
 
     def _new_session(self) -> None:
         if self._navigation_busy:
@@ -639,15 +646,18 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
         self._ask_in_flight = session_id
         self._progress_started = time.monotonic()
         self._progress_phase = "Working"
+        self.query_one("#input", BarInput).set_hint("Message to queue · Esc to stop")
         self._render_model_status()
 
     def _end_ask(self) -> None:
         self._ask_active = False
+        self._cancel_generation = None
         self._ask_in_flight = None
         self._stream_widget = None
         self._stream_buffer = ""
         self._stream_stamp = ""
         self._stream_flush_scheduled = False
+        self.query_one("#input", BarInput).set_hint("Message or /command")
         self._release_input_if_idle()
 
     def _release_input_if_idle(self) -> None:

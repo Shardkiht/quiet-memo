@@ -69,6 +69,7 @@ APP_CSS = """
     .welcome-hint { color: #777980; margin-top: 2; }
 
     /* 输入框不做焦点整块提亮，避免像额外遮罩；只用边框区分焦点。 */
+    #send-queue { display: none; height: auto; max-height: 5; margin: 0 3; padding: 0 1; color: $muted; border-left: solid $dim; }
     #input { margin: 0 3 1 3; background: $bg; border: round #303138; border-title-color: #83848c; border-title-align: left; }
     #input:focus { border: round #56575f; border-title-color: #b0b1b6; }
     /* 光标由 BarInput 渲染成竖线；这里只提供前景色，避免默认整格反色块。 */

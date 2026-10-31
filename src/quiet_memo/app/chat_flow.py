@@ -3,10 +3,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from functools import partial
+from threading import Event
 
 from textual.widgets import Static
 
-from ..llm import ChatModelError
+from ..llm import ChatModelError, GenerationCancelled
 from .chat_widgets import ASSISTANT_NAME, ChatReply
 
 
@@ -55,9 +56,45 @@ class ChatFlowMixin:
             self.runtime.ensure_session()
         session_id = self.runtime.session.id
         self._queue.append(_QueuedLine(session_id=session_id, line=line))
-        self.notify(f"Queued ({len(self._queue)} waiting)")
+        self._refresh_queue()
+
+    def _refresh_queue(self) -> None:
+        panel = self.query_one("#send-queue", Static)
+        panel.display = bool(self._queue)
+        lines = [f"Queued ({len(self._queue)}) · sent automatically in order"]
+        for index, item in enumerate(self._queue[:3], 1):
+            lines.append(f"{index}. {item.line[:100]}")
+        if len(self._queue) > 3:
+            lines.append(f"+{len(self._queue) - 3} more")
+        panel.update("\n".join(lines))
+
+    def _stop_generation(self) -> None:
+        if not self._ask_active or self._cancel_generation is None:
+            return
+        self._cancel_generation.set()
+        self._progress_phase = "Stopping"
+        self._render_model_status()
+        self.query_one("#input").focus()
+
+    def _finish_cancelled(self, session_id: str | None = None) -> None:
+        sid = session_id or self._ask_in_flight
+        if self._ask_in_current_view():
+            content = self._stream_buffer + "\n\n*(generation stopped by user)*"
+            if self._stream_widget is not None:
+                self._finalize_stream_segment(content)
+            else:
+                self.add_card("Generation stopped by user")
+        else:
+            self.notify("Generation stopped in background session")
+        self._heal_current_session(sid)
+        self.refresh_sessions()
+        self.refresh_pending()
+        self._end_ask()
+        self.update_status()
+        self._drain_pending_intent()
 
     def _start_ask(self, line: str, session_id: str | None = None) -> None:
+        self._cancel_generation = Event()
         stamp = time.strftime("%H:%M")
         # 用户气泡只渲染进它所属会话的视图；后台任务不串入当前视图。
         if session_id is None or not self.runtime.has_session or session_id == self.runtime.current.id:
@@ -78,6 +115,7 @@ class ChatFlowMixin:
         if self.busy or not self._queue:
             return
         item = self._queue.pop(0)
+        self._refresh_queue()
         if item.line.startswith("/"):
             # 排队的命令按命令分发，不能当聊天消息发给模型；会话归属见
             # _run_queued_command——不能拿当前查看的会话顶替提交时的会话。
@@ -126,7 +164,11 @@ class ChatFlowMixin:
                 on_event=lambda event: self.call_from_thread(self.add_event, event),
                 on_delta=lambda delta: self.call_from_thread(self._stream_append, stamp, delta),
                 on_progress=lambda phase: self.call_from_thread(self._progress_update, phase),
+                cancel=self._cancel_generation,
             )
+        except GenerationCancelled:
+            self._ui(self._finish_cancelled, session_id)
+            return
         except ChatModelError as exc:
             self._ui(self._finish_error, str(exc), session_id)
             return
@@ -180,7 +222,7 @@ class ChatFlowMixin:
         self._scroll_end()
 
     def add_event(self, event: str) -> None:
-        if self._stream_widget is not None and self._stream_buffer:
+        if self._stream_buffer:
             # 工具事件在两轮生成之间：先就地定稿当前段（已完成段随 assistant 记录落盘），
             # 后续 delta 另起一段，否则最终回复会覆盖工具前的正文，事件顺序也会颠倒。
             self._finalize_stream_segment(self._stream_buffer)

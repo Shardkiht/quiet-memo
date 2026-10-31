@@ -190,3 +190,12 @@ Spark 真实接口合成数据冒烟：流式回复、带时间/地点的记忆�
 
 - BarInput removes Textual Input's extra end-of-value scroll cell from the terminal caret coordinate; scrolling retains its existing padding. Empty input and trailing user spaces retain their actual insertion positions. Regression coverage includes Chinese, mixed ASCII/CJK, middle edits and literal trailing spaces.
 - Validation: insertion-coordinate cases and native cursor checks passed; full isolated suites base 623 passed, evolution working tree 651 passed. Real terminal/IME rendering remains a manual check.
+
+
+## Generation cancellation and visible send queue
+
+- Esc stops the active generation, preserving the draft and partial response in the append-only session. Open palettes/modals consume Esc first. TUI streaming uses cancellable async transport inside the worker, including first-token waits; no second request starts until cleanup completes.
+- Enter during generation appends to the session-bound FIFO, shown above the input. Completion or cancellation drains it automatically. The queue is process-local, not persisted across exit.
+- Active synchronous context preparation/tools finish safely; remaining tools receive cancelled results to keep tool-call pairs valid. Completed writes are not rolled back. UI text remains English.
+
+- Validation: final full isolated suites base/main 632 passed, evolution working tree 672 passed. Installed LiteLLM async stream wiring tested with local mock responses, including repeated requests; cancellation covers first-token waits, partial output, draft preservation and tool-result pairing. No live model/network verification or evaluation-data changes. Evolution retains its pre-existing uncommitted work and memory-specific behavior.

@@ -387,3 +387,94 @@ def test_cached_provider_models_reads_cache_only(monkeypatch):
         assert len(calls) == 1
     finally:
         client.clear_model_cache()
+
+
+@pytest.mark.parametrize("before_first", [True, False])
+def test_cancellable_transport_closes_without_waiting_for_tokens(monkeypatch, before_first):
+    import asyncio
+    from threading import Event
+    from types import SimpleNamespace
+    from quiet_memo.llm import client
+
+    cancel = Event()
+    closed = []
+    async def chunks():
+        try:
+            yield {"choices": [{"delta": {"content": "partial"}}]}
+            cancel.set()
+            await asyncio.sleep(60)
+        finally:
+            closed.append("stream")
+    async def completion(**kwargs):
+        if before_first:
+            try:
+                cancel.set()
+                await asyncio.sleep(60)
+            finally:
+                closed.append("request")
+        return chunks()
+    fake = SimpleNamespace(acompletion=completion, completion_cost=lambda **kw: 0)
+    monkeypatch.setattr(client, "_litellm", lambda: fake)
+    monkeypatch.setenv("SPARK_API_KEY", "synthetic-key")
+    config = LLMConfig(provider="spark", model="spark-x2.6", api_key_env="SPARK_API_KEY")
+    deltas = []
+    with pytest.raises(client.GenerationCancelled):
+        client.LiteLLMChatModel(config).chat([], [], on_delta=deltas.append, cancel=cancel)
+    assert closed == (["request"] if before_first else ["stream"])
+    assert deltas == ([] if before_first else ["partial"])
+
+
+def test_cancellable_transport_normal_completion_and_tool_fragments(monkeypatch):
+    from threading import Event
+    from types import SimpleNamespace
+    from quiet_memo.llm import client
+
+    closed = []
+    sent = []
+    async def chunks():
+        try:
+            yield {"choices": [{"delta": {"content": "hello", "tool_calls": [
+                {"index": 0, "id": "one", "function": {"name": "search", "arguments": '{"query":'}}
+            ]}}]}
+            yield {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": '"example"}'}}
+            ]}}], "usage": {"prompt_tokens": 4, "completion_tokens": 3}}
+        finally:
+            closed.append(True)
+    async def completion(**kwargs):
+        sent.append(kwargs)
+        return chunks()
+    monkeypatch.setattr(client, "_litellm", lambda: SimpleNamespace(
+        acompletion=completion, completion_cost=lambda **kw: 0))
+    monkeypatch.setenv("SPARK_API_KEY", "synthetic-key")
+    config = LLMConfig(provider="spark", model="spark-x2.6", api_key_env="SPARK_API_KEY")
+    model = client.LiteLLMChatModel(config)
+    for _ in range(2):
+        deltas = []
+        reply = model.chat([], [], on_delta=deltas.append, cancel=Event())
+        assert reply.content == "hello" and deltas == ["hello"]
+        assert reply.tool_calls[0].arguments == {"query": "example"}
+        assert reply.usage.prompt_tokens == 4
+    assert closed == [True, True]
+    assert all(call["stream"] for call in sent)
+    assert all("stream_options" not in call for call in sent)
+
+
+def test_cancellable_stream_with_installed_litellm_mock_transport(monkeypatch):
+    from threading import Event
+    from quiet_memo.llm import client
+
+    litellm = client._litellm()
+    original = litellm.acompletion
+    async def local_completion(**kwargs):
+        return await original(**kwargs, mock_response="Synthetic response")
+    monkeypatch.setattr(litellm, "acompletion", local_completion)
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key")
+    model = client.LiteLLMChatModel(LLMConfig(
+        provider="openai", model="gpt-4o-mini", api_key_env="OPENAI_API_KEY"))
+    for _ in range(2):
+        deltas = []
+        reply = model.chat([{"role": "user", "content": "Synthetic input"}], [],
+                           on_delta=deltas.append, cancel=Event())
+        assert reply.content == "Synthetic response"
+        assert "".join(deltas) == reply.content

@@ -89,6 +89,10 @@ class BarInput(Input):
     def on_unmount(self) -> None:
         self._hide_native_cursor()
 
+    def set_hint(self, hint: str) -> None:
+        self._hint = hint
+        self.border_title = None if self.value else (hint or None)
+
     def _watch_value(self, value: str) -> None:
         super()._watch_value(value)
         self.border_title = None if value else (self._hint or None)

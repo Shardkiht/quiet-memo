@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from threading import Event
 from typing import Protocol
 
 from ..infra.config import LLMConfig
@@ -12,6 +14,10 @@ from ..infra.config import LLMConfig
 
 class ChatModelError(RuntimeError):
     pass
+
+
+class GenerationCancelled(ChatModelError):
+    """The user stopped the current generation; never retry it."""
 
 
 _MODEL_CACHE: dict[tuple[str, str], tuple[float, list[str]]] = {}
@@ -264,7 +270,7 @@ class LiteLLMChatModel:
     def __init__(self, config: LLMConfig):
         self.config = config
 
-    def chat(self, messages: list[dict], tools: list[dict], on_delta=None) -> AssistantTurn:
+    def chat(self, messages: list[dict], tools: list[dict], on_delta=None, cancel: Event | None = None) -> AssistantTurn:
         if self.config.requires_api_key() and not self.config.api_key():
             raise ChatModelError(
                 f"LLM API key is not configured. Set {self.config.api_key_env} "
@@ -279,9 +285,9 @@ class LiteLLMChatModel:
                 tool_calls=_tool_calls(message),
                 usage=_usage(response, litellm),
             )
-        return self._chat_stream(messages, tools or None, on_delta, litellm)
+        return self._chat_stream(messages, tools or None, on_delta, litellm, cancel)
 
-    def _chat_stream(self, messages, tools, on_delta, litellm) -> AssistantTurn:
+    def _chat_stream(self, messages, tools, on_delta, litellm, cancel=None) -> AssistantTurn:
         """流式：文本 delta 实时回调，tool_calls 增量累积，结束时返回聚合结果。"""
         kwargs: dict = {
             "model": self.config.litellm_model(),
@@ -303,49 +309,97 @@ class LiteLLMChatModel:
             kwargs["fallbacks"] = self.config.fallbacks
         _adapt_spark_params(self.config, kwargs)
 
-        content_parts: list[str] = []
-        tool_acc: dict[int, dict] = {}
-        usage = Usage()
+        if cancel is not None:
+            return asyncio.run(self._cancellable_stream(kwargs, on_delta, litellm, cancel))
+        parser = _StreamAccumulator(on_delta, litellm)
         stream = litellm.completion(**kwargs)
-        for chunk in stream:
-            chunk_usage = _field(chunk, "usage")
-            if chunk_usage is not None:
-                try:
-                    cost = float(litellm.completion_cost(completion_response=chunk) or 0.0)
-                except Exception:
-                    cost = 0.0
-                usage = Usage(
-                    prompt_tokens=int(_field(chunk_usage, "prompt_tokens", 0) or 0),
-                    completion_tokens=int(_field(chunk_usage, "completion_tokens", 0) or 0),
-                    cost_usd=cost,
-                )
-            choices = _field(chunk, "choices") or []
-            if not choices:
-                continue
-            delta = _field(choices[0], "delta")
-            if delta is None:
-                continue
-            text = _field(delta, "content") or ""
-            if text:
-                content_parts.append(text)
-                on_delta(text)
-            for tc in _field(delta, "tool_calls") or []:
-                index = _field(tc, "index", 0) or 0
-                acc = tool_acc.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                tc_id = _field(tc, "id")
-                if tc_id:
-                    acc["id"] = tc_id
-                function = _field(tc, "function")
-                if function is not None:
-                    name = _field(function, "name")
-                    if name:
-                        acc["name"] = name
-                    arguments = _field(function, "arguments")
-                    if arguments:
-                        acc["arguments"] += arguments
+        try:
+            for chunk in stream:
+                parser.feed(chunk)
+        finally:
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
+        return parser.finish()
 
+    async def _cancellable_stream(self, kwargs, on_delta, litellm, cancel: Event) -> AssistantTurn:
+        # Async transport cancellation also interrupts waiting for the first token.
+        parser = _StreamAccumulator(on_delta, litellm)
+
+        async def consume() -> AssistantTurn:
+            stream = await litellm.acompletion(**kwargs)
+            try:
+                async for chunk in stream:
+                    if cancel.is_set():
+                        raise GenerationCancelled("Stopped by user")
+                    parser.feed(chunk)
+                return parser.finish()
+            finally:
+                await stream.aclose()
+
+        if cancel.is_set():
+            raise GenerationCancelled("Stopped by user")
+        task = asyncio.create_task(consume())
+        try:
+            while not task.done():
+                await asyncio.wait({task}, timeout=0.05)
+                if cancel.is_set():
+                    raise GenerationCancelled("Stopped by user")
+            return task.result()
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+class _StreamAccumulator:
+    def __init__(self, on_delta, litellm) -> None:
+        self.on_delta = on_delta
+        self.litellm = litellm
+        self.content_parts: list[str] = []
+        self.tool_acc: dict[int, dict] = {}
+        self.usage = Usage()
+
+    def feed(self, chunk) -> None:
+        chunk_usage = _field(chunk, "usage")
+        if chunk_usage is not None:
+            try:
+                cost = float(self.litellm.completion_cost(completion_response=chunk) or 0.0)
+            except Exception:
+                cost = 0.0
+            self.usage = Usage(
+                prompt_tokens=int(_field(chunk_usage, "prompt_tokens", 0) or 0),
+                completion_tokens=int(_field(chunk_usage, "completion_tokens", 0) or 0),
+                cost_usd=cost,
+            )
+        choices = _field(chunk, "choices") or []
+        if not choices:
+            return
+        delta = _field(choices[0], "delta")
+        if delta is None:
+            return
+        text = _field(delta, "content") or ""
+        if text:
+            self.content_parts.append(text)
+            self.on_delta(text)
+        for tc in _field(delta, "tool_calls") or []:
+            index = _field(tc, "index", 0) or 0
+            acc = self.tool_acc.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            tc_id = _field(tc, "id")
+            if tc_id:
+                acc["id"] = tc_id
+            function = _field(tc, "function")
+            if function is not None:
+                name = _field(function, "name")
+                if name:
+                    acc["name"] = name
+                arguments = _field(function, "arguments")
+                if arguments:
+                    acc["arguments"] += arguments
+
+    def finish(self) -> AssistantTurn:
         tool_calls: list[ToolCall] = []
-        for acc in tool_acc.values():
+        for acc in self.tool_acc.values():
             try:
                 arguments = json.loads(acc["arguments"] or "{}")
             except json.JSONDecodeError:
@@ -353,4 +407,4 @@ class LiteLLMChatModel:
             tool_calls.append(
                 ToolCall(id=acc["id"] or f"call-{len(tool_calls)}", name=acc["name"], arguments=arguments)
             )
-        return AssistantTurn(content="".join(content_parts), tool_calls=tool_calls, usage=usage)
+        return AssistantTurn(content="".join(self.content_parts), tool_calls=tool_calls, usage=self.usage)

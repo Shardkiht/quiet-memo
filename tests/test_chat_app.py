@@ -2650,3 +2650,69 @@ async def test_input_caret_matches_insertion_cell(tmp_path, value, position, cel
         assert widget.cursor_screen_offset.y == widget.content_region.y
         assert app.cursor_position == widget.cursor_screen_offset
         assert widget.value == value
+
+
+async def test_escape_stops_stream_keeps_draft_and_drains_visible_queue(tmp_path):
+    app = build_app(tmp_path, [])
+    release = threading.Event()
+    calls = []
+    class Model:
+        def chat(self, messages, tools, on_delta=None):
+            calls.append(messages[-1]["content"])
+            if len(calls) == 1:
+                on_delta("partial reply")
+                assert release.wait(10)
+                on_delta("must not appear")
+            else:
+                on_delta("queued reply")
+            return AssistantTurn(content="queued reply")
+    app.runtime.model = Model()
+    try:
+        async with app.run_test(size=(120, 40)) as pilot:
+            widget = app.query_one("#input", Input)
+            widget.value = "first"
+            await pilot.press("enter")
+            for _ in range(100):
+                await pilot.pause()
+                if app._stream_buffer:
+                    break
+            assert widget.placeholder == ""
+            widget.value = "second [literal]"
+            await pilot.press("enter")
+            panel = app.query_one("#send-queue", Static)
+            assert panel.display
+            assert "second [literal]" in str(panel.content)
+            assert len(calls) == 1
+            widget.value = "unfinished draft"
+            await pilot.press("escape")
+            assert app._cancel_generation.is_set()
+            assert widget.value == "unfinished draft"
+            assert not widget.disabled
+            release.set()
+            await _wait_idle(app, pilot)
+            assert calls == ["first", "second [literal]"]
+            assert not panel.display
+            assert widget.placeholder == ""
+            assert widget.value == "unfinished draft"
+            records = app.sessions.load(app.runtime.current.id).records
+            contents = "\n".join(r.get("content", "") for r in records)
+            assert "partial reply" in contents and "stopped by user" in contents
+            assert "must not appear" not in contents
+    finally:
+        release.set()
+
+
+async def test_escape_closes_palette_before_stopping(tmp_path):
+    app = build_app(tmp_path, [])
+    async with app.run_test() as pilot:
+        app._begin_ask(None)
+        app._cancel_generation = threading.Event()
+        widget = app.query_one("#input", Input)
+        widget.value = "/sta"
+        await pilot.pause()
+        await pilot.press("escape")
+        assert not app._cancel_generation.is_set()
+        assert widget.value == "/sta"
+        await pilot.press("escape")
+        assert app._cancel_generation.is_set()
+        app._end_ask()
