@@ -417,3 +417,42 @@ def test_www_host_variants_dedupe():
     pool.add([SearchResult("Tibo", "https://www.example.com/a", "")])
     pool.add([SearchResult("Tibo", "https://example.com/a", "")])
     assert pool.size == 1
+
+
+def test_freshness_prefers_dated_result_without_fabricating_dates():
+    """T10：时效查询里已解析日期轻度优先；无日期保持未知，不被填充。"""
+    from quiet_memo.infra.search.router import CandidatePool
+
+    dated = SearchResult("Tibo announcement", "https://example.com/a", "")
+    dated.published = "2026-01-05"
+    dated.engine = "bing"
+    undated = SearchResult("Tibo announcement again", "https://example.com/b", "")
+    undated.engine = "bing"
+    pool = CandidatePool()
+    pool.add([undated])
+    pool.add([dated])
+    fresh = analyze_query("Tibo 最新消息")
+    assert pool.ranked(fresh)[0].url == "https://example.com/a"
+    plain = analyze_query("Tibo announcement")
+    # 非时效查询不按时间加权：保持入池顺序。
+    assert pool.ranked(plain)[0].url == "https://example.com/b"
+    # published 原样保留，未猜测/未改写。
+    assert pool.ranked(fresh)[1].published is None
+
+
+def test_baidu_redirect_link_kept_without_auto_follow():
+    """T09：跳转链接原样保留，不主动追踪解析；解析只能走 fetch_web。"""
+    from quiet_memo.infra.search.router import normalize_url
+
+    link = "https://baidu.com/link?url=zzz"
+    # 链接不被解析追踪：URL 原样保留（www. 前缀归一是仅有的宿主差异合并）。
+    assert normalize_url(link) == link
+    provider = EngineProvider(
+        {"baidu": [SearchResult("Tibo announces the roadmap", link, "announcement")]}
+    )
+    router = SearchRouter(
+        {"fake": provider}, engines=["bing"], fallback_engines=("baidu",), max_engines=2
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert outcome.results[0].url == link
+    assert outcome.results[0].engine == "baidu"

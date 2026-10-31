@@ -2,15 +2,29 @@
 
 更新日期：2026-10-31。代码版本 `0.3.2`，发行标记使用 `v0.3.2`；基础功能参照 `444fe0f`，文件导入与模型选择界面参照 `bef5199`。包版本、锁文件与 MCP 客户端标识保持一致；远端发布结果以 GitHub Release、Actions 与 PyPI 为准。
 
+## 搜索质量优化（2026-10-31，base/chat-stability）
+
+按《联网搜索质量优化实施方案》分阶段完成 P0（Phase 0-3），逐阶段提交：Phase 0/1 `d3ec502`、Phase 2 `79ccbb0`、Phase 3 `87a66fd`。
+
+- 离线基准：`evals/web_search_eval.py`（33 条合成查询、固定候选池、PoolTransport mock；`--save/--compare/--json`），基线快照 `evals/web_search_baseline.json`。合成数据零个人信息，可公开提交。
+- QueryAnalysis（`infra/search/quality.py`）：core/context/intent 三层分离——core 只来自原始查询并决定相关性；context 低权重消歧（0.5/0.25），不能单独令结果通过质量门控；时间词（今天/最新/latest…）与事件词（发布/官宣/更新…）不进 core。拉丁词元词边界匹配（`tibo` 不命中 `tibonacci`），CJK 按受控停用词/时间/事件词表轻量切分并保留短语序，≥4 字片段补二元词元；无高置信实体时 `ambiguous=True`。
+- 渐进式搜索 + QualityGate：每次请求向上游拉 `fetch_limit = min(30, max(10, limit*3))` 条，进统一 `CandidatePool`（URL 去重、www. 宿主归一、保留各引擎名次证据与更完整标题/摘要）。早停条件：≥2 条标题级强命中，或单条标题覆盖全部 core 词，或单实体导航型查询 1 条强命中；都不满足才继续变体/候补引擎。低相关候选收尾时原样返回并附提示，核心词命中路径按成功语义缓存，零核心命中路径短缓存。
+- 超时预算：`SearchQuery.timeout` 由 router 按剩余预算下发（`round(remaining,3)`），HTTP transport 逐请求生效、MCP transport 取 `min(self.timeout, timeout)`；预算计时仍用 `time.perf_counter`。
+- 确定性 ranker：`ScoreBreakdown` 逐特征贡献（标题核心 3/词元、摘要 1/词元、全核心覆盖 +2、intent 0.5/词、context 0.5/0.25、引擎内名次 1.2/0.6/0.3、跨引擎交叉 +1.0/+1.5、时效查询有 published +0.3）；平分保持首次入池顺序；无日期不伪造。
+- engine 归属：`_map_result` 逐条读取 daemon 的 `engine`/`source` 字段，router 只回填空值（不再一律覆盖成槽位引擎）；daemon `partialFailures` 有部分结果时转成结构化 `SearchFailure`（`provider.last_partial_failures` 通道），不再静默吞掉。
+- 缓存键升到 v7（排序策略变化即换键）；低相关候选短缓存、核心命中正常 TTL、失败永不入缓存的政策不变。
+- 质量对比（同一固定候选池 vs 基线）：nDCG@5 0.7387→0.8944（+21% 相对），Success@5 0.5455→0.7273，P@5 0.1879→0.2364，误接受率 0.1515→0.0606；平均请求数 1.48→2.30（弱命中查询按设计多试候补，强命中仍单请求早停）。全量 653 测试绿。
+- 遗留（P1 待办）：`SearchQuery.lang/freshness` 是否被 open-websearch daemon 支持尚未核实，透传前先验证；`SearchDiagnostics` 结构化诊断未做；模糊实体泛匹配误接受（如 se5「wjx-handler ai」命中 handler/ai 泛词）为词法门控的已知边界，按任务书不引入 LLM rerank。
+
 ## 免费联网搜索增强（2026-10-31，base/chat-stability）
 
-- 引擎候补链：首选引擎空结果、结果与查询词元零命中或请求失败时，按 `search.fallback_engines`（默认 baidu→duckduckgo→sogou）自动降级，最多 `search.max_engines`（3）个引擎，共享 `search.timeout_budget`（25s）超时预算；显式 `search_engine` 保持单次请求语义不变。引擎回退只对声明 `engines` 能力的 provider 生效（OpenWebSearchProvider 两种 transport 均已声明），provider 级降级顺序保留。
+- 引擎候补链：首选引擎空结果、结果与查询核心词不相关或命中过弱（质量门控未达标）或请求失败时，按 `search.fallback_engines`（默认 baidu→duckduckgo→sogou）自动降级，最多 `search.max_engines`（3）个引擎，共享 `search.timeout_budget`（25s）超时预算且单次请求超时不超过剩余预算；显式 `search_engine` 保持单次请求语义不变。引擎回退只对声明 `engines` 能力的 provider 生效（OpenWebSearchProvider 两种 transport 均已声明），provider 级降级顺序保留。
 - 查询变体：`search`/MCP `search` 新增 `context` 参数（对话中确认的专有名词，最多 5 个）；原始查询无有效结果时确定性派生最多 2 个变体（追加 context 词项，不改写原拼写），不调用 LLM。
-- 缓存分级：键版本升到 v3；真空结果短缓存 5 分钟、「今天/最新/latest」类时效查询成功结果 10 分钟、跑题候选 10 分钟；任何上游失败一律不入缓存。`SearchCache.set` 支持按条目覆盖 TTL（不超过实例 TTL）。
-- 结果处理：轻量词元相关性评分（标题 2 分/摘要 1 分，拉丁串整体匹配、CJK 连续段）；多引擎候选 URL 去重合并后按分排序截断；`SearchResult.engine` 记录实际来源引擎并进入 payload；不相关判定保守（零命中才触发候补，候选不丢弃，最终如实提示"候补引擎未找到…以下为候选"）。
+- 缓存分级：真空结果短缓存 5 分钟、「今天/最新/latest」类时效查询成功结果 10 分钟、低相关候选 10 分钟；任何上游失败一律不入缓存。`SearchCache.set` 支持按条目覆盖 TTL（不超过实例 TTL）；键版本见上方"搜索质量优化"（当前 v7）。
+- 结果处理：统一候选池去重合并后按确定性 ranker 排序截断（见上方"搜索质量优化"）；`SearchResult.engine` 记录实际来源引擎并进入 payload；零核心命中时如实提示"候补引擎未找到…以下为候选"。
 - 工具上限：search 工具 limit 硬上限 10→15（schema 同步）；默认值仍来自 `search.max_results`。
 - 计时注意：Windows `time.monotonic` 分辨率约 15.6ms，搜索预算计时用 `time.perf_counter`，勿改回。
-- 已知上游限制：open-websearch 无验证码识别（上游弹验证码表现为空结果或跑题内容）；bing 对小众英文账号（如 thsottiaux）可能返回无关内容，依赖 baidu 候补兜底；baidu 返回的是跳转链接（baidu.com/link?url=...）；fetch_web 偶发 daemon HTTP 502。真实冒烟 7 条查询对比与 LLM 端到端在 be6d632 前后完成（冒烟脚本在系统临时目录，不入库）。
+- 已知上游限制：open-websearch 无验证码识别（上游弹验证码表现为空结果或跑题内容）；bing 对小众英文账号（如 thsottiaux）可能返回无关内容，依赖 baidu 候补兜底；baidu 返回的是跳转链接（baidu.com/link?url=...，QM 不主动解析，需经 fetch_web）；fetch_web 偶发 daemon HTTP 502。真实冒烟 7 条查询对比与 LLM 端到端在 be6d632 前后完成（冒烟脚本在系统临时目录，不入库）。
 
 ## 忙碌态解耦与会话一致性（2026-10-31，分支 base/chat-stability）
 
