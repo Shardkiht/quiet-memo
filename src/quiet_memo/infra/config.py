@@ -117,6 +117,8 @@ class SearchConfig:
     timeout_budget: float = 25.0
     # 一次搜索跨所有 provider 共享的请求次数上限；超出即返回当前最佳候选。
     max_requests: int = 9
+    # 每厂商调用上限（Search/Fetch 共池）；键为 provider 名。
+    usage_limits: dict[str, UsageLimit] = field(default_factory=dict)
 
 
 def read_api_key(env_name: str) -> str:
@@ -130,6 +132,14 @@ def read_api_key(env_name: str) -> str:
         return (keyring.get_password(KEYRING_SERVICE, env_name) or "").strip()
     except Exception:
         return ""
+
+
+@dataclass(slots=True)
+class UsageLimit:
+    """单厂商调用上限；本地计数不等于服务商账单上限。"""
+
+    period: str = "daily"  # daily / monthly
+    max_calls: int = 0  # <=0 表示不限制
 
 
 @dataclass(slots=True)
@@ -312,6 +322,20 @@ def load_config(path: Path | str | None = None) -> Config:
         ),
     )
     search_raw = data.get("search", {})
+    usage_limits: dict[str, UsageLimit] = {}
+    usage_raw = search_raw.get("usage_limits", {})
+    if isinstance(usage_raw, dict):
+        for name, item in usage_raw.items():
+            if not isinstance(item, dict):
+                continue
+            period = str(item.get("period", "daily"))
+            if period not in ("daily", "monthly"):
+                period = "daily"
+            try:
+                max_calls = int(item.get("max_calls", 0))
+            except (TypeError, ValueError):
+                max_calls = 0
+            usage_limits[str(name)] = UsageLimit(period=period, max_calls=max_calls)
     providers = search_raw.get("providers", ["open_websearch"])
     if not isinstance(providers, list):
         providers = ["open_websearch"]
@@ -342,6 +366,7 @@ def load_config(path: Path | str | None = None) -> Config:
         max_engines=max(1, int(search_raw.get("max_engines", 3))),
         timeout_budget=float(search_raw.get("timeout_budget", 25.0)),
         max_requests=int(search_raw.get("max_requests", 9)),
+        usage_limits=usage_limits,
     )
     fetch_raw = data.get("fetch", {})
     fetch_providers = fetch_raw.get("providers", ["open_websearch"])
@@ -360,6 +385,18 @@ def load_config(path: Path | str | None = None) -> Config:
         confidence_threshold=float(data.get("confidence_threshold", 0.8)),
         auto_push=bool(data.get("auto_push", False)),
     )
+
+
+def usage_limits_toml(limits: dict[str, "UsageLimit"]) -> str:
+    """把 usage_limits 序列化成 TOML 段；空配置返回空串。"""
+    parts = []
+    for name, limit in limits.items():
+        parts.append(
+            f"\n[search.usage_limits.{name}]"
+            f'\nperiod = "{limit.period}"'
+            f"\nmax_calls = {limit.max_calls}\n"
+        )
+    return "".join(parts)
 
 
 def write_example_config(path: Path, vault: Path) -> None:
@@ -423,6 +460,11 @@ engines = {toml_literal(["bing"])}
 fetch_timeout = 45.0
 # 一次搜索跨所有 provider 共享的请求次数上限；超出即返回当前最佳候选。
 max_requests = 9
+# 每厂商调用上限（Search/Fetch 共用同一计数池）；按需取消注释并修改。
+# 本地计数不等于服务商实际账单上限。
+# [search.usage_limits.tavily]
+# period = "daily"  # daily / monthly
+# max_calls = 20
 
 [fetch]
 # 网页抓取的 provider 顺序；与搜索的 providers 相互独立。

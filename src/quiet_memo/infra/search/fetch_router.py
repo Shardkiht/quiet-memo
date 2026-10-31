@@ -5,13 +5,14 @@
 """
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..config import FetchConfig, SearchConfig
 from .base import (
     FetchQuery,
     FetchResult,
     ProviderError,
+    ProviderErrorKind,
     SearchFailure,
     assert_public_fetch_url,
 )
@@ -41,9 +42,12 @@ class FetchRouter:
         registry: dict[str, FetchProvider] | None = None,
         *,
         order: list[str] | None = None,
+        usage_limiter: Any | None = None,
     ):
         self.registry = dict(registry or {})
         self.order = list(dict.fromkeys(order or list(self.registry)))
+        # 与搜索共用同一厂商计数池；None 表示未启用额度限制。
+        self.usage_limiter = usage_limiter
 
     @property
     def supports_fetch(self) -> bool:
@@ -61,6 +65,18 @@ class FetchRouter:
             provider = self.registry.get(name)
             if provider is None or "fetch" not in provider.capabilities:
                 continue
+            if self.usage_limiter is not None:
+                # 达到厂商上限即跳过该 provider，继续回退下一家。
+                if not self.usage_limiter.allows(name):
+                    failures.append(
+                        SearchFailure(
+                            name,
+                            ProviderErrorKind.QUOTA.value,
+                            "已达到本地调用上限，本次跳过该厂商",
+                        )
+                    )
+                    continue
+                self.usage_limiter.record(name)
             try:
                 result = provider.fetch(FetchQuery(text, max_chars))
             except ProviderError as exc:
@@ -130,9 +146,19 @@ def _build_external_fetch_provider(
 
 
 def build_fetch_router(
-    fetch_config: FetchConfig, search_config: SearchConfig
+    fetch_config: FetchConfig,
+    search_config: SearchConfig,
+    vault: Any | None = None,
 ) -> FetchRouter:
+    limiter = None
+    if vault is not None and search_config.usage_limits:
+        from .usage import USAGE_FILENAME, UsageLimiter
+
+        limiter = UsageLimiter(
+            search_config.usage_limits, vault / ".quiet-memo" / USAGE_FILENAME
+        )
     return FetchRouter(
         build_fetch_registry(fetch_config, search_config),
         order=fetch_config.providers,
+        usage_limiter=limiter,
     )

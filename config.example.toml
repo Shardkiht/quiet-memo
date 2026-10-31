@@ -81,6 +81,11 @@ timeout_budget = 25.0
 max_requests = 9
 # 抓取正文的单独超时（秒）；搜索用上面的 timeout。
 fetch_timeout = 45.0
+# 每厂商调用上限（Search/Fetch 共用同一计数池）；按需取消注释并修改。
+# 本地计数不等于服务商实际账单上限。
+# [search.usage_limits.tavily]
+# period = "daily"  # daily / monthly
+# max_calls = 20
 
 [fetch]
 # 网页抓取的 provider 顺序，与搜索的 providers 相互独立。

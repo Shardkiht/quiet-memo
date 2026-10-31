@@ -19,6 +19,7 @@ from .config import (
     load_config,
     read_api_key,
     toml_literal,
+    usage_limits_toml,
     write_example_config,
 )
 from .dialogs import ask
@@ -351,7 +352,7 @@ fallback_engines = {toml_literal(config.search.fallback_engines)}
 max_engines = {config.search.max_engines}
 timeout_budget = {config.search.timeout_budget}
 max_requests = {config.search.max_requests}
-
+{usage_limits_toml(config.search.usage_limits)}
 [fetch]
 providers = {toml_literal(config.fetch.providers)}
 '''
@@ -419,6 +420,28 @@ SEARCH_KEY_ENVS = {
     "you": "YDC_API_KEY",
     "volcengine": "VOLCENGINE_SEARCH_API_KEY",
 }
+
+
+def _ensure_usage_limit(config: Config, name: str, messages: list[str]) -> None:
+    """启用官方厂商时设置有限调用上限（默认每日 20 次）。"""
+    if name in config.search.usage_limits:
+        return
+    raw = ask(
+        questionary.text(
+            f"{SEARCH_PROVIDER_LABELS[name]} 每日调用上限（Search/Fetch 共用；留空默认 20）",
+            default="20",
+        )
+    )
+    try:
+        max_calls = int(str(raw).strip())
+    except (TypeError, ValueError):
+        max_calls = 0
+    if max_calls <= 0:
+        max_calls = 20
+    from .config import UsageLimit
+
+    config.search.usage_limits[name] = UsageLimit(period="daily", max_calls=max_calls)
+    messages.append(f"{name} 的每日调用上限设为 {max_calls} 次（本地计数，非账单上限）。")
 
 
 def _toggle_provider(names: list[str], name: str, enable: bool) -> None:
@@ -512,6 +535,8 @@ def _configure_search_provider(config: Config, messages: list[str]) -> None:
                 config.search.providers if action == "search" else config.fetch.providers
             )
             _toggle_provider(names, name, enable)
+            if enable and env_name:
+                _ensure_usage_limit(config, name, messages)
 
 
 def _adjust_order(names: list[str], label: str) -> None:

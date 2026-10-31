@@ -582,7 +582,8 @@ def test_search_setup_saves_key_and_enables_search_and_fetch(tmp_path, monkeypat
             "tavily",
             "sk-tavily-placeholder",  # password 输入
             "search",  # 启用 Search
-            "fetch",  # 启用 Fetch
+            "5",  # 每日调用上限
+            "fetch",  # 启用 Fetch（上限已设置，不再询问）
             "back",
             "done",
         ],
@@ -714,3 +715,64 @@ def test_llm_setup_flow_unchanged(tmp_path, monkeypatch):
     assert result["provider"] == "custom"
     assert result["base_url"] == "https://api.example.com/v1"
     assert result["key_saved"] is False
+
+
+def test_search_setup_sets_daily_usage_limit_on_enable(tmp_path, monkeypatch):
+    """启用官方厂商时询问每日上限；留空回退默认 20。"""
+    import tomllib
+
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    _install_fake_keyring(monkeypatch, {"TAVILY_API_KEY": "k"})
+    _script_answers(
+        monkeypatch,
+        [
+            "search",
+            "providers",
+            "tavily",
+            "",  # 不更新 Key
+            "search",  # 启用 Search → 触发上限询问
+            "7",  # 每日上限
+            "back",
+            "done",
+        ],
+    )
+
+    result = providers_module.run_setup(config_path, None)
+
+    assert result["search_providers"] == ["open_websearch", "tavily"]
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert data["search"]["usage_limits"]["tavily"] == {
+        "period": "daily",
+        "max_calls": 7,
+    }
+    assert any("7 次" in message for message in result["messages"])
+
+
+def test_search_setup_usage_limit_defaults_to_20(tmp_path, monkeypatch):
+    from quiet_memo.infra import providers as providers_module
+
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\n", encoding="utf-8")
+    _install_fake_keyring(monkeypatch, {"EXA_API_KEY": "k"})
+    _script_answers(
+        monkeypatch,
+        [
+            "search",
+            "providers",
+            "exa",
+            "",
+            "search",
+            "",  # 留空 → 默认 20
+            "back",
+            "done",
+        ],
+    )
+
+    providers_module.run_setup(config_path, None)
+    import tomllib
+
+    data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert data["search"]["usage_limits"]["exa"]["max_calls"] == 20

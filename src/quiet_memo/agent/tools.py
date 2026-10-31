@@ -150,7 +150,7 @@ def build_tools(
     )
     # 抓取与搜索的配置相互独立；未显式注入时按 [fetch] 配置构建。
     if fetch_router is None and search_router is None:
-        fetch_router = build_fetch_router(service.config.fetch, search_config)
+        fetch_router = build_fetch_router(service.config.fetch, search_config, service.config.vault)
 
     def recall(arguments: dict) -> ToolOutcome:
         query = str(arguments.get("query", "")).strip()

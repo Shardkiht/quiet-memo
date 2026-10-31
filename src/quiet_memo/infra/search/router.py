@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Sequence
+from typing import Any
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
@@ -185,8 +186,14 @@ def build_search_router(
     vault: Path | None = None,
 ) -> "SearchRouter":
     cache = None
-    if config.cache_ttl > 0 and vault is not None:
-        cache = SearchCache(vault / ".quiet-memo" / "search-cache.json", config.cache_ttl)
+    limiter = None
+    if vault is not None:
+        if config.cache_ttl > 0:
+            cache = SearchCache(vault / ".quiet-memo" / "search-cache.json", config.cache_ttl)
+        if config.usage_limits:
+            from .usage import USAGE_FILENAME, UsageLimiter
+
+            limiter = UsageLimiter(config.usage_limits, vault / ".quiet-memo" / USAGE_FILENAME)
     return SearchRouter(
         build_registry(config),
         order=config.providers,
@@ -197,6 +204,7 @@ def build_search_router(
         max_engines=config.max_engines,
         timeout_budget=config.timeout_budget,
         max_requests=config.max_requests,
+        usage_limiter=limiter,
     )
 
 
@@ -219,6 +227,7 @@ class SearchRouter:
         max_engines: int = 3,
         timeout_budget: float = 25.0,
         max_requests: int = 9,
+        usage_limiter: Any | None = None,
     ):
         self.registry = registry
         self.order = list(dict.fromkeys(order or list(registry)))
@@ -233,6 +242,8 @@ class SearchRouter:
         self.max_requests = max(1, max_requests)
         # 抓取调度委托独立 FetchRouter，按需惰性构建。
         self._fetch_router: FetchRouter | None = None
+        # 厂商调用上限（Search/Fetch 共池）；None 表示未启用额度限制。
+        self.usage_limiter = usage_limiter
 
     @property
     def supports_fetch(self) -> bool:
@@ -345,6 +356,19 @@ class SearchRouter:
                     return self._final_outcome(
                         failures, pool, analysis, limit, cache_key, name_hint=name
                     )
+                if self.usage_limiter is not None:
+                    # 达到厂商上限即跳过该厂商，交给后续 provider 回退。
+                    if not self.usage_limiter.allows(name):
+                        failures.append(
+                            SearchFailure(
+                                name,
+                                ProviderErrorKind.QUOTA.value,
+                                "已达到本地调用上限，本次跳过该厂商",
+                            )
+                        )
+                        return None
+                    # 请求失败也保守计数：在实际发起前记账。
+                    self.usage_limiter.record(name)
                 if budget["requests"] >= self.max_requests:
                     # 本地请求预算耗尽不是厂商配额问题，用独立分类区分。
                     failures.append(
