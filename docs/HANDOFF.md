@@ -37,6 +37,7 @@
 - 四家 Fetch（卡 10）：`TavilyFetchProvider`（/extract，Bearer，单 URL Basic）、`ExaFetchProvider`（/contents，x-api-key，body 恰为 {urls, text:true}）、`YouFetchProvider`（/v1/contents，X-API-Key，{urls, formats:["markdown"]}，响应形状二手资料待冒烟）、`VolcengineFetchProvider`（/search_api/fetch，字段名按 Search 同族约定待冒烟）。正文经 `truncate_fetch_content`（base.py）截断；空正文/失败抛 ProviderError 由 FetchRouter 回退。注册表 `fetch_router._EXTERNAL_FETCH_PROVIDERS`，Key 环境变量与对应 Search 相同。
 - Key 读取（卡 11）：`config.read_api_key`（env 优先、Keyring 回退）统一供 search/fetch registry 与 setup 使用；`qm setup` 顶层分「模型与 LLM」/「搜索与网页抓取」两个向导（providers.py 的 run_setup/_run_llm_setup/run_search_setup），官方厂商不自动启用、无 Key 拒绝启用，TOML 不落 Key。测试用假 ask + 假 questionary + 假 keyring 脚本化交互。
 - 额度限制（卡 12）：`infra/search/usage.py` 的 `UsageLimiter`（`search.usage_limits.<provider>`：period daily/monthly + max_calls，max_calls<=0 视为不限制）；Search/Fetch 同厂商共用一个计数池，计数在实际发起请求前记账（失败保守计数），状态在 vault `.quiet-memo/usage.json` 原子落盘，读前按 mtime 重载以兼容两个路由实例；达上限的失败分类是 `quota`（detail 注明本地上限，与厂商配额语义一致但 detail 可区分）。setup 启用官方厂商时询问每日上限（默认 20）。本地计数不是服务商账单上限。
+- 集成与冒烟（卡 13）：`tests/test_multi_provider.py` 覆盖五 Search + 四 Fetch 注册矩阵、Search/Fetch 顺序独立、无 Key 不注册不发请求、search/fetch_web 工具协议、冒烟脚本 dry/live（假件注入）；`scripts/smoke_search_apis.py` 默认 dry 零请求，`--live` 才对单一厂商发 ≤max-requests（默认 1）次真实请求，报告脱敏。真实网络冒烟仍未执行，待验证：百度鉴权头、You.com Contents 响应形状、火山 Fetch 字段名与 Custom NeedContent、各家 count 上限。
 
 ## 忙碌态解耦与会话一致性（2026-10-31，分支 base/chat-stability）
 
