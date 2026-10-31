@@ -115,6 +115,8 @@ class SearchConfig:
     max_engines: int = 3
     # 一次搜索所有引擎回退共享的超时预算，秒；超出即停止候补。
     timeout_budget: float = 25.0
+    # 一次搜索跨所有 provider 共享的请求次数上限；超出即返回当前最佳候选。
+    max_requests: int = 9
 
 
 @dataclass(slots=True)
@@ -221,7 +223,7 @@ def _validate_config(data: dict) -> None:
     for name in (
         "llm.timeout", "chat.context_window", "chat.max_tool_steps", "chat.tool_timeout",
         "search.timeout", "search.max_results", "search.fetch_timeout",
-        "search.max_engines", "search.timeout_budget",
+        "search.max_engines", "search.timeout_budget", "search.max_requests",
     ):
         _validate_range(data, name, positive=True)
     for name in (
@@ -319,6 +321,7 @@ def load_config(path: Path | str | None = None) -> Config:
         fallback_engines=fallback_engines,
         max_engines=max(1, int(search_raw.get("max_engines", 3))),
         timeout_budget=float(search_raw.get("timeout_budget", 25.0)),
+        max_requests=int(search_raw.get("max_requests", 9)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),
@@ -390,6 +393,8 @@ auto_start = true
 engines = {toml_literal(["bing"])}
 # 抓取正文的单独超时（秒），比搜索慢
 fetch_timeout = 45.0
+# 一次搜索跨所有 provider 共享的请求次数上限；超出即返回当前最佳候选。
+max_requests = 9
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

@@ -8,7 +8,12 @@ import pytest
 
 pytestmark = pytest.mark.search
 
-from quiet_memo.infra.search.base import SearchQuery, SearchResult
+from quiet_memo.infra.search.base import (
+    ProviderError,
+    ProviderErrorKind,
+    SearchQuery,
+    SearchResult,
+)
 from quiet_memo.infra.search.quality import analyze_query, result_relevance
 from quiet_memo.infra.search.router import SearchRouter
 
@@ -619,7 +624,7 @@ def test_request_count_budget_stops_across_providers():
     )
     outcome = router.search(SearchQuery("tibo"))
     assert len(weak.calls) == 2 and not strong.calls
-    assert any(item.kind == "quota" for item in outcome.failed)
+    assert any(item.kind == "budget_exhausted" for item in outcome.failed)
     assert "请求次数上限" in outcome.hint
     assert [item.url for item in outcome.results] == ["https://example.com/w"]
 
@@ -654,3 +659,36 @@ def test_default_request_budget_preserves_single_provider_worst_case():
     router.search(SearchQuery("tibo", context_terms=("OpenAI", "Codex")))
     # 变体只跑第一个引擎槽位：3（原始+2 变体）+ 1 + 1 = 5 次。
     assert len(weak.calls) == 5
+
+
+class QuotaProvider:
+    """抛厂商配额错误（HTTP 402）的假 provider。"""
+
+    name = "quota_one"
+    capabilities = {"search"}
+
+    def __init__(self):
+        self.calls = 0
+
+    def search(self, query):
+        self.calls += 1
+        raise ProviderError("quota_one", ProviderErrorKind.QUOTA, "HTTP 402")
+
+
+def test_budget_exhausted_distinct_from_provider_quota():
+    """本地请求预算耗尽与厂商账户配额是两类错误，不得混用。"""
+    quota = QuotaProvider()
+    second = NamedProvider(
+        "second", [SearchResult("Tibo roadmap", "https://example.com/s", "")]
+    )
+    router = SearchRouter(
+        {"quota_one": quota, "second": second},
+        order=["quota_one", "second"],
+        engines=["bing"],
+        max_requests=1,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    # 厂商 402 → quota；随后本地预算耗尽 → budget_exhausted，两类并存可区分。
+    kinds = [item.kind for item in outcome.failed]
+    assert "quota" in kinds and "budget_exhausted" in kinds
+    assert not second.calls

@@ -14,6 +14,7 @@ from .base import (
     FetchQuery,
     FetchResult,
     ProviderError,
+    ProviderErrorKind,
     SearchFailure,
     SearchOutcome,
     SearchProvider,
@@ -197,6 +198,7 @@ def build_search_router(
         fallback_engines=config.fallback_engines,
         max_engines=config.max_engines,
         timeout_budget=config.timeout_budget,
+        max_requests=config.max_requests,
     )
 
 
@@ -344,8 +346,13 @@ class SearchRouter:
                         failures, pool, analysis, limit, cache_key, name_hint=name
                     )
                 if budget["requests"] >= self.max_requests:
+                    # 本地请求预算耗尽不是厂商配额问题，用独立分类区分。
                     failures.append(
-                        SearchFailure(name, "quota", "单次搜索请求次数预算已用尽")
+                        SearchFailure(
+                            name,
+                            ProviderErrorKind.BUDGET_EXHAUSTED.value,
+                            "单次搜索请求次数预算已用尽",
+                        )
                     )
                     return self._final_outcome(
                         failures, pool, analysis, limit, cache_key,
@@ -415,7 +422,10 @@ class SearchRouter:
         )
         if merged and any(has_core_hit(result, analysis) for result in merged):
             # 池里至少有核心词命中：按成功语义缓存（时效查询仍短 TTL）。
-            self._cache_put(cache_key, merged, name_hint, analysis)
+            # 预算耗尽的截断结果不缓存：缓存会丢掉截断提示，后续搜索
+            # 会一直拿到不完整结果，重新请求才能在预算内补全。
+            if not budget_exhausted:
+                self._cache_put(cache_key, merged, name_hint, analysis)
             weak = weak_share_hint(merged, analysis)
             hints = [item for item in (budget_hint, weak) if item]
             return SearchOutcome(
@@ -427,7 +437,8 @@ class SearchRouter:
         if merged:
             # 候补都没命中核心词：返回候选但如实提示低相关，不伪装成精准命中；
             # 低相关候选只短 TTL 缓存，给之后的回退留机会。
-            self._cache_put(cache_key, merged, name_hint, analysis, short=True)
+            if not budget_exhausted:
+                self._cache_put(cache_key, merged, name_hint, analysis, short=True)
             base = "候补引擎未找到与查询核心词直接相关的结果，以下为各引擎返回的候选。"
             return SearchOutcome(
                 results=merged,
@@ -441,7 +452,10 @@ class SearchRouter:
             self.cache.set(cache_key, [], name_hint, ttl=EMPTY_RESULT_TTL)
         if failures and all(
             failure.kind
-            in ("timeout", "network", "rate_limit", "unavailable", "bad_response", "auth", "quota")
+            in (
+                "timeout", "network", "rate_limit", "unavailable", "bad_response",
+                "auth", "quota", "budget_exhausted",
+            )
             for failure in failures
         ):
             hint = "所有搜索引擎均失败。"
@@ -449,6 +463,8 @@ class SearchRouter:
             hint = "未找到相关结果。"
         if any(failure.kind == "auth" for failure in failures):
             hint += " 存在鉴权失败：请检查对应厂商的 API Key 环境变量。"
+        if any(failure.kind == "budget_exhausted" for failure in failures):
+            hint += " 已达到单次搜索的请求次数上限。"
         if any("open-websearch" in failure.detail or "daemon" in failure.detail for failure in failures):
             hint += " 请确认 open-websearch 已启动：npx open-websearch@latest serve"
         return SearchOutcome(failed=failures, hint=hint)

@@ -26,6 +26,14 @@
 - 计时注意：Windows `time.monotonic` 分辨率约 15.6ms，搜索预算计时用 `time.perf_counter`，勿改回。
 - 已知上游限制：open-websearch 无验证码识别（上游弹验证码表现为空结果或跑题内容）；bing 对小众英文账号（如 thsottiaux）可能返回无关内容，依赖 baidu 候补兜底；baidu 返回的是跳转链接（baidu.com/link?url=...，QM 不主动解析，需经 fetch_web）；fetch_web 偶发 daemon HTTP 502。真实冒烟 7 条查询对比与 LLM 端到端在 be6d632 前后完成（冒烟脚本在系统临时目录，不入库）。
 
+## 多厂商搜索适配（Phase B，2026-10-31，base/chat-stability）
+
+- 外部厂商：`baidu_search`（qianfan，双鉴权头可配置待冒烟定夺）、`tavily`、`exa`（type 固定 auto）、`you`（X-API-Key，日期字段未核实保持 None）、`volcengine`（global/custom 双模式）。注册表在 `router._EXTERNAL_PROVIDERS`，Key 走环境变量（如 `BAIDU_SEARCH_API_KEY`），未配置 Key 静默跳过；适配器全部经 `http_client.JsonApiClient`（非 2xx 一律抛 `ProviderError`，错误 detail 只含状态码不回传响应体）。全部 MockTransport 测试覆盖，真实冒烟未做。
+- 请求预算：`search.max_requests`（默认 9）为一次搜索跨所有 provider 共享的请求次数上限；查询变体只在第一家 provider 上执行。耗尽时返回池内最佳候选并附截断提示，该结果**不写入缓存**（缓存会丢截断提示，下次搜索应重新请求）。`ProviderErrorKind.BUDGET_EXHAUSTED` 表示本地预算耗尽，与厂商账户配额 `QUOTA`（402 等）严格区分。
+- 交叉来源统计：`CandidatePool` 排名证据为 `(provider, engine, rank)` 三元组，corroboration 按 distinct (provider, engine) 计数——外部厂商 engine 为空时凭 provider 身份参与统计；`SearchResult.engine` 语义不变（上游引擎名）。
+- 火山引擎 Query 官方上限 100 字符：超限抛 `ProviderError(BAD_RESPONSE)`，不静默截断。
+- 待办（v1.2 方案卡 09-14）：独立 FetchRouter 与四家 Fetch 适配、`qm setup` 搜索 Key 菜单、配额保护、文档同步；五家统一受控真实冒烟（每家 ≤10 次）待授权执行，冒烟后固化 Baidu 鉴权头、You.com 日期字段、火山 Custom NeedContent 的真实行为。
+
 ## 忙碌态解耦与会话一致性（2026-10-31，分支 base/chat-stability）
 
 - 分支约定：基础层修复与改进使用 `base/` 前缀；验证通过后经用户同意才分别合入 main 与 feature-memory-evolution（后者定位为记忆内容前沿版本）。

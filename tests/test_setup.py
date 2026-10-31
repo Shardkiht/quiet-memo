@@ -194,6 +194,10 @@ def test_load_config_rejects_wrong_types_and_ranges(tmp_path):
         ("confidence_threshold = 1.5\n", "必须在 0 到 1 之间"),
         ("auto_push = \"yes\"\n", "必须是布尔值"),
         ("[search]\nproviders = [1, 2]\n", "必须是字符串"),
+        ("[search]\nmax_requests = 0\n", "必须大于 0"),
+        ("[search]\nmax_requests = -2\n", "必须大于 0"),
+        ("[search]\nmax_requests = 1.5\n", "必须是整数"),
+        ("[search]\nmax_requests = \"nine\"\n", "必须是整数"),
     ]
     for content, message in cases:
         path = tmp_path / "quiet-memo.toml"
@@ -281,6 +285,7 @@ def test_search_config_roundtrip(tmp_path):
             fallback_engines=["duckduckgo", "startpage"],
             max_engines=2,
             timeout_budget=18.0,
+            max_requests=7,
         ),
     )
 
@@ -300,6 +305,7 @@ def test_search_config_roundtrip(tmp_path):
     assert loaded.search.fallback_engines == ["duckduckgo", "startpage"]
     assert loaded.search.max_engines == 2
     assert loaded.search.timeout_budget == 18.0
+    assert loaded.search.max_requests == 7
 
 
 def test_resolve_config_path_env_wins_over_cwd(tmp_path, monkeypatch):

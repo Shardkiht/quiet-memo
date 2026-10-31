@@ -526,6 +526,51 @@ def test_cache_avoids_second_provider_call(tmp_path):
     assert provider.calls == 1
 
 
+def test_budget_exhausted_results_are_not_cached(tmp_path):
+    """预算耗尽的截断结果不进缓存：同一搜索下次要能重新发起请求。"""
+    weak = FakeProvider([SearchResult("Unrelated", "https://example.com/w", "")])
+    never = FakeProvider([SearchResult("Tibo roadmap", "https://example.com/s", "details")])
+    cache = SearchCache(tmp_path / "cache.json", ttl=60)
+    router = SearchRouter(
+        {"weak": weak, "never": never},
+        order=["weak", "never"],
+        cache=cache,
+        max_requests=1,
+    )
+
+    first = router.search(SearchQuery("tibo"))
+    assert weak.calls == 1 and never.calls == 0
+    assert "请求次数上限" in first.hint
+
+    second = router.search(SearchQuery("tibo"))
+    # 未命中缓存：第一家被重新请求；预算 1 依旧轮不到第二家。
+    assert weak.calls == 2 and never.calls == 0
+    assert "请求次数上限" in second.hint
+
+
+def test_budget_exhausted_core_hits_are_not_cached(tmp_path):
+    """池内已有核心词命中时，预算耗尽结果同样不得按成功语义缓存。"""
+    provider = FakeProvider(
+        [SearchResult("Tibo update", "https://example.com/a", "notes about tibo")]
+    )
+    second = FakeProvider([])
+    cache = SearchCache(tmp_path / "cache.json", ttl=60)
+    router = SearchRouter(
+        {"fake": provider, "second": second},
+        order=["fake", "second"],
+        cache=cache,
+        max_requests=1,
+    )
+
+    outcome = router.search(SearchQuery("tibo codex"))
+    # 单条强命中不足以早停（两个核心词只覆盖一个）：预算在第二家前耗尽。
+    assert provider.calls == 1 and second.calls == 0
+    assert outcome.results and "请求次数上限" in outcome.hint
+
+    router.search(SearchQuery("tibo codex"))
+    assert provider.calls == 2
+
+
 def test_cache_expires(tmp_path):
     now = [0.0]
     provider = FakeProvider([SearchResult("ok", "https://example.com", "")])
@@ -857,11 +902,16 @@ def test_agent_fetch_tool_returns_page_content(tmp_path):
 
 def test_search_router_is_built_from_config(tmp_path):
     router = build_search_router(
-        SearchConfig(base_url="http://127.0.0.1:3210", transport="http"),
+        SearchConfig(
+            base_url="http://127.0.0.1:3210",
+            transport="http",
+            max_requests=4,
+        ),
         tmp_path,
     )
     assert "open_websearch" in router.registry
     assert router.max_results == 5
+    assert router.max_requests == 4
 
 
 async def test_mcp_exposes_search_when_enabled(tmp_path):

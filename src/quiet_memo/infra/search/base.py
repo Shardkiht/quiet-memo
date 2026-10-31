@@ -137,6 +137,8 @@ class ProviderErrorKind(str, Enum):
     # 不做快速重试，也不得把这类失败缓存成空结果。
     AUTH = "auth"
     QUOTA = "quota"
+    # 本地单次搜索的请求次数预算耗尽：与厂商账户配额（quota）是两回事。
+    BUDGET_EXHAUSTED = "budget_exhausted"
 
 
 class ProviderError(Exception):
