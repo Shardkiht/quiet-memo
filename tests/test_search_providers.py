@@ -240,3 +240,61 @@ def test_baidu_401_maps_to_auth():
     with pytest.raises(ProviderError) as caught:
         provider.search(SearchQuery("q"))
     assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+# ---------- 卡 05：Tavily Search ----------
+
+
+def test_tavily_request_shape_and_result_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"title": "Tibo latest updates", "url": "https://example.com/a",
+                     "content": "announcement body", "score": 0.9,
+                     "published_date": "2026-10-29"},
+                    {"url": "https://example.com/b"},
+                ]
+            },
+        )
+    )
+    provider = make(TavilySearchProvider, sent)
+    results = provider.search(SearchQuery("Tibo latest updates", limit=10))
+    assert [item.url for item in results] == ["https://example.com/a", "https://example.com/b"]
+    assert results[0].snippet == "announcement body"
+    assert results[0].published == "2026-10-29"
+    assert results[0].provider == "tavily"
+    body = json.loads(requests[0].content)
+    # 免费优先：Basic 深度 + 不自动升级 + 关闭一切附加计费项。
+    assert body == {
+        "query": "Tibo latest updates",
+        "search_depth": "basic",
+        "max_results": 10,
+        "include_answer": False,
+        "include_raw_content": False,
+        "include_images": False,
+        "auto_parameters": False,
+        "include_usage": True,
+    }
+    assert requests[0].headers["authorization"] == f"Bearer {KEY}"
+
+
+def test_tavily_402_and_429_map_to_quota_and_rate_limit():
+    sent, _ = capture(lambda request: httpx.Response(402, json={}))
+    provider = make(TavilySearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.QUOTA
+
+    sent, _ = capture(lambda request: httpx.Response(429, json={}))
+    provider = make(TavilySearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.RATE_LIMIT
+
+
+def test_tavily_missing_results_is_empty():
+    sent, _ = capture(lambda request: httpx.Response(200, json={"response_time": 0.1}))
+    provider = make(TavilySearchProvider, sent)
+    assert provider.search(SearchQuery("q")) == []
