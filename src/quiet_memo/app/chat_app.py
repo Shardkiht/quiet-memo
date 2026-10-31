@@ -79,7 +79,7 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
         self._pending_switch: str | None = None
         self._pending_new = False
         # 排队命令绑定提交时的会话：目标不是当前会话时先切回再执行。
-        self._pending_command: str | None = None
+        self._pending_command: _QueuedLine | None = None
         self._queue: list[_QueuedLine] = []
         self._stream_widget: ChatReply | None = None
         self._stream_buffer = ""
@@ -321,11 +321,12 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
             self._switch_session(session_id)
             return
         if self._pending_command:
-            # 切回目标会话完成（_after_session_switch）后来到这里：命令已在
-            # 提交时的会话上下文里，此时执行不会误伤其他会话。
-            line = self._pending_command
+            # 导航期间可能再次切换视图，执行前重新核验完整队列项的目标。
+            item = self._pending_command
             self._pending_command = None
-            self._command(line)
+            self._run_queued_command(item)
+            if not self.busy:
+                self._drain_pending_intent()
             return
         self._dispatch_queue()
 
@@ -415,8 +416,10 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
             self.notify("Cannot delete the current session; use /new first.")
             self.query_one("#input", Input).focus()
             return False
-        if session_id == self._ask_in_flight or any(
-            item.session_id == session_id for item in self._queue
+        if (
+            (self._pending_command and self._pending_command.session_id == session_id)
+            or session_id == self._ask_in_flight
+            or any(item.session_id == session_id for item in self._queue)
         ):
             self.notify("Session is generating or has queued tasks; try again later.")
             self.query_one("#input", Input).focus()

@@ -265,6 +265,10 @@ class SearchRouter:
                     failures.append(
                         SearchFailure(name, "timeout", "搜索超时预算已用尽，停止引擎回退")
                     )
+                    if candidates:
+                        return self._final_outcome(
+                            failures, candidates, tokens, limit, cache_key, text, name_hint=name
+                        )
                     return None
                 try:
                     raw = provider.search(

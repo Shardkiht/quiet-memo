@@ -1263,3 +1263,26 @@ def test_empty_results_use_short_ttl(tmp_path):
     third = router.search(SearchQuery("q"))
     assert third.results and not third.cached
     assert provider.calls == 2
+
+
+def test_budget_exhaustion_preserves_collected_candidates(monkeypatch):
+    from quiet_memo.infra.search import router as router_module
+
+    clock = [0.0]
+    calls = []
+
+    class SlowProvider:
+        capabilities = {"search", "engines"}
+
+        def search(self, query):
+            calls.append(query)
+            clock[0] = 2.0
+            return [SearchResult("Unrelated candidate", "https://example.com/candidate", "")]
+
+    monkeypatch.setattr(router_module.time, "perf_counter", lambda: clock[0])
+    router = SearchRouter({"fake": SlowProvider()}, engines=["bing"], timeout_budget=1)
+    result = router.search(SearchQuery("alpha"))
+    assert [item.title for item in result.results] == ["Unrelated candidate"]
+    assert result.hint
+    assert any(item.kind == "timeout" for item in result.failed)
+    assert len(calls) == 1

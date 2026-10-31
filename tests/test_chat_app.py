@@ -2572,3 +2572,59 @@ async def test_native_cursor_position_refreshed_on_resize(tmp_path, monkeypatch)
         app.cursor_position = Offset(0, 0)  # 模拟布局变化后未刷新的旧坐标
         widget.on_resize()
         assert app.cursor_position == widget.cursor_screen_offset
+
+
+async def test_queued_command_rechecks_target_after_another_navigation(tmp_path, monkeypatch):
+    from quiet_memo.app.chat_flow import _QueuedLine
+
+    app = build_app(tmp_path, [])
+    a = app.sessions.create()
+    b = app.sessions.create()
+    executed = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _wait_idle(app, pilot)
+        app.runtime.resume(b.id)
+        original_switch = app._switch_session
+        redirected = False
+
+        def switch(session_id):
+            nonlocal redirected
+            original_switch(session_id)
+            if session_id == a.id and not redirected:
+                redirected = True
+                app._pending_switch = b.id
+
+        monkeypatch.setattr(app, "_switch_session", switch)
+        monkeypatch.setattr(app, "_command", lambda line: executed.append((app.runtime.current.id, line)))
+        app._queue.append(_QueuedLine(a.id, "/undo"))
+        app._dispatch_queue()
+        for _ in range(200):
+            await pilot.pause()
+            if executed and not app.busy:
+                break
+        assert executed == [(a.id, "/undo")]
+        assert app._pending_command is None
+
+
+async def test_queued_sync_command_continues_following_message(tmp_path, monkeypatch):
+    from quiet_memo.app.chat_flow import _QueuedLine
+
+    app = build_app(tmp_path, [])
+    a = app.sessions.create()
+    b = app.sessions.create()
+    executed = []
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        await _wait_idle(app, pilot)
+        app.runtime.resume(b.id)
+        monkeypatch.setattr(app, "_command", lambda line: executed.append(("command", line)))
+        monkeypatch.setattr(app, "_start_ask", lambda line, sid: executed.append(("message", line, sid)))
+        app._queue.extend([_QueuedLine(a.id, "/undo"), _QueuedLine(a.id, "next message")])
+        app._dispatch_queue()
+        for _ in range(200):
+            await pilot.pause()
+            if len(executed) == 2 and not app.busy:
+                break
+        assert executed == [("command", "/undo"), ("message", "next message", a.id)]
+        assert not app._queue

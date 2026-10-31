@@ -177,3 +177,10 @@ Spark 真实接口合成数据冒烟：流式回复、带时间/地点的记忆�
 ## Windows IME cursor
 
 - Windows interactive TUI input uses a native blinking bar cursor, leaving IME composition placement to the terminal; headless and other platforms retain the painted cursor. Blur/unmount hide the native cursor and reset its shape. Native IME behavior requires manual terminal verification; headless tests only cover cursor control, editing coordinates and cleanup.
+
+
+## Review follow-up: queued targets and search budget
+
+- Pending commands retain the full session-bound queue item and recheck its target after intervening navigation; synchronous completion resumes FIFO processing. Pending targets are covered by the session deletion guard.
+- Search budget exhaustion stops further requests while retaining collected candidates with the existing candidate hint and timeout diagnostics.
+- Validation: targeted queue/budget regressions 5 passed; full isolated suite 617 passed. No real model or network requests were used.

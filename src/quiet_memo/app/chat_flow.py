@@ -101,7 +101,7 @@ class ChatFlowMixin:
         except Exception:
             self.notify("Queued command skipped: session no longer available")
             return
-        self._pending_command = item.line
+        self._pending_command = item
         self._switch_session(item.session_id)
 
     def _ui(self, fn, *args) -> None:
