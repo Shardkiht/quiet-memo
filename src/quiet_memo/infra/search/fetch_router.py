@@ -23,6 +23,7 @@ _EXTERNAL_FETCH_PROVIDERS: dict[str, tuple[str, str]] = {
     "tavily": ("tavily.py:TavilyFetchProvider", "TAVILY_API_KEY"),
     "exa": ("exa.py:ExaFetchProvider", "EXA_API_KEY"),
     "you": ("you.py:YouFetchProvider", "YDC_API_KEY"),
+    "volcengine": ("volcengine.py:VolcengineFetchProvider", "VOLCENGINE_SEARCH_API_KEY"),
 }
 
 

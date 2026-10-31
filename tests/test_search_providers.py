@@ -23,7 +23,10 @@ from quiet_memo.infra.search.exa import ExaFetchProvider, ExaSearchProvider
 from quiet_memo.infra.search.http_client import JsonApiClient
 from quiet_memo.infra.search.router import build_registry
 from quiet_memo.infra.search.tavily import TavilyFetchProvider, TavilySearchProvider
-from quiet_memo.infra.search.volcengine import VolcengineSearchProvider
+from quiet_memo.infra.search.volcengine import (
+    VolcengineFetchProvider,
+    VolcengineSearchProvider,
+)
 from quiet_memo.infra.search.you import YouFetchProvider, YouSearchProvider
 
 KEY = "test-key-placeholder"
@@ -770,3 +773,93 @@ def test_you_fetch_401_and_403_map_to_auth():
         with pytest.raises(ProviderError) as caught:
             provider.fetch(FetchQuery("https://example.com/a", 4000))
         assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+# ---------- 卡 10D：火山引擎 Fetch ----------
+
+
+def test_volcengine_fetch_request_and_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "ResponseMetadata": {"RequestId": "rid"},
+                "Result": {
+                    "Url": "https://example.com/a",
+                    "Title": "Example Page",
+                    "Content": "正文内容" * 10,
+                },
+            },
+        )
+    )
+    provider = make(VolcengineFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+    request = requests[0]
+    assert request.url.path == "/search_api/fetch"
+    assert request.headers["authorization"] == f"Bearer {KEY}"
+    assert json.loads(request.content) == {"Url": "https://example.com/a"}
+    assert result.title == "Example Page"
+    assert result.final_url == "https://example.com/a"
+    assert result.content == "正文内容" * 10
+    assert result.truncated is False
+
+
+def test_volcengine_fetch_truncates_to_max_chars():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={"Result": {"Url": "https://example.com/a", "Content": "x" * 500}},
+        )
+    )
+    provider = make(VolcengineFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 100))
+    assert result.content == "x" * 100 and result.truncated is True
+
+
+def test_volcengine_fetch_metadata_error_maps_to_auth():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "ResponseMetadata": {
+                    "Error": {"Code": "InvalidAuthorization", "Message": "auth failed"}
+                },
+                "Result": None,
+            },
+        )
+    )
+    provider = make(VolcengineFetchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+    assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+def test_volcengine_fetch_missing_result_or_content_is_error():
+    sent, _ = capture(lambda request: httpx.Response(200, json={}))
+    provider = make(VolcengineFetchProvider, sent)
+    with pytest.raises(ProviderError, match="Result 字段缺失"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"Result": {"Url": "https://example.com/a", "Content": ""}}
+        )
+    )
+    provider = make(VolcengineFetchProvider, sent)
+    with pytest.raises(ProviderError, match="未返回正文"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+
+def test_volcengine_fetch_timeout_maps_to_timeout():
+    provider = VolcengineFetchProvider(KEY)
+    provider._client = JsonApiClient(
+        "volcengine",
+        "https://open.feedcoopapi.com",
+        client_factory=lambda: mock_factory(
+            lambda request: (_ for _ in ()).throw(httpx.ReadTimeout("timed out"))
+        ),
+    )
+    with pytest.raises(ProviderError) as caught:
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+    assert caught.value.kind == ProviderErrorKind.TIMEOUT
