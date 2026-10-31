@@ -398,3 +398,96 @@ def test_you_401_maps_to_auth():
     with pytest.raises(ProviderError) as caught:
         provider.search(SearchQuery("q"))
     assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+# ---------- 卡 08：火山引擎 Global / Custom ----------
+
+
+def volc_payload(documents):
+    return {
+        "ResponseMetadata": {"RequestId": "rid", "Action": "", "Version": "", "Service": "", "Region": ""},
+        "Result": {"Documents": documents, "TotalDocCount": len(documents), "ErrorCode": "", "ErrorMsg": ""},
+    }
+
+
+def test_volcengine_global_request_and_document_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json=volc_payload(
+                [
+                    {"Rank": 0, "Url": "https://example.com/a", "Title": "Tibo latest",
+                     "Snippet": [{"Type": "image", "Text": None}, {"Type": "text", "Text": "announcement"}],
+                     "DocumentInfo": {"PublishTime": "2026-10-30", "Filetype": "webpage"},
+                     "HostInfo": {"Hostname": "example.com"}},
+                    {"Url": "https://example.com/b", "Title": "No snippet"},
+                ]
+            ),
+        )
+    )
+    provider = make(VolcengineSearchProvider, sent, mode="global")
+    results = provider.search(SearchQuery("Tibo latest updates", limit=10))
+    assert [item.url for item in results] == ["https://example.com/a", "https://example.com/b"]
+    assert results[0].snippet == "announcement"
+    assert results[0].published == "2026-10-30"
+    assert results[0].provider == "volcengine"
+    request = requests[0]
+    assert request.url.path == "/search_api/global_search"
+    body = json.loads(request.content)
+    assert body["Query"] == "Tibo latest updates"
+    assert body["SearchType"] == "web"
+    assert body["DocCount"] == 10
+    assert request.headers["authorization"] == f"Bearer {KEY}"
+
+
+def test_volcengine_global_query_truncated_to_100_chars():
+    sent, requests = capture(lambda request: httpx.Response(200, json=volc_payload([])))
+    provider = make(VolcengineSearchProvider, sent, mode="global")
+    provider.search(SearchQuery("x" * 300))
+    assert len(json.loads(requests[0].content)["Query"]) == 100
+
+
+def test_volcengine_custom_request_shape():
+    sent, requests = capture(lambda request: httpx.Response(200, json=volc_payload([])))
+    provider = make(VolcengineSearchProvider, sent, mode="custom")
+    provider.search(SearchQuery("q", limit=10))
+    request = requests[0]
+    assert request.url.path == "/search_api/web_search"
+    body = json.loads(request.content)
+    assert body["Count"] == 10
+    assert body["Filter"] == {"NeedContent": True, "NeedUrl": True}
+    assert body["QueryControl"] == {"QueryRewrite": False}
+
+
+def test_volcengine_metadata_error_maps_to_auth():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "ResponseMetadata": {"Error": {"Code": "InvalidAuthorization", "Message": "auth failed"}},
+                "Result": None,
+            },
+        )
+    )
+    provider = make(VolcengineSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+def test_volcengine_null_result_without_error_is_empty():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"ResponseMetadata": {"RequestId": "rid"}, "Result": None}
+        )
+    )
+    provider = make(VolcengineSearchProvider, sent)
+    assert provider.search(SearchQuery("q")) == []
+
+
+def test_volcengine_5xx_maps_to_unavailable():
+    sent, _ = capture(lambda request: httpx.Response(502, json={}))
+    provider = make(VolcengineSearchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.search(SearchQuery("q"))
+    assert caught.value.kind == ProviderErrorKind.UNAVAILABLE
