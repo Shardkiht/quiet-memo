@@ -43,6 +43,21 @@ class RecallQuery:
 Completer = Callable[..., object]
 
 
+def should_auto_recall(text: str, recent_texts: list[str]) -> bool:
+    """仅在个人话题或其连续追问中预取；其他问题保留模型主动 recall。"""
+    personal = re.compile(r"我|咱|本人|\b(my|mine|myself|I)\b", re.IGNORECASE)
+    task = re.compile(r"^(请)?(帮我)?(翻译|改写|润色|解释代码|搜索|查网页)|https?://", re.IGNORECASE)
+    if task.search(text):
+        return bool(MEMORY_CUE_RE.search(text) and personal.search(text))
+    text = re.sub(r"^(请)?(帮我|给我)", "", text.strip())
+    if personal.search(text):
+        return True
+    if re.search(r"记得|\bremember\b|i told you|i mentioned", text, re.IGNORECASE):
+        return True
+    return bool(FOLLOWUP_RE.search(text) and recent_texts and personal.search(recent_texts[-1])
+                and not task.search(recent_texts[-1]))
+
+
 class RecallQueryBuilder:
     """把当前消息补成可检索的 query；线索词或追问时结合最近用户消息。"""
 

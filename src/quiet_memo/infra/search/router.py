@@ -107,16 +107,26 @@ class SearchRouter:
                 failures.append(SearchFailure(name, "unavailable", "未注册的搜索 provider"))
                 continue
             try:
-                raw = provider.search(
-                    SearchQuery(
-                        query=text,
-                        limit=limit,
-                        engine=engine,
-                        lang=query.lang,
-                        freshness=query.freshness,
-                        engines=query.engines,
+                try:
+                    raw = provider.search(
+                        SearchQuery(
+                            query=text,
+                            limit=limit,
+                            engine=engine,
+                            lang=query.lang,
+                            freshness=query.freshness,
+                            engines=query.engines,
+                        )
                     )
-                )
+                except ProviderError as exc:
+                    if (name != "open_websearch" or query.engines or engines not in ((), ("bing",))
+                            or "fetch" not in provider.capabilities
+                            or exc.kind.value not in ("network", "timeout", "unavailable")):
+                        raise
+                    raw = provider.search(SearchQuery(
+                        query=text, limit=limit, engine=engine, lang=query.lang,
+                        freshness=query.freshness, engines=("baidu",),
+                    ))
             except ProviderError as exc:
                 failures.append(SearchFailure.from_error(exc))
                 continue
@@ -178,8 +188,9 @@ class SearchRouter:
         names: list[str],
         engines: tuple[str, ...],
     ) -> str:
+        # Ignore legacy entries that may have cached upstream failures as empty results.
         raw = "\x1f".join(
-            [text, str(limit), engine, lang or "", freshness or "", *engines, *names]
+            ["search-v2", text, str(limit), engine, lang or "", freshness or "", *engines, *names]
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

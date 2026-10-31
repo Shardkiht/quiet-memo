@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import os
 import socket
 from collections.abc import Sequence
@@ -10,12 +11,14 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 MAX_SEARCH_ENGINES = 3
+# 常见 TUN 代理的合成 DNS 段，仅用于域名解析结果，不放行直接 IP 目标。
+DEFAULT_FAKE_IP_CIDRS = "198.18.0.0/15,2001:2::/48"
 
 
 def _fake_ip_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
     """与 open-websearch 同名的 FAKE_IP_CIDRS：代理的合成 DNS 结果不算私网目标。"""
     networks = []
-    for item in os.environ.get("FAKE_IP_CIDRS", "").split(","):
+    for item in os.environ.get("FAKE_IP_CIDRS", DEFAULT_FAKE_IP_CIDRS).split(","):
         item = item.strip()
         if not item:
             continue
@@ -53,7 +56,7 @@ def assert_public_fetch_url(url: str, label: str = "抓取地址") -> None:
     except ValueError:
         literal = None
     if literal is not None:
-        if _is_blocked_address(literal, allowed):
+        if _is_blocked_address(literal, ()):
             raise ValueError(f"{label}不能指向私网或本机地址")
         return
     try:
@@ -74,6 +77,15 @@ def normalize_search_engines(value: object, allowed: Sequence[str]) -> tuple[str
     if value is None:
         return ()
     if isinstance(value, str):
+        # Some providers serialize an array-valued tool argument as a JSON string.
+        if value.strip().startswith("["):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                raise ValueError("search_engine must be a valid JSON array or engine name") from None
+            if not isinstance(value, list):
+                raise ValueError("search_engine must be a list of strings")
+            return normalize_search_engines(value, allowed)
         values = [value]
     elif isinstance(value, (list, tuple)):
         if not all(isinstance(item, str) for item in value):

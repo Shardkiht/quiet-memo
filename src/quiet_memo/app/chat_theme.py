@@ -77,7 +77,10 @@ APP_CSS = """
         color: #d5d6da;
     }
     /* 1 行正文 + 1 行上边框；height:1 会被边框吃掉整个内容区。 */
-    #status { width: 1fr; height: 2; background: $bg; color: $faint; padding: 0 3; border-top: solid #1d1e23; }
+    #status-row { height: 2; width: 1fr; background: $bg; padding: 0 3; border-top: solid #1d1e23; }
+    #model-status { width: 1fr; height: 1; color: #c2c3c7; overflow-x: hidden; }
+    #status { width: auto; max-width: 55%; height: 1; color: $faint; text-align: right; }
+
 
     /* 命令面板：浮在输入框上方，只显示命令、参数和一句短语。
        -6 = status 2 行 + 输入框下边距 1 行 + 输入框 3 行；偏移不够会盖住输入框。 */

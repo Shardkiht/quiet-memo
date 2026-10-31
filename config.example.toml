@@ -69,4 +69,4 @@ auto_start = true
 # 中文品牌名被拆词时可改用 ["baidu"]；多引擎会平分结果条数。
 engines = ["bing"]
 # 抓取正文的单独超时（秒）；搜索用上面的 timeout。
-fetch_timeout = 25.0
+fetch_timeout = 45.0

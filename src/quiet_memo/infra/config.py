@@ -108,7 +108,7 @@ class SearchConfig:
     auto_start: bool = True  # 打开 TUI 时后台预热 HTTP daemon
     # 上游搜索引擎；空列表表示沿用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
     engines: list[str] = field(default_factory=lambda: ["bing"])
-    fetch_timeout: float = 25.0  # 抓取正文单独超时，秒
+    fetch_timeout: float = 45.0  # 抓取正文单独超时，秒
 
 
 @dataclass(slots=True)
@@ -302,7 +302,7 @@ def load_config(path: Path | str | None = None) -> Config:
         transport=str(search_raw.get("transport", "http")),
         auto_start=bool(search_raw.get("auto_start", True)),
         engines=engines,
-        fetch_timeout=float(search_raw.get("fetch_timeout", 25.0)),
+        fetch_timeout=float(search_raw.get("fetch_timeout", 45.0)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),
@@ -373,7 +373,7 @@ auto_start = true
 # 上游搜索引擎：bing / baidu / sogou / duckduckgo / brave / startpage 等
 engines = {toml_literal(["bing"])}
 # 抓取正文的单独超时（秒），比搜索慢
-fetch_timeout = 25.0
+fetch_timeout = 45.0
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from rich.cells import cell_len
 from rich.segment import Segment
 from textual.strip import Strip
@@ -16,8 +18,46 @@ class BarInput(Input):
         hint = kwargs.pop("placeholder", "")
         kwargs["placeholder"] = ""
         super().__init__(*args, **kwargs)
+        self._native_cursor_active = False
         self._hint = hint
         self.border_title = hint or None
+
+    @property
+    def _uses_native_cursor(self) -> bool:
+        driver = self.app._driver
+        return sys.platform == "win32" and driver is not None and not driver.is_headless
+
+    def _restart_blink(self) -> None:
+        if self._uses_native_cursor:
+            self._pause_blink()
+            self._cursor_visible = False
+        else:
+            super()._restart_blink()
+
+    def _toggle_cursor(self) -> None:
+        if not self._uses_native_cursor:
+            super()._toggle_cursor()
+
+    def on_focus(self) -> None:
+        self.call_after_refresh(self._show_native_cursor)
+
+    def _show_native_cursor(self) -> None:
+        if self._uses_native_cursor and self.has_focus and not self.disabled:
+            # IME preedit belongs to the terminal; a painted glyph cannot follow it.
+            self.app._driver.write("\x1b[5 q\x1b[?25h")
+            self._native_cursor_active = True
+
+    def _hide_native_cursor(self) -> None:
+        if self._native_cursor_active:
+            if self.app._driver is not None:
+                self.app._driver.write("\x1b[?25l\x1b[0 q")
+            self._native_cursor_active = False
+
+    def on_blur(self) -> None:
+        self._hide_native_cursor()
+
+    def on_unmount(self) -> None:
+        self._hide_native_cursor()
 
     def _watch_value(self, value: str) -> None:
         super()._watch_value(value)
@@ -25,7 +65,7 @@ class BarInput(Input):
 
     def render_line(self, y: int) -> Strip:
         strip = super().render_line(y)
-        if y != 0 or not self.has_focus or not self._cursor_visible:
+        if self._uses_native_cursor or y != 0 or not self.has_focus or not self._cursor_visible:
             return strip
 
         # 在渲染结果里插竖线，不能改 _value：额外字符会让 Textual 的输入框重绘

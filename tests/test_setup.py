@@ -241,7 +241,7 @@ def test_vault_precedence_config_then_env(tmp_path, monkeypatch):
 def test_search_auto_start_defaults_match_example(tmp_path):
     assert SearchConfig().auto_start is True
     assert SearchConfig().engines == ["bing"]
-    assert SearchConfig().fetch_timeout == 25.0
+    assert SearchConfig().fetch_timeout == 45.0
     assert load_config(tmp_path / "missing.toml").search.auto_start is True
 
 
