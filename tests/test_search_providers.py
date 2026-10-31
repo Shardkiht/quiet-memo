@@ -19,7 +19,7 @@ from quiet_memo.infra.search.base import (
     SearchQuery,
 )
 from quiet_memo.infra.search.baidu import BaiduSearchProvider
-from quiet_memo.infra.search.exa import ExaSearchProvider
+from quiet_memo.infra.search.exa import ExaFetchProvider, ExaSearchProvider
 from quiet_memo.infra.search.http_client import JsonApiClient
 from quiet_memo.infra.search.router import build_registry
 from quiet_memo.infra.search.tavily import TavilyFetchProvider, TavilySearchProvider
@@ -613,3 +613,85 @@ def test_fetch_registry_registers_tavily_with_api_key(monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY")
     registry = build_fetch_registry(FetchConfig(providers=["tavily"]), SearchConfig())
     assert "tavily" not in registry
+
+
+# ---------- 卡 10B：Exa Contents ----------
+
+
+def test_exa_fetch_request_and_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "title": "Example Page",
+                        "url": "https://example.com/a",
+                        "text": "正文内容" * 10,
+                    }
+                ],
+                "statuses": [{"id": "https://example.com/a", "status": "success"}],
+            },
+        )
+    )
+    provider = make(ExaFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+    request = requests[0]
+    assert request.url.path == "/contents"
+    assert request.headers["x-api-key"] == KEY
+    body = json.loads(request.content)
+    assert body == {"urls": ["https://example.com/a"], "text": True}
+    assert result.title == "Example Page"
+    assert result.final_url == "https://example.com/a"
+    assert result.content == "正文内容" * 10
+    assert result.truncated is False
+
+
+def test_exa_fetch_does_not_request_paid_extras():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200, json={"results": [{"url": "https://example.com/a", "text": "t"}]}
+        )
+    )
+    provider = make(ExaFetchProvider, sent)
+    provider.fetch(FetchQuery("https://example.com/a", 4000))
+    body = json.loads(requests[0].content)
+    assert "summary" not in body and "highlights" not in body and "livecrawl" not in body
+
+
+def test_exa_fetch_truncates_to_max_chars():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"results": [{"url": "https://example.com/a", "text": "x" * 500}]}
+        )
+    )
+    provider = make(ExaFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 100))
+    assert result.content == "x" * 100 and result.truncated is True
+
+
+def test_exa_fetch_empty_results_is_error():
+    sent, _ = capture(lambda request: httpx.Response(200, json={"results": []}))
+    provider = make(ExaFetchProvider, sent)
+    with pytest.raises(ProviderError, match="结果为空"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+
+def test_exa_fetch_missing_text_is_error():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"results": [{"url": "https://example.com/a", "text": ""}]}
+        )
+    )
+    provider = make(ExaFetchProvider, sent)
+    with pytest.raises(ProviderError, match="未返回正文"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+
+def test_exa_fetch_403_maps_to_auth():
+    sent, _ = capture(lambda request: httpx.Response(403, json={}))
+    provider = make(ExaFetchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+    assert caught.value.kind == ProviderErrorKind.AUTH

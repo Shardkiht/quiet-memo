@@ -21,6 +21,7 @@ from .open_websearch import OpenWebSearchProvider
 # 需要厂商 API Key 的外部抓取服务；列进 fetch.providers 且 Key 可读才注册。
 _EXTERNAL_FETCH_PROVIDERS: dict[str, tuple[str, str]] = {
     "tavily": ("tavily.py:TavilyFetchProvider", "TAVILY_API_KEY"),
+    "exa": ("exa.py:ExaFetchProvider", "EXA_API_KEY"),
 }
 
 

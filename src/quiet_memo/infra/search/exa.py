@@ -9,7 +9,15 @@ from typing import Any, Callable
 
 import httpx
 
-from .base import ProviderError, ProviderErrorKind, SearchQuery, SearchResult
+from .base import (
+    FetchQuery,
+    FetchResult,
+    ProviderError,
+    ProviderErrorKind,
+    SearchQuery,
+    SearchResult,
+    truncate_fetch_content,
+)
 from .http_client import JsonApiClient
 
 NAME = "exa"
@@ -85,3 +93,43 @@ def _snippet(item: dict[str, Any]) -> str:
             return first[:_SNIPPET_MAX_CHARS]
     text = str(item.get("text") or "").strip()
     return text[:_SNIPPET_MAX_CHARS]
+
+
+class ExaFetchProvider:
+    """Exa Get Contents：单 URL 抓正文；不请求 summary/highlights 等附加内容。"""
+
+    name = NAME
+    capabilities = {"fetch"}
+
+    def __init__(
+        self,
+        api_key: str,
+        timeout: float = 10.0,
+        base_url: str = DEFAULT_BASE_URL,
+        client_factory: Callable[[], httpx.Client] | None = None,
+    ):
+        self._client = JsonApiClient(NAME, base_url, timeout, client_factory)
+        self._api_key = api_key
+
+    def fetch(self, query: FetchQuery) -> FetchResult:
+        # text 默认 false，须显式开启；不传 summary/highlights/livecrawl 等参数。
+        body = {"urls": [query.url], "text": True}
+        headers = {"x-api-key": self._api_key}
+        response = self._client.post_json("/contents", body, headers)
+        payload = self._client.parse_json(response)
+        results = payload.get("results")
+        if not isinstance(results, list) or not results:
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "contents 结果为空")
+        item = results[0] if isinstance(results[0], dict) else {}
+        content = str(item.get("text") or "").strip()
+        if not content:
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "未返回正文")
+        url = str(item.get("url") or "").strip() or query.url
+        text, truncated = truncate_fetch_content(content, query.max_chars)
+        return FetchResult(
+            url=query.url,
+            final_url=url,
+            title=str(item.get("title") or "").strip() or url,
+            content=text,
+            truncated=truncated,
+        )
