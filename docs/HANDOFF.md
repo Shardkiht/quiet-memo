@@ -2,6 +2,16 @@
 
 更新日期：2026-10-31。代码版本 `0.3.2`，发行标记使用 `v0.3.2`；基础功能参照 `444fe0f`，文件导入与模型选择界面参照 `bef5199`。包版本、锁文件与 MCP 客户端标识保持一致；远端发布结果以 GitHub Release、Actions 与 PyPI 为准。
 
+## 免费联网搜索增强（2026-10-31，base/chat-stability）
+
+- 引擎候补链：首选引擎空结果、结果与查询词元零命中或请求失败时，按 `search.fallback_engines`（默认 baidu→duckduckgo→sogou）自动降级，最多 `search.max_engines`（3）个引擎，共享 `search.timeout_budget`（25s）超时预算；显式 `search_engine` 保持单次请求语义不变。引擎回退只对声明 `engines` 能力的 provider 生效（OpenWebSearchProvider 两种 transport 均已声明），provider 级降级顺序保留。
+- 查询变体：`search`/MCP `search` 新增 `context` 参数（对话中确认的专有名词，最多 5 个）；原始查询无有效结果时确定性派生最多 2 个变体（追加 context 词项，不改写原拼写），不调用 LLM。
+- 缓存分级：键版本升到 v3；真空结果短缓存 5 分钟、「今天/最新/latest」类时效查询成功结果 10 分钟、跑题候选 10 分钟；任何上游失败一律不入缓存。`SearchCache.set` 支持按条目覆盖 TTL（不超过实例 TTL）。
+- 结果处理：轻量词元相关性评分（标题 2 分/摘要 1 分，拉丁串整体匹配、CJK 连续段）；多引擎候选 URL 去重合并后按分排序截断；`SearchResult.engine` 记录实际来源引擎并进入 payload；不相关判定保守（零命中才触发候补，候选不丢弃，最终如实提示"候补引擎未找到…以下为候选"）。
+- 工具上限：search 工具 limit 硬上限 10→15（schema 同步）；默认值仍来自 `search.max_results`。
+- 计时注意：Windows `time.monotonic` 分辨率约 15.6ms，搜索预算计时用 `time.perf_counter`，勿改回。
+- 已知上游限制：open-websearch 无验证码识别（上游弹验证码表现为空结果或跑题内容）；bing 对小众英文账号（如 thsottiaux）可能返回无关内容，依赖 baidu 候补兜底；baidu 返回的是跳转链接（baidu.com/link?url=...）；fetch_web 偶发 daemon HTTP 502。真实冒烟 7 条查询对比与 LLM 端到端在 be6d632 前后完成（冒烟脚本在系统临时目录，不入库）。
+
 ## 忙碌态解耦与会话一致性（2026-10-31，分支 base/chat-stability）
 
 - 分支约定：基础层修复与改进使用 `base/` 前缀；验证通过后经用户同意才分别合入 main 与 feature-memory-evolution（后者定位为记忆内容前沿版本）。
