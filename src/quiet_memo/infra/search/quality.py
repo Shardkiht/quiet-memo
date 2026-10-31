@@ -196,24 +196,86 @@ def has_core_hit(result: SearchResult, analysis: QueryAnalysis) -> bool:
 
 
 def result_relevance(result: SearchResult, analysis: QueryAnalysis) -> float:
-    """确定性评分：标题核心命中 > 摘要核心命中 > 二元片段 > 上下文/事件词。"""
+    """确定性评分（无引擎证据时的总量）：标题核心命中 > 摘要 > 二元片段。"""
+    return score_entry(result, analysis).total
+
+
+@dataclass(frozen=True)
+class ScoreBreakdown:
+    """逐特征贡献；权重为内置常量，离线基准调参，排序稳定可复现。"""
+
+    title_core: float = 0.0  # 标题核心词命中（最强证据）
+    snippet_core: float = 0.0  # 摘要核心词命中
+    core_coverage: float = 0.0  # 全部核心词覆盖奖励
+    intent: float = 0.0  # 事件/主题词覆盖
+    context: float = 0.0  # 上下文词命中（低权重，不单独通过门控）
+    engine_rank: float = 0.0  # 上游引擎内名次信号
+    corroboration: float = 0.0  # 多引擎独立交叉命中
+    published: float = 0.0  # 发布时间（仅时效查询，有日期才计）
+
+    @property
+    def total(self) -> float:
+        return (
+            self.title_core
+            + self.snippet_core
+            + self.core_coverage
+            + self.intent
+            + self.context
+            + self.engine_rank
+            + self.corroboration
+            + self.published
+        )
+
+
+def score_entry(
+    result: SearchResult,
+    analysis: QueryAnalysis,
+    ranks: Sequence[tuple[str, int]] = (),
+) -> ScoreBreakdown:
+    """确定性多特征评分；每个特征单独记录贡献，便于解释与调参。"""
     title = result.title.lower()
     snippet = result.snippet.lower()
-    score = 0.0
+    title_core = snippet_core = 0.0
     for term in analysis.core_terms:
         if _match(term, title):
-            score += 3.0 if term.kind != "cjk_gram" else 1.0
+            title_core += 3.0 if term.kind != "cjk_gram" else 1.0
         elif _match(term, snippet):
-            score += 1.0 if term.kind != "cjk_gram" else 0.5
+            snippet_core += 1.0 if term.kind != "cjk_gram" else 0.5
+    covered = sum(
+        1 for term in analysis.core_terms if _match(term, title) or _match(term, snippet)
+    )
+    core_coverage = (
+        2.0 if analysis.core_terms and covered == len(analysis.core_terms) else 0.0
+    )
+    intent = sum(
+        0.5
+        for word in analysis.intent_terms
+        if _intent_hit(word, title) or _intent_hit(word, snippet)
+    )
+    context = 0.0
     for term in analysis.context_terms:
         if _match(term, title):
-            score += 0.5
+            context += 0.5
         elif _match(term, snippet):
-            score += 0.25
-    for word in analysis.intent_terms:
-        if _intent_hit(word, title) or _intent_hit(word, snippet):
-            score += 0.5
-    return score
+            context += 0.25
+    engine_rank = 0.0
+    if ranks:
+        best = min(rank for _, rank in ranks)
+        engine_rank = {1: 1.2, 2: 0.6, 3: 0.3}.get(best, 0.0)
+    distinct = len({engine for engine, _ in ranks if engine})
+    corroboration = 0.0 if distinct < 2 else (1.0 if distinct == 2 else 1.5)
+    # 时间优先级只对明确时效查询生效；没有 published 就保持未知，不猜测日期。
+    published = 0.3 if analysis.freshness_requested and result.published else 0.0
+    return ScoreBreakdown(
+        title_core=title_core,
+        snippet_core=snippet_core,
+        core_coverage=core_coverage,
+        intent=intent,
+        context=context,
+        engine_rank=engine_rank,
+        corroboration=corroboration,
+        published=published,
+    )
 
 
 def is_relevant(results: list[SearchResult], analysis: QueryAnalysis) -> bool:

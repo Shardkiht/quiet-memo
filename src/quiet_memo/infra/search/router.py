@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Sequence
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -23,10 +24,11 @@ from .cache import SearchCache
 from .open_websearch import OpenWebSearchProvider
 from .quality import (
     QueryAnalysis,
+    ScoreBreakdown,
     analyze_query,
     has_core_hit,
     quality_gate,
-    result_relevance,
+    score_entry,
 )
 
 DEFAULT_PROVIDER = "open_websearch"
@@ -62,6 +64,8 @@ class PoolEntry:
     result: SearchResult
     # (engine, rank_in_engine) 证据列表：同一页面被多个引擎返回时全部保留。
     ranks: list[tuple[str, int]]
+    # 最近一次 ranked 计算的逐特征贡献，供解释与调试。
+    score: ScoreBreakdown = dataclasses.field(default_factory=ScoreBreakdown)
 
 
 class CandidatePool:
@@ -91,12 +95,17 @@ class CandidatePool:
             if len(result.snippet) > len(entry.result.snippet):
                 entry.result.snippet = result.snippet
 
-    def ranked(self, analysis: QueryAnalysis) -> list[SearchResult]:
-        """按相关性排序的快照；平分保持首次入池顺序（稳定可复现）。"""
-        items = [self._entries[key].result for key in self._order]
+    def ranked_entries(self, analysis: QueryAnalysis) -> list[PoolEntry]:
+        """确定性多特征排序；平分保持首次入池顺序（稳定可复现）。"""
+        entries = [self._entries[key] for key in self._order]
+        for entry in entries:
+            entry.score = score_entry(entry.result, analysis, entry.ranks)
         if analysis.core_terms:
-            items.sort(key=lambda item: -result_relevance(item, analysis))
-        return items
+            entries.sort(key=lambda entry: -entry.score.total)
+        return entries
+
+    def ranked(self, analysis: QueryAnalysis) -> list[SearchResult]:
+        return [entry.result for entry in self.ranked_entries(analysis)]
 
 
 def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
@@ -174,7 +183,7 @@ class SearchRouter:
         engine = (query.engine or "auto").strip()
         names = [engine] if engine != "auto" else self.order
         # 缓存必须区分实际使用的上游引擎，否则改配置后会命中旧引擎的结果。
-        # v6：context 影响变体与相关性判断、auto/explicit 决定回退策略、
+        # v7：context 影响变体与相关性判断、auto/explicit 决定回退策略、
         # 回退配置改变尝试序列——都要进键，与旧策略缓存隔离。
         engines = tuple(query.engines) or self.engines
         analysis = analyze_query(text, query.context_terms)
@@ -445,7 +454,7 @@ class SearchRouter:
         )
         raw = "\x1f".join(
             [
-                "search-v5",
+                "search-v6",
                 text,
                 str(limit),
                 engine,
@@ -473,6 +482,10 @@ def normalize_url(url: str) -> str:
         return url.rstrip("/")
     if not parts.scheme or not parts.netloc:
         return url.rstrip("/")
+    # 谨慎规范化：只合并 www. 前缀差异；m. 等站点变体内容可能不同，不动。
+    host = parts.netloc.lower()
+    if host.startswith("www.") and "@" not in host:
+        host = host[4:]
     query = urlencode(
         [
             (key, value)
@@ -484,7 +497,7 @@ def normalize_url(url: str) -> str:
     return urlunsplit(
         (
             parts.scheme.lower(),
-            parts.netloc.lower(),
+            host,
             parts.path.rstrip("/"),
             query,
             parts.fragment,

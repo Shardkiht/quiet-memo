@@ -333,3 +333,87 @@ def test_partial_failures_surfaced_with_results():
     outcome = router.search(SearchQuery("tibo"))
     assert outcome.results
     assert any(failure.kind == "rate_limit" for failure in outcome.failed)
+
+
+def test_engine_rank_evidence_breaks_relevance_ties():
+    """同等相关时，引擎内名次靠前的候选排前（上游排序信号）。"""
+    from quiet_memo.infra.search.router import CandidatePool
+
+    analysis = analyze_query("tibo")
+    second = SearchResult("Tibo shares update", "https://example.com/second", "")
+    first = SearchResult("Tibo posts update", "https://example.com/first", "")
+    pool = CandidatePool()
+    pool.add([SearchResult("noise", "https://example.com/n", ""), second])
+    pool.add([first])
+    ranked = pool.ranked_entries(analysis)
+    assert ranked[0].result.url == "https://example.com/first"
+
+
+def test_cross_engine_corroboration_boosts_confidence():
+    """多引擎独立返回同一 URL：交叉命中证据提升排序，排名证据保留。"""
+    from quiet_memo.infra.search.router import CandidatePool
+
+    analysis = analyze_query("tibo")
+    corroborated = SearchResult("Tibo update", "https://example.com/a", "")
+    corroborated.engine = "bing"
+    single = SearchResult("Tibo update again", "https://example.com/c", "")
+    single.engine = "bing"
+    duplicate = SearchResult("Tibo update", "https://example.com/a", "")
+    duplicate.engine = "baidu"
+    pool = CandidatePool()
+    pool.add([corroborated])
+    pool.add([single])
+    pool.add([duplicate])
+    entry = next(item for item in pool.ranked_entries(analysis) if item.result.url.endswith("/a"))
+    assert entry.score.corroboration > 0.0
+    assert ("bing", 1) in entry.ranks and ("baidu", 1) in entry.ranks
+    assert pool.ranked(analysis)[0].url == "https://example.com/a"
+
+
+def test_published_boost_only_for_freshness_queries():
+    """发布时间只在时效查询里加权；无 published 保持未知，不伪造日期。"""
+    from quiet_memo.infra.search.quality import score_entry
+
+    result = SearchResult("Tibo announcement", "https://example.com/a", "", published="2026-01-05")
+    fresh = analyze_query("Tibo 最新消息")
+    plain = analyze_query("Tibo announcement")
+    assert score_entry(result, fresh).published > 0.0
+    assert score_entry(result, plain).published == 0.0
+    no_date = score_entry(
+        SearchResult("Tibo announcement", "https://example.com/b", ""), fresh
+    )
+    assert no_date.published == 0.0
+
+
+def test_score_breakdown_sums_to_total():
+    """逐特征贡献可解释：各分量之和等于总分。"""
+    from quiet_memo.infra.search.quality import score_entry
+
+    analysis = analyze_query("tibo codex announcement", context_terms=("openai",))
+    result = SearchResult(
+        "Tibo codex announcement", "https://example.com/a", "openai notes"
+    )
+    breakdown = score_entry(result, analysis, ranks=[("bing", 1), ("baidu", 3)])
+    parts = [
+        breakdown.title_core,
+        breakdown.snippet_core,
+        breakdown.core_coverage,
+        breakdown.intent,
+        breakdown.context,
+        breakdown.engine_rank,
+        breakdown.corroboration,
+        breakdown.published,
+    ]
+    assert abs(breakdown.total - sum(parts)) < 1e-9
+    assert breakdown.title_core > 0.0 and breakdown.corroboration > 0.0
+
+
+def test_www_host_variants_dedupe():
+    """www. 前缀差异视为同一页面；其余路径参数谨慎不动。"""
+    from quiet_memo.infra.search.router import CandidatePool, normalize_url
+
+    assert normalize_url("https://WWW.Example.com/a/") == "https://example.com/a"
+    pool = CandidatePool()
+    pool.add([SearchResult("Tibo", "https://www.example.com/a", "")])
+    pool.add([SearchResult("Tibo", "https://example.com/a", "")])
+    assert pool.size == 1
