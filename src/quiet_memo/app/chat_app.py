@@ -78,6 +78,8 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
         self._model_status = Static("", id="model-status")
         self._pending_switch: str | None = None
         self._pending_new = False
+        # 排队命令绑定提交时的会话：目标不是当前会话时先切回再执行。
+        self._pending_command: str | None = None
         self._queue: list[_QueuedLine] = []
         self._stream_widget: ChatReply | None = None
         self._stream_buffer = ""
@@ -317,6 +319,13 @@ class ChatApp(ChatFlowMixin, ChatCommandsMixin, App):
             session_id = self._pending_switch
             self._pending_switch = None
             self._switch_session(session_id)
+            return
+        if self._pending_command:
+            # 切回目标会话完成（_after_session_switch）后来到这里：命令已在
+            # 提交时的会话上下文里，此时执行不会误伤其他会话。
+            line = self._pending_command
+            self._pending_command = None
+            self._command(line)
             return
         self._dispatch_queue()
 

@@ -2274,6 +2274,90 @@ async def test_submit_during_ask_queues_fifo_across_sessions(tmp_path):
         assert any(r.get("type") == "assistant" and "reply-3" in str(r.get("content")) for r in records_b)
 
 
+async def test_queued_command_runs_on_original_session(tmp_path):
+    # A 生成中排队 /undo，随后切到 B：命令必须回到 A 执行，不能撤销 B。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([
+        AssistantTurn(content="reply-1"),
+        AssistantTurn(content="reply-2"),
+    ])
+    gated.gates = [threading.Event(), threading.Event()]
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "m1"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        session_a = app.runtime.current.id
+
+        app.query_one("#input", Input).value = "m2"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        app.query_one("#input", Input).value = "/undo"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert [item.session_id for item in app._queue] == [session_a]
+
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+        assert app.runtime.current.id == session_b
+
+        gated.gates[1].set()
+        await _wait_idle(app, pilot)
+        # 排队命令把视图切回 A，再在 A 上执行 undo。
+        for _ in range(200):
+            await pilot.pause()
+            if app.runtime.has_session and app.runtime.current.id == session_a and not app.busy:
+                break
+        assert app.runtime.current.id == session_a
+        assert app.query_one("#input", Input).value == "m2"
+        assert app.sessions.load(session_a).user_texts() == ["m1"]
+        assert app.sessions.load(session_b).user_texts() == []
+
+
+async def test_queued_command_skipped_when_target_unavailable(tmp_path):
+    # 目标会话文件已删除：命令跳过并提示，不切换、不误伤当前会话。
+    app = build_app(tmp_path, [])
+    gated = GatedChatModel([AssistantTurn(content="reply-1")])
+    gated.gates.append(threading.Event())
+    app.runtime.model = gated
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        app.query_one("#input", Input).value = "m1"
+        await pilot.press("enter")
+        await _wait_ask_started(app, pilot)
+        session_a = app.runtime.current.id
+
+        app.query_one("#input", Input).value = "/undo"
+        await pilot.press("enter")
+        await pilot.pause()
+        session_b = app.sessions.create().id
+        app._switch_session(session_b)
+        for _ in range(100):
+            await pilot.pause()
+            if not app._navigation_busy:
+                break
+
+        # 目标会话文件中间行损坏：load 必抛，排队命令应跳过而非切过去。
+        # （直接 unlink 会被仍在进行的 ask 的落盘 append 原路重建，测不到这个分支。）
+        (tmp_path / "vault" / "sessions" / f"{session_a}.jsonl").write_bytes(b"not-json-corrupt\n")
+        gated.gates[0].set()
+        await _wait_idle(app, pilot)
+        for _ in range(100):
+            await pilot.pause()
+            if app._pending_command is None and not app.busy:
+                break
+        assert app.runtime.current.id == session_b  # 没有切走
+        assert app._pending_command is None
+        assert app._queue == []
+
+
 async def test_switch_during_ask_is_immediate_and_reply_lands_in_original(tmp_path):
     # 回归：请求进行中切会话必须立即执行（不再排队），回复写回原会话且不串入当前视图。
     app = build_app(tmp_path, [])

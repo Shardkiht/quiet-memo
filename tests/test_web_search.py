@@ -1150,6 +1150,73 @@ def test_freshness_query_success_cache_is_short(tmp_path):
     assert provider.calls == 3
 
 
+def test_cache_key_distinguishes_context_strategy_and_fallback(tmp_path):
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        calls.append((body["query"], body.get("engines")))
+        if body["query"] == "tibo":
+            return httpx.Response(200, json=envelope([]))
+        return httpx.Response(
+            200,
+            json=envelope([raw_result(f"{body['query']} hit", "https://example.com/x")]),
+        )
+
+    cache = SearchCache(tmp_path / "cache.json", ttl=3600)
+    router = SearchRouter(
+        {"open_websearch": mock_provider(handler)}, engines=["bing"], cache=cache
+    )
+    # context 参与键且保留顺序：换序即视为新查询，重新消歧。
+    router.search(SearchQuery("tibo", context_terms=("Codex", "OpenAI")))
+    assert len(calls) == 2  # 空结果 + 变体
+    router.search(SearchQuery("tibo", context_terms=("OpenAI", "Codex")))
+    assert len(calls) == 4
+    # 相同 context（同序）命中缓存，不再打上游。
+    router.search(SearchQuery("tibo", context_terms=("Codex", "OpenAI")))
+    assert len(calls) == 4
+    # auto 与显式同引擎不共用键：显式请求必须真的打到该引擎。
+    router.search(SearchQuery("litellm docs"))
+    router.search(SearchQuery("litellm docs", engines=("bing",)))
+    assert len(calls) == 6
+    # 回退配置不同（候补链变化）视为新查询，不命中旧策略缓存。
+    other = SearchRouter(
+        {"open_websearch": mock_provider(handler)},
+        engines=["bing"],
+        cache=cache,
+        fallback_engines=("sogou",),
+    )
+    other.search(SearchQuery("tibo", context_terms=("Codex", "OpenAI")))
+    assert len(calls) == 8
+
+
+def test_cached_results_match_first_request_order(tmp_path):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=envelope(
+                [
+                    raw_result(
+                        "无关标题A", "https://example.com/1", "这里提到 tibo codex 转述"
+                    ),
+                    raw_result("Tibo Codex 指南", "https://example.com/2"),
+                ]
+            ),
+        )
+
+    cache = SearchCache(tmp_path / "cache.json", ttl=3600)
+    router = SearchRouter(
+        {"open_websearch": mock_provider(handler)}, engines=["bing"], cache=cache
+    )
+    first = router.search(SearchQuery("tibo codex"))
+    second = router.search(SearchQuery("tibo codex"))
+    assert second.cached
+    # 首次与缓存命中逐项一致（顺序、URL、来源引擎）。
+    assert [(r.title, r.url, r.engine) for r in first.results] == [
+        (r.title, r.url, r.engine) for r in second.results
+    ]
+
+
 def test_explicit_engine_failure_is_not_cached_as_empty(tmp_path):
     calls = []
     def handler(request):

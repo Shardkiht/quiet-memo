@@ -191,11 +191,12 @@ class SearchRouter:
         engine = (query.engine or "auto").strip()
         names = [engine] if engine != "auto" else self.order
         # 缓存必须区分实际使用的上游引擎，否则改配置后会命中旧引擎的结果。
-        # v3：回退链/短 TTL 策略变化后与旧缓存隔离。
+        # v4：context 影响变体与相关性判断、auto/explicit 决定回退策略、
+        # 回退配置改变尝试序列——都要进键，与旧策略缓存隔离。
         engines = tuple(query.engines) or self.engines
         tokens = query_tokens(text, query.context_terms)
         cache_key = self._cache_key(
-            text, limit, engine, query.lang, query.freshness, names, engines
+            text, limit, engine, query.lang, query.freshness, names, engines, query
         )
         if self.cache is not None:
             cached = self.cache.get(cache_key)
@@ -290,9 +291,12 @@ class SearchRouter:
                 if not results:
                     continue
                 if not tokens or is_relevant(results, tokens):
-                    self._cache_put(cache_key, results, name, text)
+                    # 缓存与返回必须是同一份最终结果：先合并排序截断再入缓存，
+                    # 否则缓存命中后顺序与首查不一致。
+                    merged = merge_results(results, tokens, limit)
+                    self._cache_put(cache_key, merged, name, text)
                     return SearchOutcome(
-                        results=merge_results(results, tokens, limit),
+                        results=merged,
                         provider=name,
                         failed=failures,
                         hint="",
@@ -426,10 +430,30 @@ class SearchRouter:
         freshness: str | None,
         names: list[str],
         engines: tuple[str, ...],
+        query: SearchQuery,
     ) -> str:
-        # v3：回退链与短 TTL 策略上线，与旧策略缓存完全隔离。
+        # v4：context（保留顺序，影响变体生成）、auto/explicit 策略、回退
+        # 引擎序列与预算都参与键；策略或配置一变即视为新查询。
+        strategy = "explicit" if query.engines else "auto"
+        context_sig = "\x1e".join(
+            term.strip() for term in query.context_terms if term.strip()
+        )
         raw = "\x1f".join(
-            ["search-v3", text, str(limit), engine, lang or "", freshness or "", *engines, *names]
+            [
+                "search-v4",
+                text,
+                str(limit),
+                engine,
+                lang or "",
+                freshness or "",
+                strategy,
+                context_sig,
+                str(self.max_engines),
+                ",".join(self.fallback_engines),
+                f"{self.timeout_budget:g}",
+                *engines,
+                *names,
+            ]
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 

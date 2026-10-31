@@ -79,11 +79,30 @@ class ChatFlowMixin:
             return
         item = self._queue.pop(0)
         if item.line.startswith("/"):
-            # 排队的命令按命令分发，不能当聊天消息发给模型。
-            self._command(item.line)
+            # 排队的命令按命令分发，不能当聊天消息发给模型；会话归属见
+            # _run_queued_command——不能拿当前查看的会话顶替提交时的会话。
+            self._run_queued_command(item)
             self._drain_pending_intent()
             return
         self._start_ask(item.line, item.session_id)
+
+    def _run_queued_command(self, item: _QueuedLine) -> None:
+        """排队命令绑定提交时的会话：目标不是当前会话时先切回再执行。
+
+        切换完成后由 _after_session_switch → _drain_pending_intent 消费
+        _pending_command；目标已删除或损坏时提示并跳过，继续处理后续队列。
+        """
+        current_id = self.runtime.current.id if self.runtime.has_session else None
+        if current_id == item.session_id:
+            self._command(item.line)
+            return
+        try:
+            self.runtime.sessions.load(item.session_id)
+        except Exception:
+            self.notify("Queued command skipped: session no longer available")
+            return
+        self._pending_command = item.line
+        self._switch_session(item.session_id)
 
     def _ui(self, fn, *args) -> None:
         try:
@@ -231,6 +250,10 @@ class ChatFlowMixin:
         self._end_ask()
         # 通用失败出口：压缩/导入/切换失败走这里时还要释放导航忙。
         self._end_navigation()
+        if self._pending_command:
+            # 切回目标会话失败：挂起的命令失去目标上下文，丢弃而非误伤当前会话。
+            self.notify("Queued command dropped: session switch failed")
+            self._pending_command = None
         self._drain_pending_intent()
 
     def _plan_is_current(self) -> bool:
