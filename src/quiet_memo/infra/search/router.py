@@ -135,7 +135,9 @@ class SearchRouter:
                 continue
 
             results = normalize_results(raw, limit)
-            if self.cache is not None:
+            # 空结果常是上游偶发（反爬、截断），缓存会把空命中钉死整个 TTL，
+            # 重试永远拿到空——只缓存非空结果。
+            if self.cache is not None and results:
                 self.cache.set(cache_key, results, name)
             return SearchOutcome(
                 results=results,

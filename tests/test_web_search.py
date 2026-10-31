@@ -918,6 +918,24 @@ def test_engine_argument_rejects_invalid_json_array_string(value):
         normalize_search_engines(value, ["bing", "baidu"])
 
 
+@pytest.mark.parametrize("value, expected", [
+    (['["baidu"]'], ("baidu",)),
+    (['["baidu"]', '["bing"]'], ("baidu", "bing")),
+    (['baidu', '["bing", "baidu"]'], ("baidu", "bing")),
+])
+def test_engine_argument_accepts_nested_json_array_items(value, expected):
+    # 有的 provider 把数组参数双重序列化成元素级 JSON 字符串。
+    from quiet_memo.infra.search.base import normalize_search_engines
+    assert normalize_search_engines(value, ["bing", "baidu"]) == expected
+
+
+@pytest.mark.parametrize("value", [['[1]'], ['["notreal"]'], ['["bing"'], ['[1]', 'bing']])
+def test_engine_argument_rejects_invalid_nested_json_array_items(value):
+    from quiet_memo.infra.search.base import normalize_search_engines
+    with pytest.raises(ValueError):
+        normalize_search_engines(value, ["bing", "baidu"])
+
+
 def test_default_engine_failure_falls_back_once():
     requests = []
     def handler(request):
@@ -962,3 +980,16 @@ def test_legacy_empty_search_cache_is_not_reused(tmp_path):
     result = router.search(SearchQuery("q"))
     assert result.results and not result.cached
     assert provider.calls == 1
+
+
+def test_empty_results_are_not_cached(tmp_path):
+    # 上游偶发空命中（反爬/截断）不应钉死整个 TTL：重试必须真的打到上游。
+    provider = FakeProvider([])
+    cache = SearchCache(tmp_path / "cache.json", ttl=300)
+    router = SearchRouter({"fake": provider}, order=["fake"], cache=cache)
+    first = router.search(SearchQuery("q"))
+    assert not first.results and not first.cached
+    provider.results = [SearchResult("ok", "https://example.com", "")]
+    second = router.search(SearchQuery("q"))
+    assert second.results and not second.cached
+    assert provider.calls == 2

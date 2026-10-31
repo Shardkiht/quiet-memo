@@ -90,7 +90,25 @@ def normalize_search_engines(value: object, allowed: Sequence[str]) -> tuple[str
     elif isinstance(value, (list, tuple)):
         if not all(isinstance(item, str) for item in value):
             raise ValueError("search_engine entries must be strings")
-        values = list(value)
+        values = []
+        for item in value:
+            # 双重序列化：有的 provider 会把数组元素本身也编码成 JSON 字符串
+            # （如 ["[\"baidu\"]"]），解析还原而不是当成引擎名报错。
+            stripped = item.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                except ValueError:
+                    raise ValueError(
+                        "search_engine must be a valid JSON array or engine name"
+                    ) from None
+                if not isinstance(parsed, list) or not all(
+                    isinstance(inner, str) for inner in parsed
+                ):
+                    raise ValueError("search_engine must be a list of strings")
+                values.extend(parsed)
+            else:
+                values.append(item)
     else:
         raise ValueError("search_engine must be a string or list of strings")
 
