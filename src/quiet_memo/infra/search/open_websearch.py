@@ -436,7 +436,7 @@ class OpenWebSearchProvider:
                 timeout=timeout, command=mcp_command, args=mcp_args, engines=engines
             )
             # MCP 传输暂未接 fetchWebContent，只暴露搜索能力。
-            self.capabilities = {"search"}
+            self.capabilities = {"search", "engines"}
         else:
             self.transport = HttpTransport(
                 base_url,
@@ -445,7 +445,8 @@ class OpenWebSearchProvider:
                 engines=engines,
                 fetch_timeout=fetch_timeout,
             )
-            self.capabilities = {"search", "fetch"}
+            # engines 能力声明此 provider 支持按请求指定上游搜索引擎（可回退）。
+            self.capabilities = {"search", "fetch", "engines"}
 
     def search(self, query: SearchQuery) -> list[SearchResult]:
         try:

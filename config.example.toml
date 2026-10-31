@@ -68,5 +68,12 @@ auto_start = true
 # 上游搜索引擎；可选 bing / baidu / sogou / duckduckgo / brave / startpage 等。
 # 中文品牌名被拆词时可改用 ["baidu"]；多引擎会平分结果条数。
 engines = ["bing"]
+# 候补引擎序列：首选引擎空结果、明显跑题或失败时按序自动降级（免费引擎，
+# 仍经 open-websearch）；显式指定 search_engine 时不回退。
+fallback_engines = ["baidu", "duckduckgo", "sogou"]
+# 每次自动搜索最多尝试的上游引擎数（含首选）。
+max_engines = 3
+# 一次搜索所有回退共享的超时预算（秒）；超出即停止候补。
+timeout_budget = 25.0
 # 抓取正文的单独超时（秒）；搜索用上面的 timeout。
 fetch_timeout = 45.0

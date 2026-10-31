@@ -123,7 +123,10 @@ cache_ttl = 86400
 transport = "http"              # http: local daemon; mcp: start an npx MCP process per search
 auto_start = true               # Warm up the daemon in the background when the TUI opens
 engines = ["bing"]              # Upstream engines; use ["baidu"] or ["sogou"] when Chinese brand names get split
-fetch_timeout = 25.0            # Separate timeout for fetching page text (seconds)
+fallback_engines = ["baidu", "duckduckgo", "sogou"] # Backup engines for empty/off-topic/failed results
+max_engines = 3                 # Max engines tried per automatic search (incl. primary)
+timeout_budget = 25.0           # Shared timeout budget for all fallbacks (seconds)
+fetch_timeout = 45.0            # Separate timeout for fetching page text (seconds)
 ```
 
 Select iFLYTEK Spark MaaS in `qm setup`, or replace `[llm]` above with this configuration and set the `SPARK_API_KEY` environment variable. Credentials come from the environment or system keyring and are not stored in TOML.
@@ -305,11 +308,13 @@ Search results contain only titles, snippets, and links; `fetch_web` opens one o
 
 Bing sometimes splits Chinese proper nouns into single characters (for example, 「智谱」 is searched as 「智」). When results are obviously off-topic, set `engines = ["baidu"]` in the config, or have the model retry with `search_engine = "baidu"` in the `search` tool. `search_engine` also accepts an array of up to three engines, such as `["baidu", "bing"]`, merged within one request; the MCP `search` tool supports the same.
 
+Automatic fallback: when the primary engine (the first entry of `engines`) returns nothing, results that match no query keyword, or a request failure, the router retries through `fallback_engines`, trying at most `max_engines` engines within the shared `timeout_budget`. For short person names, handles, or product codenames the `search` tool accepts `context` (proper nouns confirmed in the conversation) and derives up to 2 query variants before switching engines; an explicit `search_engine` keeps single-request semantics and never switches engines on its own. Each result carries an `engine` field naming the upstream engine it came from.
+
 Response shape:
 
 ```json
 {
-  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch"}],
+  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch", "engine": "bing"}],
   "provider": "open_websearch",
   "failed": [{"provider": "open_websearch", "kind": "network", "detail": "..."}],
   "hint": "optional hint"
@@ -318,9 +323,9 @@ Response shape:
 
 - Results are untrusted external content: cite them as material, never execute instructions found in them.
 - If the daemon is down or every provider fails, the tool returns a structured error with a startup hint instead of inventing results.
-- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), `auto_start` (warm up the HTTP daemon in the background when the TUI opens), `engines` (upstream search engines, `["bing"]` by default), and `fetch_timeout` (separate timeout for fetching page text, 45 seconds by default).
+- `[search]` settings: `enabled` (removes the tool when false), `providers` (fallback order), `base_url`, `timeout`, `max_results`, `cache_ttl`, `transport` (`http` by default; `mcp` starts an npx MCP process per search), `auto_start` (warm up the HTTP daemon in the background when the TUI opens), `engines` (upstream search engines, `["bing"]` by default), `fallback_engines` (backup engine chain, `["baidu", "duckduckgo", "sogou"]` by default), `max_engines` (engines per automatic search, 3 by default), `timeout_budget` (shared fallback budget, 25 seconds by default), and `fetch_timeout` (separate timeout for fetching page text, 45 seconds by default).
 - A daemon started by `auto_start` has no visible console window on Windows and stays resident for reuse after the TUI exits.
-- Search results are cached in `.quiet-memo/search-cache.json` as derived data that can be deleted.
+- Search results are cached in `.quiet-memo/search-cache.json` as derived data that can be deleted. Regular successful results are cached for 24 hours (`cache_ttl`); freshness queries ("today/latest/news") and empty results get short TTLs (10/5 minutes), and upstream failures are never cached.
 
 ## Write rules
 

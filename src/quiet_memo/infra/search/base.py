@@ -155,6 +155,9 @@ class SearchQuery:
     freshness: str | None = None
     # 指定上游搜索引擎（bing/baidu/sogou...）；空表示用 provider 的默认配置。
     engines: tuple[str, ...] = ()
+    # 会话上下文里的补充关键词（人物全名、项目、产品），用于短名称消歧；
+    # 只参与派生查询变体和相关性判断，不改变原始 query 的语义。
+    context_terms: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -164,6 +167,9 @@ class SearchResult:
     snippet: str
     published: str | None = None
     provider: str = ""
+    # 结果实际来自哪个上游搜索引擎（bing/baidu/...）；provider 字段始终是 QM 的
+    # SearchProvider 名，二者不能混用。
+    engine: str = ""
 
 
 @dataclass(slots=True)
@@ -213,6 +219,7 @@ class SearchOutcome:
                     "snippet": result.snippet,
                     "published": result.published,
                     "provider": result.provider,
+                    "engine": result.engine,
                 }
                 for result in self.results
             ],

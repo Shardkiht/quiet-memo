@@ -407,6 +407,12 @@ def build_tools(
                     "open_websearch",
                 ):
                     requested_engines = legacy_engine
+            raw_context = arguments.get("context") or ()
+            if isinstance(raw_context, str):
+                raw_context = [raw_context]
+            context_terms = tuple(
+                str(item).strip() for item in raw_context if str(item).strip()
+            )[:5]
             try:
                 engines = normalize_search_engines(requested_engines, SEARCH_ENGINES)
             except ValueError as exc:
@@ -429,7 +435,12 @@ def build_tools(
                 )
             try:
                 outcome = search_router.search(
-                    SearchQuery(query=query, limit=limit, engines=engines)
+                    SearchQuery(
+                        query=query,
+                        limit=limit,
+                        engines=engines,
+                        context_terms=context_terms,
+                    )
                 )
             except Exception as exc:
                 payload = {
@@ -479,6 +490,9 @@ def build_tools(
                     "联网搜索公开网页，适合查询最新信息、新闻、文档和链接。"
                     "结果只有标题、摘要和链接；需要发布日期、正文细节或核实摘要时，"
                     "再用 fetch_web 打开具体链接。"
+                    "查询短人物名、英文账号、产品代号时，把对话里能确认的"
+                    "公司/产品/领域等专有名词放进 context（保持原拼写），"
+                    "搜索会自动派生变体并在首选引擎无有效结果时换候补引擎。"
                     "中文公司/品牌名可能被搜索引擎拆成单字（如「智谱」→「智」）导致结果跑题："
                     "改用官方英文名或产品代号，或用 search_engine 指定 baidu，"
                     "也可一次传多个引擎（如 [\"baidu\", \"bing\"]）合并结果。"
@@ -494,6 +508,16 @@ def build_tools(
                             "minimum": 1,
                             "maximum": 15,
                             "default": search_config.max_results,
+                        },
+                        "context": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 5,
+                            "default": [],
+                            "description": (
+                                "来自当前对话的补充关键词（人物全名、公司、项目、产品等"
+                                "专有名词，保留原拼写），用于消歧短名称查询"
+                            ),
                         },
                         "search_engine": {
                             "anyOf": [

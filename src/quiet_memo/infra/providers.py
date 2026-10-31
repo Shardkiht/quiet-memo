@@ -346,6 +346,9 @@ transport = {toml_literal(config.search.transport)}
 auto_start = {str(config.search.auto_start).lower()}
 engines = {toml_literal(config.search.engines)}
 fetch_timeout = {config.search.fetch_timeout}
+fallback_engines = {toml_literal(config.search.fallback_engines)}
+max_engines = {config.search.max_engines}
+timeout_budget = {config.search.timeout_budget}
 '''
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(content, encoding="utf-8")

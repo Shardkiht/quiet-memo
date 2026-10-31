@@ -278,6 +278,9 @@ def test_search_config_roundtrip(tmp_path):
             auto_start=True,
             engines=["baidu", "sogou"],
             fetch_timeout=15.0,
+            fallback_engines=["duckduckgo", "startpage"],
+            max_engines=2,
+            timeout_budget=18.0,
         ),
     )
 
@@ -294,6 +297,9 @@ def test_search_config_roundtrip(tmp_path):
     assert loaded.search.auto_start is True
     assert loaded.search.engines == ["baidu", "sogou"]
     assert loaded.search.fetch_timeout == 15.0
+    assert loaded.search.fallback_engines == ["duckduckgo", "startpage"]
+    assert loaded.search.max_engines == 2
+    assert loaded.search.timeout_budget == 18.0
 
 
 def test_resolve_config_path_env_wins_over_cwd(tmp_path, monkeypatch):

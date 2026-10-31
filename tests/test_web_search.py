@@ -953,6 +953,203 @@ def test_default_engine_failure_falls_back_once():
     assert [item["engines"] for item in requests] == [["bing"], ["baidu"]]
 
 
+# ---------- 引擎候补链、查询变体与相关性（搜索增强） ----------
+
+
+def test_relevant_results_return_without_fallback_requests():
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(
+            200, json=envelope([raw_result("Tibo Codex resets", "https://example.com/tibo")])
+        )
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo codex"))
+    assert len(outcome.results) == 1
+    assert len(calls) == 1  # 相关结果直接返回，不触发候补请求
+
+
+def test_empty_first_result_falls_back_to_candidate_engine():
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if body["engines"] == ["bing"]:
+            return httpx.Response(200, json=envelope([]))
+        return httpx.Response(
+            200, json=envelope([raw_result("Tibo 重置追踪", "https://example.com/tibo")])
+        )
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo"))
+    assert len(outcome.results) == 1
+    assert outcome.results[0].engine == "baidu"
+    assert [item["engines"] for item in requests] == [["bing"], ["baidu"]]
+
+
+def test_irrelevant_results_trigger_candidate_engine():
+    requests = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if body["engines"] == ["bing"]:
+            # 有结果但与查询词元零命中 → 触发候补，原候选不丢弃。
+            return httpx.Response(
+                200, json=envelope([raw_result("完全无关的内容", "https://example.com/other")])
+            )
+        return httpx.Response(
+            200, json=envelope([raw_result("Tibo Codex 重置", "https://example.com/tibo")])
+        )
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo"))
+    assert outcome.results[0].engine == "baidu"
+    assert [item["engines"] for item in requests] == [["bing"], ["baidu"]]
+
+
+def test_context_terms_generate_variant_queries():
+    queries = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        queries.append(body["query"])
+        if body["query"] == "tibo":
+            return httpx.Response(200, json=envelope([]))
+        return httpx.Response(
+            200,
+            json=envelope(
+                [raw_result("Tibo (Thibault Sottiaux)", "https://example.com/tibo")]
+            ),
+        )
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo", context_terms=("Codex", "OpenAI")))
+    assert len(outcome.results) == 1
+    # 原始查询空结果后用上下文派生变体（最多两个），专有名词保持原拼写。
+    assert queries[0] == "tibo"
+    assert queries[1] == "tibo Codex"
+
+
+def test_explicit_engine_skips_variants_and_fallback():
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json=envelope([]))
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo", engines=("baidu",), context_terms=("Codex",)))
+    assert not outcome.results
+    # 显式指定引擎：单次请求、不派生变体、不回退。
+    assert len(calls) == 1 and calls[0]["engines"] == ["baidu"]
+
+
+def test_timeout_budget_stops_fallback_before_requests():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=envelope([]))
+
+    router = SearchRouter(
+        {"open_websearch": mock_provider(handler)},
+        engines=["bing"],
+        timeout_budget=0.0,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert not outcome.results and not outcome.cached
+    assert calls == []  # 预算为 0：一次上游请求都不发起
+    assert outcome.failed[0].kind == "timeout"
+    assert "预算" in outcome.failed[0].detail
+
+
+def test_generic_provider_without_engines_capability_runs_once():
+    provider = FakeProvider([SearchResult("ok", "https://example.com", "")])
+    router = SearchRouter({"fake": provider}, order=["fake"])
+    outcome = router.search(SearchQuery("synthetic"))
+    assert len(outcome.results) == 1
+    assert provider.calls == 1  # 无 engines 能力的 provider 不做引擎回退
+
+
+def test_multi_engine_candidates_dedupe_and_hint():
+    def handler(request):
+        body = json.loads(request.content)
+        engines = body["engines"]
+        if engines == ["bing"]:
+            return httpx.Response(
+                200,
+                json=envelope(
+                    [
+                        raw_result("noise one", "https://example.com/dup"),
+                        raw_result("noise two", "https://example.com/b"),
+                    ]
+                ),
+            )
+        if engines == ["baidu"]:
+            return httpx.Response(
+                200,
+                json=envelope(
+                    [
+                        raw_result("noise three", "https://example.com/dup"),
+                        raw_result("noise four", "https://example.com/d"),
+                    ]
+                ),
+            )
+        return httpx.Response(200, json=envelope([]))
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("xyzabc"))
+    # 三个引擎各试一次，跨引擎 URL 去重后保留候选并如实提示。
+    assert len(outcome.results) == 3
+    assert {item.url for item in outcome.results} == {
+        "https://example.com/dup",
+        "https://example.com/b",
+        "https://example.com/d",
+    }
+    assert "候补" in outcome.hint
+    assert [item.engine for item in outcome.results][:3] == ["bing", "bing", "baidu"]
+
+
+def test_results_ranked_title_before_snippet():
+    def handler(request):
+        return httpx.Response(
+            200,
+            json=envelope(
+                [
+                    raw_result(
+                        "无关标题", "https://example.com/1", "这里提到 tibo codex 的转述"
+                    ),
+                    raw_result("Tibo Codex 指南", "https://example.com/2"),
+                ]
+            ),
+        )
+
+    router = SearchRouter({"open_websearch": mock_provider(handler)}, engines=["bing"])
+    outcome = router.search(SearchQuery("tibo codex"))
+    assert outcome.results[0].url == "https://example.com/2"  # 标题命中的排前
+
+
+def test_freshness_query_success_cache_is_short(tmp_path):
+    now = [1000.0]
+    provider = FakeProvider([SearchResult("ok", "https://example.com", "")])
+    cache = SearchCache(tmp_path / "cache.json", ttl=86400, clock=lambda: now[0])
+    router = SearchRouter({"fake": provider}, order=["fake"], cache=cache)
+    # 普通查询：成功结果走完整 TTL，700 秒后仍命中缓存。
+    router.search(SearchQuery("ok 查询"))
+    now[0] += 700
+    assert router.search(SearchQuery("ok 查询")).cached
+    # 时效性查询：成功结果短 TTL，700 秒后必须重新搜索。
+    assert router.search(SearchQuery("最新 ok 新闻")).results
+    now[0] += 700
+    outcome = router.search(SearchQuery("最新 ok 新闻"))
+    assert outcome.results and not outcome.cached
+    assert provider.calls == 3
+
+
 def test_explicit_engine_failure_is_not_cached_as_empty(tmp_path):
     calls = []
     def handler(request):
@@ -982,14 +1179,20 @@ def test_legacy_empty_search_cache_is_not_reused(tmp_path):
     assert provider.calls == 1
 
 
-def test_empty_results_are_not_cached(tmp_path):
-    # 上游偶发空命中（反爬/截断）不应钉死整个 TTL：重试必须真的打到上游。
+def test_empty_results_use_short_ttl(tmp_path):
+    # 真空结果短 TTL 缓存：5 分钟内不重复打上游，过期后重新搜索能拿到新结果。
+    now = [1000.0]
     provider = FakeProvider([])
-    cache = SearchCache(tmp_path / "cache.json", ttl=300)
+    cache = SearchCache(tmp_path / "cache.json", ttl=3600, clock=lambda: now[0])
     router = SearchRouter({"fake": provider}, order=["fake"], cache=cache)
     first = router.search(SearchQuery("q"))
     assert not first.results and not first.cached
-    provider.results = [SearchResult("ok", "https://example.com", "")]
+    now[0] += 60
     second = router.search(SearchQuery("q"))
-    assert second.results and not second.cached
+    assert not second.results and second.cached
+    assert provider.calls == 1
+    provider.results = [SearchResult("ok", "https://example.com", "")]
+    now[0] += 300
+    third = router.search(SearchQuery("q"))
+    assert third.results and not third.cached
     assert provider.calls == 2

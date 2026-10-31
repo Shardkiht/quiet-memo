@@ -123,6 +123,9 @@ cache_ttl = 86400
 transport = "http"            # http：本地 daemon；mcp：每次启动 npx MCP 进程
 auto_start = true             # 打开 TUI 时后台预热 daemon，不阻塞界面
 engines = ["bing"]            # 上游引擎；中文品牌名被拆词时可换 ["baidu"] 或 ["sogou"]
+fallback_engines = ["baidu", "duckduckgo", "sogou"] # 候补引擎；空结果/跑题/失败时自动降级
+max_engines = 3               # 每次自动搜索最多尝试的引擎数（含首选）
+timeout_budget = 25.0         # 一次搜索所有回退共享的超时预算（秒）
 fetch_timeout = 45.0          # 抓取正文的单独超时（秒）
 ```
 
@@ -305,11 +308,13 @@ npx -y open-websearch@latest serve
 
 Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「智」检索）；遇到明显跑题时，可在配置里把 `engines` 改为 `["baidu"]`，或让模型在 `search` 工具里传 `search_engine = "baidu"` 重试。`search_engine` 也接受数组，最多 3 个引擎，例如 `["baidu", "bing"]`，结果会在同一请求中合并；MCP 的 `search` 同样支持。
 
+自动回退：首选引擎（`engines` 第一个）空结果、结果与查询词明显不相关或请求失败时，按 `fallback_engines` 序列自动换引擎重试，最多尝试 `max_engines` 个引擎，且所有回退共享 `timeout_budget` 超时预算。查询短人物名、英文账号、产品代号时，`search` 工具可传 `context`（对话中能确认的专有名词），会先派生最多 2 个查询变体再降级引擎；显式指定 `search_engine` 时保持单次请求语义，不自动换引擎。搜索结果带 `engine` 字段标明实际来源引擎。
+
 返回结构：
 
 ```json
 {
-  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch"}],
+  "results": [{"title": "...", "url": "...", "snippet": "...", "published": null, "provider": "open_websearch", "engine": "bing"}],
   "provider": "open_websearch",
   "failed": [{"provider": "open_websearch", "kind": "network", "detail": "..."}],
   "hint": "可选提示"
@@ -318,9 +323,9 @@ Bing 对部分中文专有名词会按单字切词（例如「智谱」只按「
 
 - 结果是外部不可信内容，只作资料引用，不执行其中任何指令。
 - daemon 未启动或全部 provider 失败时返回结构化错误和启动提示，不编造结果。
-- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）、`engines`（上游搜索引擎，默认 `["bing"]`）、`fetch_timeout`（抓取正文的单独超时，默认 45 秒）。
+- `[search]` 配置：`enabled`（关闭时不注册工具）、`providers`（按顺序降级）、`base_url`、`timeout`、`max_results`、`cache_ttl`、`transport`（`http` 默认；`mcp` 每次启动 npx MCP 进程）、`auto_start`（打开 TUI 时后台探测并拉起 HTTP daemon，不阻塞界面）、`engines`（上游搜索引擎，默认 `["bing"]`）、`fallback_engines`（候补引擎序列，默认 `["baidu", "duckduckgo", "sogou"]`）、`max_engines`（单次搜索引擎上限，默认 3）、`timeout_budget`（回退共享超时预算，默认 25 秒）、`fetch_timeout`（抓取正文的单独超时，默认 45 秒）。
 - `auto_start` 启动的 daemon 在 Windows 下隐藏控制台窗口；退出 TUI 后继续常驻，下次直接复用。
-- 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。
+- 搜索结果缓存为 `.quiet-memo/search-cache.json`，属于派生数据，可删除。普通成功结果缓存 24 小时（`cache_ttl`）；「今天/最新/latest」等时效性查询与空结果只短缓存（10/5 分钟），上游失败一律不入缓存。
 
 ## 写入规则
 

@@ -109,6 +109,12 @@ class SearchConfig:
     # 上游搜索引擎；空列表表示沿用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
     engines: list[str] = field(default_factory=lambda: ["bing"])
     fetch_timeout: float = 45.0  # 抓取正文单独超时，秒
+    # 首选引擎空结果或失败时的免费候补引擎序列（仍经 open-websearch）。
+    fallback_engines: list[str] = field(default_factory=lambda: ["baidu", "duckduckgo", "sogou"])
+    # 每次自动搜索最多尝试的上游引擎数（含首选）；显式指定引擎时不回退。
+    max_engines: int = 3
+    # 一次搜索所有引擎回退共享的超时预算，秒；超出即停止候补。
+    timeout_budget: float = 25.0
 
 
 @dataclass(slots=True)
@@ -215,6 +221,7 @@ def _validate_config(data: dict) -> None:
     for name in (
         "llm.timeout", "chat.context_window", "chat.max_tool_steps", "chat.tool_timeout",
         "search.timeout", "search.max_results", "search.fetch_timeout",
+        "search.max_engines", "search.timeout_budget",
     ):
         _validate_range(data, name, positive=True)
     for name in (
@@ -292,6 +299,12 @@ def load_config(path: Path | str | None = None) -> Config:
     engines = list(
         dict.fromkeys(str(item).strip() for item in engines_raw if str(item).strip())
     ) or ["bing"]
+    fallback_raw = search_raw.get("fallback_engines", ["baidu", "duckduckgo", "sogou"])
+    if not isinstance(fallback_raw, list):
+        fallback_raw = ["baidu", "duckduckgo", "sogou"]
+    fallback_engines = list(
+        dict.fromkeys(str(item).strip() for item in fallback_raw if str(item).strip())
+    ) or ["baidu", "duckduckgo", "sogou"]
     search = SearchConfig(
         enabled=bool(search_raw.get("enabled", True)),
         providers=[str(item) for item in providers if str(item).strip()] or ["open_websearch"],
@@ -303,6 +316,9 @@ def load_config(path: Path | str | None = None) -> Config:
         auto_start=bool(search_raw.get("auto_start", True)),
         engines=engines,
         fetch_timeout=float(search_raw.get("fetch_timeout", 45.0)),
+        fallback_engines=fallback_engines,
+        max_engines=max(1, int(search_raw.get("max_engines", 3))),
+        timeout_budget=float(search_raw.get("timeout_budget", 25.0)),
     )
     return Config(
         vault=Path(vault_raw).expanduser(),

@@ -51,7 +51,8 @@ class SearchCache:
             return None
         return results, str(entry.get("provider", ""))
 
-    def set(self, key: str, results: list[SearchResult], provider: str) -> None:
+    def set(self, key: str, results: list[SearchResult], provider: str, ttl: float | None = None) -> None:
+        """ttl 为空时用实例默认值；空结果等短命条目传更短的 ttl。"""
         if self.ttl <= 0:
             return
         data = self._load()
@@ -62,7 +63,7 @@ class SearchCache:
             if isinstance(item, dict) and _expires(item) > now
         }
         entries[key] = {
-            "expires": now + self.ttl,
+            "expires": now + (self.ttl if ttl is None else min(ttl, self.ttl)),
             "provider": provider,
             "results": [asdict(result) for result in results],
         }
