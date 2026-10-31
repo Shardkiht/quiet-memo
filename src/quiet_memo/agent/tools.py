@@ -393,7 +393,7 @@ def build_tools(
                 requested = int(arguments.get("limit", search_config.max_results))
             except (TypeError, ValueError):
                 requested = search_config.max_results
-            limit = max(1, min(requested, 10))
+            limit = max(1, min(requested, 15))
             requested_engines = arguments.get("search_engine")
             legacy_engine = arguments.get("engine")
             if requested_engines is None or (
@@ -492,7 +492,7 @@ def build_tools(
                         "limit": {
                             "type": "integer",
                             "minimum": 1,
-                            "maximum": 10,
+                            "maximum": 15,
                             "default": search_config.max_results,
                         },
                         "search_engine": {
