@@ -10,7 +10,15 @@ from typing import Any, Callable
 
 import httpx
 
-from .base import ProviderError, ProviderErrorKind, SearchQuery, SearchResult
+from .base import (
+    FetchQuery,
+    FetchResult,
+    ProviderError,
+    ProviderErrorKind,
+    SearchQuery,
+    SearchResult,
+    truncate_fetch_content,
+)
 from .http_client import JsonApiClient
 
 NAME = "you"
@@ -76,3 +84,47 @@ def _snippet(item: dict[str, Any]) -> str:
     if isinstance(snippets, list) and snippets:
         return str(snippets[0] or "").strip()
     return ""
+
+
+class YouFetchProvider:
+    """You.com Contents（ydc-index.io /v1/contents）：单 URL 抓正文。
+
+    请求体按官方 Contents API 用 urls + formats=["markdown"]；不启用
+    livecrawl。响应 item 的 markdown/title/url 字段形状来自二手资料，
+    真实响应结构待冒烟确认后固化。
+    """
+
+    name = NAME
+    capabilities = {"fetch"}
+
+    def __init__(
+        self,
+        api_key: str,
+        timeout: float = 10.0,
+        base_url: str = DEFAULT_BASE_URL,
+        client_factory: Callable[[], httpx.Client] | None = None,
+    ):
+        self._client = JsonApiClient(NAME, base_url, timeout, client_factory)
+        self._api_key = api_key
+
+    def fetch(self, query: FetchQuery) -> FetchResult:
+        body = {"urls": [query.url], "formats": ["markdown"]}
+        headers = {"X-API-Key": self._api_key}
+        response = self._client.post_json("/v1/contents", body, headers)
+        payload = self._client.parse_json(response)
+        items = payload.get("contents")
+        if not isinstance(items, list) or not items:
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "contents 结果为空")
+        item = items[0] if isinstance(items[0], dict) else {}
+        content = str(item.get("markdown") or "").strip()
+        if not content:
+            raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "未返回正文")
+        url = str(item.get("url") or "").strip() or query.url
+        text, truncated = truncate_fetch_content(content, query.max_chars)
+        return FetchResult(
+            url=query.url,
+            final_url=url,
+            title=str(item.get("title") or "").strip() or url,
+            content=text,
+            truncated=truncated,
+        )

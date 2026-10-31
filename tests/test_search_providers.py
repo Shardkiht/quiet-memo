@@ -24,7 +24,7 @@ from quiet_memo.infra.search.http_client import JsonApiClient
 from quiet_memo.infra.search.router import build_registry
 from quiet_memo.infra.search.tavily import TavilyFetchProvider, TavilySearchProvider
 from quiet_memo.infra.search.volcengine import VolcengineSearchProvider
-from quiet_memo.infra.search.you import YouSearchProvider
+from quiet_memo.infra.search.you import YouFetchProvider, YouSearchProvider
 
 KEY = "test-key-placeholder"
 
@@ -695,3 +695,78 @@ def test_exa_fetch_403_maps_to_auth():
     with pytest.raises(ProviderError) as caught:
         provider.fetch(FetchQuery("https://example.com/a", 4000))
     assert caught.value.kind == ProviderErrorKind.AUTH
+
+
+# ---------- 卡 10C：You.com Contents ----------
+
+
+def test_you_fetch_request_and_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "contents": [
+                    {
+                        "url": "https://example.com/a",
+                        "title": "Example Page",
+                        "markdown": "正文内容" * 10,
+                    }
+                ]
+            },
+        )
+    )
+    provider = make(YouFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+    request = requests[0]
+    assert request.url.path == "/v1/contents"
+    assert request.headers["x-api-key"] == KEY
+    body = json.loads(request.content)
+    assert body == {"urls": ["https://example.com/a"], "formats": ["markdown"]}
+    assert result.title == "Example Page"
+    assert result.final_url == "https://example.com/a"
+    assert result.content == "正文内容" * 10
+    assert result.truncated is False
+
+
+def test_you_fetch_does_not_enable_livecrawl():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200, json={"contents": [{"url": "https://example.com/a", "markdown": "t"}]}
+        )
+    )
+    provider = make(YouFetchProvider, sent)
+    provider.fetch(FetchQuery("https://example.com/a", 4000))
+    body = json.loads(requests[0].content)
+    assert "livecrawl" not in body and "html" not in body["formats"]
+
+
+def test_you_fetch_truncates_to_max_chars():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"contents": [{"url": "https://example.com/a", "markdown": "x" * 500}]}
+        )
+    )
+    provider = make(YouFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 100))
+    assert result.content == "x" * 100 and result.truncated is True
+
+
+def test_you_fetch_missing_markdown_is_error():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"contents": [{"url": "https://example.com/a", "markdown": ""}]}
+        )
+    )
+    provider = make(YouFetchProvider, sent)
+    with pytest.raises(ProviderError, match="未返回正文"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+
+def test_you_fetch_401_and_403_map_to_auth():
+    for status in (401, 403):
+        sent, _ = capture(lambda request, status=status: httpx.Response(status, json={}))
+        provider = make(YouFetchProvider, sent)
+        with pytest.raises(ProviderError) as caught:
+            provider.fetch(FetchQuery("https://example.com/a", 4000))
+        assert caught.value.kind == ProviderErrorKind.AUTH
