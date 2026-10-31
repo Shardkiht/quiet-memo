@@ -350,6 +350,9 @@ fallback_engines = {toml_literal(config.search.fallback_engines)}
 max_engines = {config.search.max_engines}
 timeout_budget = {config.search.timeout_budget}
 max_requests = {config.search.max_requests}
+
+[fetch]
+providers = {toml_literal(config.fetch.providers)}
 '''
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(content, encoding="utf-8")

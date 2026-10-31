@@ -81,3 +81,8 @@ timeout_budget = 25.0
 max_requests = 9
 # 抓取正文的单独超时（秒）；搜索用上面的 timeout。
 fetch_timeout = 45.0
+
+[fetch]
+# 网页抓取的 provider 顺序，与搜索的 providers 相互独立。
+# 官方厂商（tavily / exa / you / volcengine）配置 Key 并加入此列表后才启用抓取。
+providers = ["open_websearch"]

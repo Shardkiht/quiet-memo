@@ -13,10 +13,13 @@ from .base import (
 )
 from .open_websearch import OpenWebSearchProvider, SEARCH_ENGINES
 from .router import SearchRouter, build_search_router
+from .fetch_router import FetchProvider, FetchRouter, build_fetch_router
 
 __all__ = [
+    "FetchProvider",
     "FetchQuery",
     "FetchResult",
+    "FetchRouter",
     "MAX_SEARCH_ENGINES",
     "OpenWebSearchProvider",
     "ProviderError",
@@ -28,6 +31,7 @@ __all__ = [
     "SearchQuery",
     "SearchResult",
     "SearchRouter",
+    "build_fetch_router",
     "build_search_router",
     "normalize_search_engines",
 ]

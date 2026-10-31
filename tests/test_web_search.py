@@ -12,15 +12,17 @@ pytestmark = pytest.mark.search
 from quiet_memo.agent.session import SessionStore
 from quiet_memo.agent.tools import SEARCH_NOTICE, build_tools
 from quiet_memo.app.server import build_server
-from quiet_memo.infra.config import ChatConfig, Config, LLMConfig, SearchConfig
+from quiet_memo.infra.config import ChatConfig, Config, FetchConfig, LLMConfig, SearchConfig, load_config
 from quiet_memo.infra.search import (
     FetchQuery,
     FetchResult,
+    FetchRouter,
     ProviderError,
     ProviderErrorKind,
     SearchQuery,
     SearchResult,
     SearchRouter,
+    build_fetch_router,
     build_search_router,
 )
 from quiet_memo.infra.search.base import assert_public_fetch_url
@@ -281,6 +283,141 @@ def test_router_fetch_failure_is_labeled_as_fetch(public_dns):
     assert caught.value.provider == "fetch"
     assert "open_websearch" in caught.value.detail
     assert "502" in caught.value.detail
+
+
+class _FetchOnly:
+    """FetchRouter 单测用的最小抓取 provider。"""
+
+    capabilities = {"fetch"}
+
+    def __init__(self, name: str, result=None, error: Exception | None = None):
+        self.name = name
+        self.result = result
+        self.error = error
+        self.calls: list[str] = []
+
+    def fetch(self, query):
+        self.calls.append(query.url)
+        if self.error is not None:
+            raise self.error
+        return self.result
+
+
+def test_fetch_router_falls_back_to_second_provider(public_dns):
+    first = _FetchOnly(
+        "first", error=ProviderError("first", ProviderErrorKind.UNAVAILABLE, "HTTP 502")
+    )
+    second = _FetchOnly(
+        "second",
+        FetchResult("https://example.com", "https://example.com", "Page", "正文"),
+    )
+    router = FetchRouter({"first": first, "second": second}, order=["first", "second"])
+
+    result = router.fetch("https://example.com", 1000)
+
+    assert first.calls == ["https://example.com"]
+    assert second.calls == ["https://example.com"]
+    assert result.content == "正文" and result.title == "Page"
+
+
+def test_fetch_router_all_failed_reports_fetch_error(public_dns):
+    first = _FetchOnly(
+        "first", error=ProviderError("first", ProviderErrorKind.TIMEOUT, "slow")
+    )
+    second = _FetchOnly(
+        "second", error=ProviderError("second", ProviderErrorKind.NETWORK, "reset")
+    )
+    router = FetchRouter({"first": first, "second": second}, order=["first", "second"])
+
+    with pytest.raises(ProviderError) as caught:
+        router.fetch("https://example.com", 1000)
+
+    assert caught.value.provider == "fetch"
+    assert "first" in caught.value.detail and "second" in caught.value.detail
+
+
+def test_fetch_router_without_provider_raises_clear_error():
+    router = FetchRouter({}, order=[])
+    assert not router.supports_fetch
+    with pytest.raises(ProviderError, match="没有支持网页抓取"):
+        router.fetch("https://example.com", 1000)
+
+
+def test_fetch_router_rejects_private_and_bad_urls():
+    provider = _FetchOnly("fake", FetchResult("u", "u", "t", "c"))
+    router = FetchRouter({"fake": provider}, order=["fake"])
+
+    with pytest.raises(ValueError, match="私网或本机"):
+        router.fetch("http://127.0.0.1:8080/admin", 1000)
+    with pytest.raises(ValueError, match="必须是 http 或 https"):
+        router.fetch("ftp://example.com/file", 1000)
+    assert provider.calls == []
+
+
+def test_fetch_router_rejects_private_final_url(public_dns):
+    provider = _FetchOnly(
+        "fake", FetchResult("https://example.com", "http://10.0.0.5/secret", "t", "c")
+    )
+    router = FetchRouter({"fake": provider}, order=["fake"])
+
+    with pytest.raises(ValueError, match="私网"):
+        router.fetch("https://example.com/start", 1000)
+
+
+def test_search_router_fetch_delegates_to_fetch_router(public_dns):
+    class FetchCapable:
+        name = "fake"
+        capabilities = {"search", "fetch"}
+
+        def fetch(self, query):
+            return FetchResult(query.url, query.url, "Title", "正文内容")
+
+    router = SearchRouter({"fake": FetchCapable()}, order=["fake"])
+    assert router.supports_fetch
+    assert router.fetch("https://example.com", 1000).content == "正文内容"
+
+
+def test_build_fetch_router_from_config_defaults_to_open_websearch(tmp_path):
+    from quiet_memo.infra.config import FetchConfig
+
+    router = build_fetch_router(FetchConfig(), SearchConfig(transport="http"))
+    assert "open_websearch" in router.registry
+    assert router.supports_fetch
+
+    # 旧配置没有 [fetch] 时 load_config 走默认，行为不变。
+    config_path = tmp_path / "quiet-memo.toml"
+    config_path.write_text("[search]\nmax_results = 3\n", encoding="utf-8")
+    loaded = load_config(config_path)
+    assert loaded.fetch.providers == ["open_websearch"]
+    assert build_fetch_router(loaded.fetch, loaded.search).supports_fetch
+
+
+def test_agent_fetch_tool_uses_config_fetch_router(tmp_path, monkeypatch):
+    """search 关闭时 fetch 仍可独立可用；显式注入的 search_router 不被覆盖。"""
+
+    class ConfigFetchRouter:
+        supports_fetch = True
+
+        def fetch(self, url, max_chars=4000):
+            return FetchResult(url, url, "Page", "来自独立 fetch 配置")
+
+    config = Config(
+        vault=tmp_path / "vault",
+        llm=LLMConfig(),
+        chat=ChatConfig(),
+        search=SearchConfig(enabled=False),
+        fetch=FetchConfig(),
+    )
+    service = MemoryService(config)
+    service.init_vault()
+    session = SessionStore(config.vault).create()
+    tools = build_tools(service, session, fetch_router=ConfigFetchRouter())
+
+    assert "search" not in tools._tools
+    assert "fetch_web" in tools._tools
+    outcome = tools.execute("fetch_web", {"url": "https://example.com/news"})
+    assert outcome.ok is True
+    assert "来自独立 fetch 配置" in outcome.content
 
 
 class FakeProvider:
@@ -725,10 +862,12 @@ def test_spawn_daemon_shares_fake_dns_policy(tmp_path, monkeypatch, configured):
 
 
 def test_disabled_search_does_not_register_tool(tmp_path):
+    """search 关闭只影响 search 工具；fetch 独立启停（providers 为空才消失）。"""
     config = Config(
         vault=tmp_path / "vault",
         llm=LLMConfig(),
         search=SearchConfig(enabled=False),
+        fetch=FetchConfig(providers=[]),
     )
     service = MemoryService(config)
     service.init_vault()
@@ -879,6 +1018,7 @@ def test_agent_fetch_tool_returns_page_content(tmp_path):
 
         def fetch(self, url, max_chars=4000):
             return FetchResult(url, url, "Page", "发布日期 2026-09-21", False, "Example")
+
 
     config = Config(
         vault=tmp_path / "vault",

@@ -11,7 +11,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..config import SearchConfig
 from .base import (
-    FetchQuery,
     FetchResult,
     ProviderError,
     ProviderErrorKind,
@@ -20,9 +19,9 @@ from .base import (
     SearchProvider,
     SearchQuery,
     SearchResult,
-    assert_public_fetch_url,
 )
 from .cache import SearchCache
+from .fetch_router import FetchRouter
 from .open_websearch import OpenWebSearchProvider
 from .quality import (
     QueryAnalysis,
@@ -233,6 +232,8 @@ class SearchRouter:
         # 单次 search() 的跨 Provider 请求次数上限：默认 9 恰好容纳
         # 单 Provider 的最坏情况（3 个引擎槽位 × 原始查询 + 2 个变体）。
         self.max_requests = max(1, max_requests)
+        # 抓取调度委托独立 FetchRouter，按需惰性构建。
+        self._fetch_router: FetchRouter | None = None
 
     @property
     def supports_fetch(self) -> bool:
@@ -515,33 +516,10 @@ class SearchRouter:
         return tuple(slots)
 
     def fetch(self, url: str, max_chars: int = 4000) -> FetchResult:
-        """抓取搜索结果正文；按 provider 顺序尝试支持 fetch 的实现。"""
-        text = url.strip()
-        if not text:
-            raise ValueError("抓取地址为空")
-        assert_public_fetch_url(text)
-        failures: list[SearchFailure] = []
-        for name in self.order:
-            provider = self.registry.get(name)
-            if provider is None or "fetch" not in provider.capabilities:
-                continue
-            try:
-                result = provider.fetch(FetchQuery(text, max_chars))
-            except ProviderError as exc:
-                failures.append(SearchFailure.from_error(exc))
-                continue
-            except Exception as exc:
-                failures.append(SearchFailure(name, "unavailable", str(exc)))
-                continue
-            if result.final_url and result.final_url != text:
-                # 上游 daemon 已逐跳校验；这里对最终地址再拦一次私网回落。
-                assert_public_fetch_url(result.final_url, "重定向后的抓取地址")
-            return result
-        if failures:
-            detail = "；".join(f"{item.provider}: {item.detail}" for item in failures)
-            # 这里失败的是抓取而不是搜索；provider 标明 fetch，避免上层误判成搜索故障。
-            raise ProviderError("fetch", "unavailable", detail)
-        raise ProviderError("fetch", "unavailable", "没有支持网页抓取的 provider")
+        """抓取搜索结果正文；兼容入口，实际调度委托独立 FetchRouter。"""
+        if self._fetch_router is None:
+            self._fetch_router = FetchRouter(self.registry, order=self.order)
+        return self._fetch_router.fetch(url, max_chars)
 
     def _cache_key(
         self,

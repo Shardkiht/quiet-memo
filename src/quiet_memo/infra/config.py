@@ -120,12 +120,19 @@ class SearchConfig:
 
 
 @dataclass(slots=True)
+class FetchConfig:
+    # 网页抓取的 provider 顺序；与 search.providers 相互独立。
+    providers: list[str] = field(default_factory=lambda: ["open_websearch"])
+
+
+@dataclass(slots=True)
 class Config:
     vault: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     search: SearchConfig = field(default_factory=SearchConfig)
+    fetch: FetchConfig = field(default_factory=FetchConfig)
     confidence_threshold: float = 0.8
     auto_push: bool = False
 
@@ -323,12 +330,20 @@ def load_config(path: Path | str | None = None) -> Config:
         timeout_budget=float(search_raw.get("timeout_budget", 25.0)),
         max_requests=int(search_raw.get("max_requests", 9)),
     )
+    fetch_raw = data.get("fetch", {})
+    fetch_providers = fetch_raw.get("providers", ["open_websearch"])
+    if not isinstance(fetch_providers, list):
+        fetch_providers = ["open_websearch"]
+    fetch = FetchConfig(
+        providers=[str(item) for item in fetch_providers if str(item).strip()]
+    )
     return Config(
         vault=Path(vault_raw).expanduser(),
         llm=llm,
         chat=chat,
         retrieval=retrieval,
         search=search,
+        fetch=fetch,
         confidence_threshold=float(data.get("confidence_threshold", 0.8)),
         auto_push=bool(data.get("auto_push", False)),
     )
@@ -395,6 +410,10 @@ engines = {toml_literal(["bing"])}
 fetch_timeout = 45.0
 # 一次搜索跨所有 provider 共享的请求次数上限；超出即返回当前最佳候选。
 max_requests = 9
+
+[fetch]
+# 网页抓取的 provider 顺序；与搜索的 providers 相互独立。
+providers = {toml_literal(["open_websearch"])}
 '''
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
