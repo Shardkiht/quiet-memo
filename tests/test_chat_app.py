@@ -2628,3 +2628,25 @@ async def test_queued_sync_command_continues_following_message(tmp_path, monkeyp
                 break
         assert executed == [("command", "/undo"), ("message", "next message", a.id)]
         assert not app._queue
+
+
+@pytest.mark.parametrize("value, position, cells", [
+    ("", 0, 0),
+    ("搜索下", 3, 6),
+    ("搜索下 ", 4, 7),
+    ("a你b", 3, 4),
+    ("a你b", 1, 1),
+    ("a你b", 2, 3),
+])
+async def test_input_caret_matches_insertion_cell(tmp_path, value, position, cells):
+    app = build_app(tmp_path, [])
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        widget = app.query_one("#input", BarInput)
+        widget.value = value
+        widget.cursor_position = position
+        await pilot.pause()
+        assert widget.cursor_screen_offset.x == widget.content_region.x + cells - widget.scroll_offset.x
+        assert widget.cursor_screen_offset.y == widget.content_region.y
+        assert app.cursor_position == widget.cursor_screen_offset
+        assert widget.value == value

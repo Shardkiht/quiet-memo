@@ -123,6 +123,7 @@ README 面向用户，必须始终与 `src/quiet_memo` 的当前架构一致。�
 
 - 提交信息一律使用英文，沿用现有提交风格：`feat(scope): ...`、`fix(scope): ...`、`refactor(scope): ...`、`style(scope): ...`，主题行简短。
 - 不提交生成物、本地配置或用户数据。
+- 基础修复先在 `base/chat-stability` 开发验证，通过后自动同步到 `main` 和 `feature-memory-evolution`；保留 base 分支，记忆前沿功能不反向合入。目标工作区存在未提交改动时只增量同步，不覆盖或捆绑提交其他改动。
 - 只有明确要求时才执行 `git push`。
 
 ## 边界

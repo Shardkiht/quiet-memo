@@ -184,3 +184,9 @@ Spark 真实接口合成数据冒烟：流式回复、带时间/地点的记忆�
 - Pending commands retain the full session-bound queue item and recheck its target after intervening navigation; synchronous completion resumes FIFO processing. Pending targets are covered by the session deletion guard.
 - Search budget exhaustion stops further requests while retaining collected candidates with the existing candidate hint and timeout diagnostics.
 - Validation: targeted queue/budget regressions 5 passed; full isolated suite 617 passed. No real model or network requests were used.
+
+
+## Input caret end spacing
+
+- BarInput removes Textual Input's extra end-of-value scroll cell from the terminal caret coordinate; scrolling retains its existing padding. Empty input and trailing user spaces retain their actual insertion positions. Regression coverage includes Chinese, mixed ASCII/CJK, middle edits and literal trailing spaces.
+- Validation: insertion-coordinate cases and native cursor checks passed; full isolated suites base 623 passed, evolution working tree 651 passed. Real terminal/IME rendering remains a manual check.

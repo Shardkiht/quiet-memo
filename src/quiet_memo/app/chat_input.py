@@ -5,6 +5,7 @@ import sys
 
 from rich.cells import cell_len
 from rich.segment import Segment
+from textual.geometry import Offset
 from textual.strip import Strip
 from textual.widgets import Input
 
@@ -42,6 +43,13 @@ class BarInput(Input):
             and not driver.is_headless
             and self._terminal_supports_native_cursor()
         )
+
+    @property
+    def cursor_screen_offset(self) -> Offset:
+        # Input adds an end-of-value cell for scroll visibility. The terminal
+        # caret must instead sit at the actual insertion point (also when empty).
+        offset = super().cursor_screen_offset
+        return offset - Offset(1, 0) if self.cursor_at_end else offset
 
     def on_resize(self) -> None:
         # 折叠侧栏/窗口缩放会移动输入框，但 App 每帧只回放上次记录的光标坐标；
