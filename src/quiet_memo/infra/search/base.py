@@ -196,6 +196,13 @@ class FetchResult:
     site_name: str = ""
 
 
+def truncate_fetch_content(content: str, max_chars: int) -> tuple[str, bool]:
+    """正文按 max_chars 截断；返回（截断后文本, 是否发生截断）。"""
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content, False
+    return content[:max_chars], True
+
+
 @dataclass(slots=True)
 class SearchFailure:
     provider: str

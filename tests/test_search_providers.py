@@ -12,12 +12,17 @@ import pytest
 pytestmark = pytest.mark.search
 
 from quiet_memo.infra.config import SearchConfig
-from quiet_memo.infra.search.base import ProviderError, ProviderErrorKind, SearchQuery
+from quiet_memo.infra.search.base import (
+    FetchQuery,
+    ProviderError,
+    ProviderErrorKind,
+    SearchQuery,
+)
 from quiet_memo.infra.search.baidu import BaiduSearchProvider
 from quiet_memo.infra.search.exa import ExaSearchProvider
 from quiet_memo.infra.search.http_client import JsonApiClient
 from quiet_memo.infra.search.router import build_registry
-from quiet_memo.infra.search.tavily import TavilySearchProvider
+from quiet_memo.infra.search.tavily import TavilyFetchProvider, TavilySearchProvider
 from quiet_memo.infra.search.volcengine import VolcengineSearchProvider
 from quiet_memo.infra.search.you import YouSearchProvider
 
@@ -516,3 +521,95 @@ def test_volcengine_5xx_maps_to_unavailable():
     with pytest.raises(ProviderError) as caught:
         provider.search(SearchQuery("q"))
     assert caught.value.kind == ProviderErrorKind.UNAVAILABLE
+
+
+# ---------- 卡 10A：Tavily Extract ----------
+
+
+def test_tavily_fetch_request_and_mapping():
+    sent, requests = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"url": "https://example.com/a", "raw_content": "正文内容" * 10}
+                ],
+                "failed_results": [],
+            },
+        )
+    )
+    provider = make(TavilyFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+    request = requests[0]
+    assert request.url.path == "/extract"
+    assert request.headers["authorization"] == f"Bearer {KEY}"
+    assert json.loads(request.content) == {"urls": ["https://example.com/a"]}
+    assert result.url == "https://example.com/a"
+    assert result.final_url == "https://example.com/a"
+    assert result.content == "正文内容" * 10
+    assert result.truncated is False
+
+
+def test_tavily_fetch_truncates_to_max_chars():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={"results": [{"url": "https://example.com/a", "raw_content": "x" * 500}]},
+        )
+    )
+    provider = make(TavilyFetchProvider, sent)
+    result = provider.fetch(FetchQuery("https://example.com/a", 100))
+    assert result.content == "x" * 100
+    assert result.truncated is True
+
+
+def test_tavily_fetch_empty_results_reports_failed_reason():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "results": [],
+                "failed_results": [{"url": "https://example.com/a", "error": "blocked"}],
+            },
+        )
+    )
+    provider = make(TavilyFetchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+    assert caught.value.kind == ProviderErrorKind.BAD_RESPONSE
+    assert "blocked" in caught.value.detail
+    assert KEY not in caught.value.detail
+
+
+def test_tavily_fetch_missing_raw_content_is_error():
+    sent, _ = capture(
+        lambda request: httpx.Response(
+            200, json={"results": [{"url": "https://example.com/a", "raw_content": ""}]}
+        )
+    )
+    provider = make(TavilyFetchProvider, sent)
+    with pytest.raises(ProviderError, match="未返回正文"):
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+
+
+def test_tavily_fetch_429_maps_to_rate_limit():
+    sent, _ = capture(lambda request: httpx.Response(429, json={}))
+    provider = make(TavilyFetchProvider, sent)
+    with pytest.raises(ProviderError) as caught:
+        provider.fetch(FetchQuery("https://example.com/a", 4000))
+    assert caught.value.kind == ProviderErrorKind.RATE_LIMIT
+
+
+def test_fetch_registry_registers_tavily_with_api_key(monkeypatch):
+    from quiet_memo.infra.config import FetchConfig
+    from quiet_memo.infra.search.fetch_router import build_fetch_registry
+
+    monkeypatch.setenv("TAVILY_API_KEY", KEY)
+    registry = build_fetch_registry(FetchConfig(providers=["tavily"]), SearchConfig())
+    assert "tavily" in registry
+    assert "fetch" in registry["tavily"].capabilities
+
+    monkeypatch.delenv("TAVILY_API_KEY")
+    registry = build_fetch_registry(FetchConfig(providers=["tavily"]), SearchConfig())
+    assert "tavily" not in registry
