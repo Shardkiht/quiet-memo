@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -20,7 +21,13 @@ from .base import (
 )
 from .cache import SearchCache
 from .open_websearch import OpenWebSearchProvider
-from .quality import QueryAnalysis, analyze_query, is_relevant, result_relevance
+from .quality import (
+    QueryAnalysis,
+    analyze_query,
+    has_core_hit,
+    quality_gate,
+    result_relevance,
+)
 
 DEFAULT_PROVIDER = "open_websearch"
 KNOWN_PROVIDERS = {DEFAULT_PROVIDER}
@@ -50,31 +57,46 @@ def query_variants(text: str, context_terms: Sequence[str] = ()) -> list[str]:
     return variants
 
 
-def merge_results(
-    candidates: list[SearchResult], analysis: QueryAnalysis, limit: int
-) -> list[SearchResult]:
-    """多引擎候选合并：URL 去重，按相关性分排序后截断；同分保持原顺序。"""
-    seen: set[str] = set()
-    merged: list[SearchResult] = []
-    for result in candidates:
-        url = normalize_url(result.url)
-        key = url or f"{result.title}\x00{result.snippet}"
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(
-            SearchResult(
-                title=result.title,
-                url=url,
-                snippet=result.snippet,
-                published=result.published,
-                provider=result.provider,
-                engine=result.engine,
-            )
-        )
-    if analysis.core_terms:
-        merged.sort(key=lambda item: -result_relevance(item, analysis))
-    return merged[:limit]
+@dataclass(slots=True)
+class PoolEntry:
+    result: SearchResult
+    # (engine, rank_in_engine) 证据列表：同一页面被多个引擎返回时全部保留。
+    ranks: list[tuple[str, int]]
+
+
+class CandidatePool:
+    """跨引擎/变体的统一候选池：URL 去重合并，保留各路排名证据。"""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, PoolEntry] = {}
+        self._order: list[str] = []
+
+    @property
+    def size(self) -> int:
+        return len(self._order)
+
+    def add(self, results: list[SearchResult]) -> None:
+        for rank, result in enumerate(results, 1):
+            url = normalize_url(result.url)
+            key = url or f"{result.title}\x00{result.snippet}"
+            entry = self._entries.get(key)
+            if entry is None:
+                self._entries[key] = PoolEntry(result, [(result.engine, rank)])
+                self._order.append(key)
+                continue
+            entry.ranks.append((result.engine, rank))
+            # 同一页面多来源合并时保留更完整的标题/摘要。
+            if len(result.title) > len(entry.result.title):
+                entry.result.title = result.title
+            if len(result.snippet) > len(entry.result.snippet):
+                entry.result.snippet = result.snippet
+
+    def ranked(self, analysis: QueryAnalysis) -> list[SearchResult]:
+        """按相关性排序的快照；平分保持首次入池顺序（稳定可复现）。"""
+        items = [self._entries[key].result for key in self._order]
+        if analysis.core_terms:
+            items.sort(key=lambda item: -result_relevance(item, analysis))
+        return items
 
 
 def build_registry(config: SearchConfig) -> dict[str, SearchProvider]:
@@ -152,10 +174,13 @@ class SearchRouter:
         engine = (query.engine or "auto").strip()
         names = [engine] if engine != "auto" else self.order
         # 缓存必须区分实际使用的上游引擎，否则改配置后会命中旧引擎的结果。
-        # v5：context 影响变体与相关性判断、auto/explicit 决定回退策略、
+        # v6：context 影响变体与相关性判断、auto/explicit 决定回退策略、
         # 回退配置改变尝试序列——都要进键，与旧策略缓存隔离。
         engines = tuple(query.engines) or self.engines
         analysis = analyze_query(text, query.context_terms)
+        # 向上游多拉候选（展示条数的 3 倍，10~30），重排后仍只输出 limit；
+        # 不能为了默认展示 5 条就只向上游要 5 条。
+        fetch_limit = min(30, max(10, limit * 3))
         cache_key = self._cache_key(
             text, limit, engine, query.lang, query.freshness, names, engines, query
         )
@@ -171,6 +196,7 @@ class SearchRouter:
                 )
 
         failures: list[SearchFailure] = []
+        pool = CandidatePool()
         # 查询变体只用于第一个引擎槽位：上下文消歧针对的是原始查询，不值得
         # 为每个候补引擎都放大请求数。显式指定引擎时保持单次请求语义。
         slot_queries = [text]
@@ -184,12 +210,15 @@ class SearchRouter:
                 failures.append(SearchFailure(name, "unavailable", "未注册的搜索 provider"))
                 continue
             outcome = self._search_one_provider(
-                provider, name, query, text, limit, engine, engines,
-                slot_queries, analysis, cache_key, failures, started,
+                provider, name, query, text, limit, fetch_limit, engine, engines,
+                slot_queries, analysis, pool, cache_key, failures, started,
             )
             if outcome is not None:
                 return outcome
-        return self._final_outcome(failures, [], analysis, limit, cache_key, text, name_hint=names[-1] if names else "")
+        return self._final_outcome(
+            failures, pool, analysis, limit, cache_key,
+            name_hint=names[-1] if names else "",
+        )
 
     def _search_one_provider(
         self,
@@ -198,15 +227,17 @@ class SearchRouter:
         query: SearchQuery,
         text: str,
         limit: int,
+        fetch_limit: int,
         engine: str,
         engines: tuple[str, ...],
         slot_queries: list[str],
         analysis: QueryAnalysis,
+        pool: CandidatePool,
         cache_key: str,
         failures: list[SearchFailure],
         started: float,
     ) -> SearchOutcome | None:
-        """单 provider 的引擎/变体尝试计划；产出结果时返回 outcome，否则 None。
+        """渐进式尝试：原始查询优先，逐槽位补候补；候选池质量够好才早停。
 
         引擎回退只对声明 engines 能力的 provider 生效；其余 provider 单次尝试，
         失败交给上层换下一个 provider。
@@ -218,28 +249,28 @@ class SearchRouter:
         else:
             slots = ((),)
 
-        candidates: list[SearchResult] = []
         for slot_index, slot_engines in enumerate(slots):
             queries = slot_queries if slot_index == 0 else [text]
             for attempt_query in queries:
-                if time.perf_counter() - started > self.timeout_budget:
+                # 单次请求的超时上限取剩余预算，避免默认 10s 越过总预算。
+                remaining = self.timeout_budget - (time.perf_counter() - started)
+                if remaining <= 0:
                     failures.append(
                         SearchFailure(name, "timeout", "搜索超时预算已用尽，停止引擎回退")
                     )
-                    if candidates:
-                        return self._final_outcome(
-                            failures, candidates, analysis, limit, cache_key, text, name_hint=name
-                        )
-                    return None
+                    return self._final_outcome(
+                        failures, pool, analysis, limit, cache_key, name_hint=name
+                    )
                 try:
                     raw = provider.search(
                         SearchQuery(
                             query=attempt_query,
-                            limit=limit,
+                            limit=fetch_limit,
                             engine=engine,
                             lang=query.lang,
                             freshness=query.freshness,
                             engines=slot_engines,
+                            timeout=round(max(remaining, 0.05), 3),
                         )
                     )
                 except ProviderError as exc:
@@ -250,15 +281,21 @@ class SearchRouter:
                     failures.append(SearchFailure(name, "unavailable", str(exc)))
                     break
 
-                results = normalize_results(raw, limit)
+                # daemon 报告的部分引擎失败转成结构化诊断，不静默吞掉。
+                failures.extend(getattr(provider, "last_partial_failures", ()) or ())
+                results = normalize_results(raw)
                 for result in results:
-                    result.engine = slot_engines[0] if slot_engines else ""
+                    # daemon 已逐条标注真实引擎时保留；缺失才补槽位引擎。
+                    if not result.engine and slot_engines:
+                        result.engine = slot_engines[0]
                 if not results:
                     continue
-                if not analysis.core_terms or is_relevant(results, analysis):
-                    # 缓存与返回必须是同一份最终结果：先合并排序截断再入缓存，
+                pool.add(results)
+                decision = quality_gate(pool.ranked(analysis), analysis)
+                if decision.should_stop:
+                    # 缓存与返回必须是同一份最终结果：先排序截断再入缓存，
                     # 否则缓存命中后顺序与首查不一致。
-                    merged = merge_results(results, analysis, limit)
+                    merged = pool.ranked(analysis)[:limit]
                     self._cache_put(cache_key, merged, name, analysis)
                     return SearchOutcome(
                         results=merged,
@@ -266,36 +303,39 @@ class SearchRouter:
                         failed=failures,
                         hint="",
                     )
-                # 有结果但与核心词零命中：保留为候选（保守，不丢弃），继续候补。
-                candidates.extend(results)
+                # 质量不足：保留候选继续候补引擎/变体，由收尾统一排序。
 
-        if candidates:
+        if pool.size:
             return self._final_outcome(
-                failures, candidates, analysis, limit, cache_key, text, name_hint=name
+                failures, pool, analysis, limit, cache_key, name_hint=name
             )
         return None
 
     def _final_outcome(
         self,
         failures: list[SearchFailure],
-        candidates: list[SearchResult],
+        pool: CandidatePool,
         analysis: QueryAnalysis,
         limit: int,
         cache_key: str,
-        text: str,
         name_hint: str = "",
     ) -> SearchOutcome:
-        if candidates:
-            # 候补都没命中核心词时返回已有候选并如实提示，不伪装成精准命中；
-            # 候选结果用短 TTL 缓存，给之后的回退留机会。
-            merged = merge_results(candidates, analysis, limit)
-            if self.cache is not None:
-                self.cache.set(cache_key, merged, name_hint, ttl=FRESHNESS_TTL)
+        merged = pool.ranked(analysis)[:limit]
+        if merged and any(has_core_hit(result, analysis) for result in merged):
+            # 池里至少有核心词命中：按成功语义缓存（时效查询仍短 TTL）。
+            self._cache_put(cache_key, merged, name_hint, analysis)
+            return SearchOutcome(
+                results=merged, provider=name_hint, failed=failures, hint=""
+            )
+        if merged:
+            # 候补都没命中核心词：返回候选但如实提示低相关，不伪装成精准命中；
+            # 低相关候选只短 TTL 缓存，给之后的回退留机会。
+            self._cache_put(cache_key, merged, name_hint, analysis, short=True)
             return SearchOutcome(
                 results=merged,
                 provider=name_hint,
                 failed=failures,
-                hint="候补引擎未找到与查询词直接相关的结果，以下为各引擎返回的候选。",
+                hint="候补引擎未找到与查询核心词直接相关的结果，以下为各引擎返回的候选。",
             )
         if self.cache is not None and not failures:
             # 真正的零命中（没有任何上游失败）才短 TTL 缓存；失败导致的空
@@ -452,7 +492,8 @@ def normalize_url(url: str) -> str:
     )
 
 
-def normalize_results(results: list[SearchResult], limit: int) -> list[SearchResult]:
+def normalize_results(results: list[SearchResult]) -> list[SearchResult]:
+    """URL 规范化 + 请求内去重；不在这里截断，候选量由上游 fetch_limit 决定。"""
     seen: set[str] = set()
     normalized: list[SearchResult] = []
     for result in results:
@@ -468,8 +509,7 @@ def normalize_results(results: list[SearchResult], limit: int) -> list[SearchRes
                 snippet=result.snippet,
                 published=result.published,
                 provider=result.provider,
+                engine=result.engine,
             )
         )
-        if len(normalized) >= limit:
-            break
     return normalized

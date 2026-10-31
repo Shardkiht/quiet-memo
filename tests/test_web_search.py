@@ -48,12 +48,12 @@ def envelope(results: list[dict]) -> dict:
 
 
 def raw_result(title: str, url: str, description: str = "") -> dict:
+    # 不硬编码 engine/source：真实来源由 daemon 逐条标注，缺失时由 router
+    # 回填槽位引擎；混入其他引擎的用例需显式传入来源字段。
     return {
         "title": title,
         "url": url,
         "description": description,
-        "source": "bing",
-        "engine": "bing",
     }
 
 

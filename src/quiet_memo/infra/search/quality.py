@@ -221,3 +221,48 @@ def is_relevant(results: list[SearchResult], analysis: QueryAnalysis) -> bool:
     if not analysis.core_terms or not results:
         return False
     return any(has_core_hit(result, analysis) for result in results)
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    should_stop: bool
+    strong_count: int
+    reason: str  # multiple_strong / navigational / no_core_terms / insufficient
+
+
+def is_strong_hit(result: SearchResult, analysis: QueryAnalysis) -> bool:
+    """高置信相关：高置信实体在标题命中，且核心词覆盖达到多数。
+
+    摘要级弱命中永远不算强命中，防止“任意一处提到”就早停。
+    """
+    if not analysis.core_terms:
+        return True
+    title = result.title.lower()
+    snippet = result.snippet.lower()
+    title_hits = sum(1 for term in analysis.core_terms if _match(term, title))
+    if not title_hits:
+        return False
+    covered = sum(
+        1 for term in analysis.core_terms if _match(term, title) or _match(term, snippet)
+    )
+    # 覆盖一半以上核心词；只有 1 个核心词时标题命中即可（导航型查询）。
+    return covered * 2 >= len(analysis.core_terms)
+
+
+def quality_gate(ranked: list[SearchResult], analysis: QueryAnalysis) -> GateDecision:
+    """渐进式搜索的早停判定：候选池足够好才停，不再“任词命中即返回”。"""
+    if not analysis.core_terms:
+        # 宽泛/无实体查询没有可强制的实体，有结果即停，避免误删全部结果。
+        return GateDecision(bool(ranked), 0, "no_core_terms")
+    strong = sum(1 for result in ranked if is_strong_hit(result, analysis))
+    # 标题完整覆盖全部核心词的结果本身就是决定性命中，单条即可早停。
+    full_title = any(
+        all(_match(term, result.title.lower()) for term in analysis.core_terms)
+        for result in ranked
+    )
+    if strong >= 2 or full_title:
+        return GateDecision(True, strong, "multiple_strong" if strong >= 2 else "full_title")
+    if strong >= 1 and len(analysis.core_terms) == 1:
+        # 单实体导航型查询：一条标题级强命中已足够。
+        return GateDecision(True, strong, "navigational")
+    return GateDecision(False, strong, "insufficient")

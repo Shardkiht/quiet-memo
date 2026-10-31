@@ -162,3 +162,174 @@ def test_ranking_is_deterministic_for_identical_candidates():
 
     assert ranked() == ranked()
     assert ranked()[0] == "https://example.com/2"
+
+
+def test_fetch_limit_pulls_more_than_display_limit():
+    """T08：默认展示 5 条也要向上游拉更多候选，正确答案在第 6 位也能进前五。"""
+    results = [
+        SearchResult(f"filler number {index}", f"https://example.com/{index}", "nothing")
+        for index in range(5)
+    ]
+    results.append(
+        SearchResult("Tibo explains the roadmap", "https://example.com/tibo", "full announcement")
+    )
+    provider = EngineProvider({"bing": results})
+    router = SearchRouter({"fake": provider}, engines=["bing"], max_results=5)
+    outcome = router.search(SearchQuery("tibo"))
+    assert provider.calls[0].limit == 15  # min(30, max(10, 5*3))
+    assert outcome.results[0].url == "https://example.com/tibo"
+
+
+def test_weak_first_engine_result_does_not_stop_fallback():
+    """T02：首引擎只有摘要级弱命中时不早停，继续候补找强命中。"""
+    provider = EngineProvider(
+        {
+            "bing": [
+                SearchResult(
+                    "Weekly digest", "https://example.com/weak", "a quiet mention of tibo inside"
+                )
+            ],
+            "baidu": [
+                SearchResult(
+                    "Tibo announces the roadmap",
+                    "https://example.com/tibo",
+                    "Tibo shared the announcement",
+                )
+            ],
+        }
+    )
+    router = SearchRouter(
+        {"fake": provider},
+        engines=["bing"],
+        fallback_engines=("baidu",),
+        max_engines=2,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert any(query.engines == ("baidu",) for query in provider.calls)
+    assert outcome.results[0].url == "https://example.com/tibo"
+    assert outcome.hint == ""
+
+
+def test_two_strong_hits_stop_after_first_request():
+    """T03：首批已有两条强命中即早停，不消耗后续引擎预算。"""
+    provider = EngineProvider(
+        {
+            "bing": [
+                SearchResult("Tibo roadmap for codex", "https://example.com/1", "details"),
+                SearchResult("codex notes from Tibo", "https://example.com/2", "more"),
+            ]
+        }
+    )
+    router = SearchRouter(
+        {"fake": provider}, engines=["bing"], fallback_engines=(), max_engines=1
+    )
+    outcome = router.search(SearchQuery("tibo codex"))
+    assert len(provider.calls) == 1
+    assert outcome.hint == ""
+
+
+def test_single_weak_pool_keeps_low_confidence_hint():
+    """T16：候补池里没有任何核心词命中时，必须用提示标明低相关。"""
+    provider = EngineProvider(
+        {"bing": [SearchResult("Unrelated candidate", "https://example.com/c", "")]}
+    )
+    router = SearchRouter(
+        {"fake": provider}, engines=["bing"], fallback_engines=(), max_engines=1
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert outcome.results
+    assert "未找到" in outcome.hint
+
+
+def test_multi_engine_request_preserves_real_engine():
+    """T07：混合引擎请求里每条结果保留真实 engine，空的才补槽位引擎。"""
+    results = [
+        SearchResult("result one", "https://example.com/1", ""),
+        SearchResult("result two", "https://example.com/2", ""),
+    ]
+    results[1].engine = "baidu"
+
+    class MixedProvider:
+        name = "fake"
+        capabilities = {"search", "engines"}
+
+        def __init__(self):
+            self.calls: list[SearchQuery] = []
+
+        def search(self, query):
+            self.calls.append(query)
+            assert query.engines == ("bing", "baidu")
+            return [result.model_copy() if hasattr(result, "model_copy") else result for result in results]
+
+    provider = MixedProvider()
+    router = SearchRouter({"fake": provider})
+    outcome = router.search(SearchQuery("q", engines=("bing", "baidu")))
+    assert [item.engine for item in outcome.results] == ["bing", "baidu"]
+
+
+def test_mapped_result_keeps_daemon_engine():
+    """T07：daemon 逐条返回的 engine/source 必须映射进结果，不能全标成槽位引擎。"""
+    from quiet_memo.infra.search.open_websearch import _map_result
+
+    mapped = _map_result(
+        {"title": "t", "url": "https://example.com/a", "engine": "baidu"}
+    )
+    assert mapped is not None and mapped.engine == "baidu"
+    mapped_source = _map_result(
+        {"title": "t", "url": "https://example.com/b", "source": "sogou"}
+    )
+    assert mapped_source is not None and mapped_source.engine == "sogou"
+
+
+def test_request_timeout_bounded_by_remaining_budget(monkeypatch):
+    """T14：单次请求超时上限取剩余预算，不能拿默认 10s 越过总预算。"""
+    from quiet_memo.infra.search import router as router_module
+
+    clock = [0.0]
+    seen_timeouts: list[float | None] = []
+
+    class TimedProvider:
+        name = "fake"
+        capabilities = {"search", "engines"}
+
+        def search(self, query):
+            seen_timeouts.append(query.timeout)
+            clock[0] += 4.0
+            return [SearchResult("filler page", f"https://example.com/{len(seen_timeouts)}", "")]
+
+    monkeypatch.setattr(router_module.time, "perf_counter", lambda: clock[0])
+    router = SearchRouter(
+        {"fake": TimedProvider()},
+        engines=["bing"],
+        fallback_engines=("baidu", "duckduckgo"),
+        max_engines=3,
+        timeout_budget=10.0,
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert seen_timeouts == [10.0, 6.0, 2.0]
+    assert all(timeout is not None and timeout <= 10.0 for timeout in seen_timeouts)
+    assert not outcome.cached or outcome.results
+
+
+def test_partial_failures_surfaced_with_results():
+    """partialFailures 不因有部分结果被静默吞掉：转换成结构化失败随结果返回。"""
+    from quiet_memo.infra.search.base import SearchFailure
+
+    class PartialProvider:
+        name = "fake"
+        capabilities = {"search", "engines"}
+
+        def __init__(self):
+            self.last_partial_failures: list[SearchFailure] = [
+                SearchFailure("bing", "rate_limit", "429 too many requests")
+            ]
+
+        def search(self, query):
+            return [SearchResult("Tibo update", "https://example.com/t", "")]
+
+    router = SearchRouter(
+        {"fake": PartialProvider()}, engines=["bing"], fallback_engines=()
+    )
+    outcome = router.search(SearchQuery("tibo"))
+    assert outcome.results
+    assert any(failure.kind == "rate_limit" for failure in outcome.failed)

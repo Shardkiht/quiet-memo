@@ -18,6 +18,7 @@ from .base import (
     FetchResult,
     ProviderError,
     ProviderErrorKind,
+    SearchFailure,
     SearchProvider,
     SearchQuery,
     SearchResult,
@@ -90,6 +91,21 @@ def _error_kind(code: str) -> ProviderErrorKind:
     return ProviderErrorKind.BAD_RESPONSE
 
 
+def _partial_failure(item: dict) -> SearchFailure:
+    """把 daemon partialFailures 里的一条失败转成结构化 SearchFailure。"""
+    code = _text(item.get("code"))
+    detail = _text(item.get("message"))
+    engine = _text(item.get("engine")) or "unknown"
+    lowered = code.lower()
+    if "429" in lowered or "rate" in lowered:
+        kind = ProviderErrorKind.RATE_LIMIT
+    elif "timeout" in lowered or "timedout" in lowered:
+        kind = ProviderErrorKind.TIMEOUT
+    else:
+        kind = ProviderErrorKind.NETWORK
+    return SearchFailure(engine, kind.value, detail or code)
+
+
 def _map_result(item: Any) -> SearchResult | None:
     """只在这里映射 open-websearch 字段；上层不依赖其原始 schema。"""
     if not isinstance(item, dict):
@@ -98,12 +114,15 @@ def _map_result(item: Any) -> SearchResult | None:
     if not url:
         return None
     published = item.get("published") or item.get("published_at") or item.get("date")
+    # 逐条保留 daemon 标注的真实来源引擎；混合引擎请求不能全标成槽位引擎。
+    engine = _text(item.get("engine")) or _text(item.get("source"))
     return SearchResult(
         title=_text(item.get("title")) or url,
         url=url,
         snippet=_text(item.get("description")) or _text(item.get("snippet")),
         published=_text(published) or None,
         provider=NAME,
+        engine=engine,
     )
 
 
@@ -132,13 +151,14 @@ class HttpTransport:
         query: str,
         limit: int,
         engines: list[str] | tuple[str, ...] | None = None,
-    ) -> list[dict]:
+        timeout: float | None = None,
+    ) -> tuple[list[dict], list[dict]]:
         body = {"query": query, "limit": max(1, min(limit, MAX_DAEMON_LIMIT))}
         selected = list(engines) if engines else self.engines
         if selected:
             # 不传时用 daemon 的 DEFAULT_SEARCH_ENGINE（默认 bing）。
             body["engines"] = selected
-        return self._parse(self._post("/search", body))
+        return self._parse(self._post("/search", body, timeout=timeout))
 
     def fetch(self, url: str, max_chars: int) -> dict:
         body = {
@@ -205,7 +225,7 @@ class HttpTransport:
             raise ProviderError(NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 响应缺少 data")
         return data
 
-    def _parse(self, response: httpx.Response) -> list[dict]:
+    def _parse(self, response: httpx.Response) -> tuple[list[dict], list[dict]]:
         data = self._parse_data(response)
         results = data.get("results")
         if not isinstance(results, list):
@@ -213,14 +233,20 @@ class HttpTransport:
                 NAME, ProviderErrorKind.BAD_RESPONSE, "open-websearch 响应缺少 data.results"
             )
         failures = data.get("partialFailures")
-        if not results and isinstance(failures, list) and failures:
+        partial = (
+            [item for item in failures if isinstance(item, dict)]
+            if isinstance(failures, list)
+            else []
+        )
+        if not results and partial:
             details = "; ".join(
                 f"{item.get('engine', 'unknown')}: {item.get('code', '')} {item.get('message', '')}"
-                for item in failures if isinstance(item, dict)
+                for item in partial
             )
             kind = ProviderErrorKind.TIMEOUT if "TIMEOUT" in details.upper() or "TIMEDOUT" in details.upper() else ProviderErrorKind.NETWORK
             raise ProviderError(NAME, kind, details or "All search engines failed")
-        return [item for item in results if isinstance(item, dict)]
+        # 有部分结果时失败不能静默吞掉：交给上层转成结构化诊断。
+        return [item for item in results if isinstance(item, dict)], partial
 
 
 class McpStdioTransport:
@@ -247,7 +273,8 @@ class McpStdioTransport:
         query: str,
         limit: int,
         engines: list[str] | tuple[str, ...] | None = None,
-    ) -> list[dict]:
+        timeout: float | None = None,
+    ) -> tuple[list[dict], list[dict]]:
         command = self._command_line()
         env = os.environ.copy()
         env["MODE"] = "stdio"
@@ -282,7 +309,9 @@ class McpStdioTransport:
             target=self._read_stdout, args=(process, messages), daemon=True
         ).start()
         try:
-            deadline = time.monotonic() + self.timeout
+            # router 下发的单次超时受剩余预算约束；MCP 传输同样遵守。
+            effective_timeout = min(self.timeout, timeout) if timeout else self.timeout
+            deadline = time.monotonic() + effective_timeout
             self._request(
                 process,
                 messages,
@@ -307,7 +336,7 @@ class McpStdioTransport:
                 },
                 deadline,
             )
-            return self._parse_result(response)
+            return self._parse_result(response), []
         except TimeoutError as exc:
             raise ProviderError(
                 NAME, ProviderErrorKind.TIMEOUT, f"open-websearch MCP 超时（{self.timeout:.0f}s）"
@@ -449,12 +478,18 @@ class OpenWebSearchProvider:
             self.capabilities = {"search", "fetch", "engines"}
 
     def search(self, query: SearchQuery) -> list[SearchResult]:
+        # 最近一次成功请求里 daemon 报告的部分引擎失败；router 读取后转成
+        # 结构化诊断，避免有部分结果时静默吞掉上游故障。
+        self.last_partial_failures: list[SearchFailure] = []
         try:
-            raw = self.transport.search(query.query, query.limit, query.engines or None)
+            raw, partial = self.transport.search(
+                query.query, query.limit, query.engines or None, query.timeout
+            )
         except ProviderError:
             raise
         except Exception as exc:
             raise ProviderError(NAME, ProviderErrorKind.NETWORK, str(exc)) from exc
+        self.last_partial_failures = [_partial_failure(item) for item in partial]
         results = (_map_result(item) for item in raw)
         return [result for result in results if result is not None]
 

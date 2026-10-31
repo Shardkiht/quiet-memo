@@ -158,6 +158,8 @@ class SearchQuery:
     # 会话上下文里的补充关键词（人物全名、项目、产品），用于短名称消歧；
     # 只参与派生查询变体和相关性判断，不改变原始 query 的语义。
     context_terms: tuple[str, ...] = ()
+    # 单次请求超时上限（秒）；由 router 按剩余预算下发，None 表示用 provider 默认。
+    timeout: float | None = None
 
 
 @dataclass(slots=True)
